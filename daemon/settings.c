@@ -1,6 +1,5 @@
 #include "settings.h"
 
-#include "routing.h"
 
 #include <arpa/inet.h>
 #include <stdio.h>
@@ -11,7 +10,6 @@ void daemon_settings_defaults(daemon_settings_t *s) {
     memset(s, 0, sizeof *s);
     s->socks_port = SENKO_DEFAULT_SOCKS_PORT;
     s->socks_public = 0;
-    s->dns_local_port = SENKO_DEFAULT_DNS_LOCAL_PORT;
     snprintf(s->dns_upstream, sizeof s->dns_upstream, "8.8.8.8");
     s->block_response = DNS_BLOCK_ZERO;
     s->auto_connect = 0;
@@ -22,16 +20,15 @@ void daemon_settings_defaults(daemon_settings_t *s) {
     s->sub_refresh_hours = 0;
     s->failover = 0;
     s->force_backend = SENKO_BACKEND_AUTO;
-    s->force_pf_mode = SENKO_PF_MODE_AUTO;
     s->sub_ignore_gating = 0;
     s->trace = 0;
 }
 
 const char *daemon_settings_backend_name(senko_backend_force_t forced) {
     switch (forced) {
-        case SENKO_BACKEND_GO:        return "go";
-        case SENKO_BACKEND_C:         return "c";
+        case SENKO_BACKEND_CORE:      return "senko-core";
         case SENKO_BACKEND_APP_PROXY: return "app_proxy";
+        case SENKO_BACKEND_UTUN:      return "utun";
         case SENKO_BACKEND_AUTO:      break;
     }
     return "auto";
@@ -105,12 +102,10 @@ settings_status_t daemon_settings_set(daemon_settings_t *s,
         s->socks_public = b;
         return SETTINGS_OK;
     }
-    if (key_is(key, key_len, "dns_local_port")) {
-        uint16_t p;
-        if (parse_uint16(val, ve, &p) != 0 || p == 0) return SETTINGS_ERR_VALUE;
-        s->dns_local_port = p;
+    /* keys the pf backend used. configs saved before it was removed still
+       carry them, and refusing them would fail the whole load */
+    if (key_is(key, key_len, "dns_local_port") || key_is(key, key_len, "force_pf_mode"))
         return SETTINGS_OK;
-    }
     if (key_is(key, key_len, "dns_upstream")) {
         if (!ipv4_ok(val, val_len)) return SETTINGS_ERR_VALUE;
         memcpy(s->dns_upstream, val, val_len);
@@ -162,25 +157,19 @@ settings_status_t daemon_settings_set(daemon_settings_t *s,
     if (key_is(key, key_len, "force_backend")) {
         if (val_len == 4 && memcmp(val, "auto", 4) == 0)
             s->force_backend = SENKO_BACKEND_AUTO;
-        else if (val_len == 2 && memcmp(val, "go", 2) == 0)
-            s->force_backend = SENKO_BACKEND_GO;
+        /* saved settings can still carry the old backend name */
+        else if ((val_len == 10 && memcmp(val, "senko-core", 10) == 0) ||
+                 (val_len == 2 && memcmp(val, "go", 2) == 0))
+            s->force_backend = SENKO_BACKEND_CORE;
+        /* "c" pinned the pf and ipfw core, whose place the utun tunnel took */
         else if (val_len == 1 && val[0] == 'c')
-            s->force_backend = SENKO_BACKEND_C;
+            s->force_backend = SENKO_BACKEND_UTUN;
         else if (val_len == 9 && memcmp(val, "app_proxy", 9) == 0)
             s->force_backend = SENKO_BACKEND_APP_PROXY;
+        else if (val_len == 4 && memcmp(val, "utun", 4) == 0)
+            s->force_backend = SENKO_BACKEND_UTUN;
         else
             return SETTINGS_ERR_VALUE;
-        return SETTINGS_OK;
-    }
-    if (key_is(key, key_len, "force_pf_mode")) {
-        int v;
-        if (val_len == 4 && memcmp(val, "auto", 4) == 0) {
-            s->force_pf_mode = SENKO_PF_MODE_AUTO;
-            return SETTINGS_OK;
-        }
-        if (parse_bounded_int(val, ve, 0, ROUTING_PF_MODE_COUNT - 1, &v) != 0)
-            return SETTINGS_ERR_VALUE;
-        s->force_pf_mode = v;
         return SETTINGS_OK;
     }
     if (key_is(key, key_len, "sub_ignore_gating")) {
@@ -247,7 +236,6 @@ int daemon_settings_serialize(const daemon_settings_t *s, char *buf, size_t cap,
     SETTINGS_EMIT("SET socks_port %u\n", (unsigned)s->socks_port);
     SETTINGS_EMIT("SET socks_public %d\n", s->socks_public ? 1 : 0);
     SETTINGS_EMIT("SET dns_upstream %s\n", s->dns_upstream);
-    SETTINGS_EMIT("SET dns_local_port %u\n", (unsigned)s->dns_local_port);
     SETTINGS_EMIT("SET block_response %s\n",
                   s->block_response == DNS_BLOCK_NXDOMAIN ? "nxdomain" :
                   s->block_response == DNS_BLOCK_REFUSED ? "refused" : "zero");
@@ -258,10 +246,6 @@ int daemon_settings_serialize(const daemon_settings_t *s, char *buf, size_t cap,
     SETTINGS_EMIT("SET failover %d\n", s->failover ? 1 : 0);
     SETTINGS_EMIT("SET force_backend %s\n",
                   daemon_settings_backend_name(s->force_backend));
-    if (s->force_pf_mode == SENKO_PF_MODE_AUTO)
-        SETTINGS_EMIT("SET force_pf_mode %s\n", "auto");
-    else
-        SETTINGS_EMIT("SET force_pf_mode %d\n", s->force_pf_mode);
     SETTINGS_EMIT("SET sub_ignore_gating %d\n", s->sub_ignore_gating ? 1 : 0);
     SETTINGS_EMIT("SET trace %d\n", s->trace ? 1 : 0);
 

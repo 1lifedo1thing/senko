@@ -21,6 +21,9 @@
 /* launchd redirects both daemon streams here, and the ui reads the same file */
 #define SENKO_SYSTEM_LOG "/var/log/senko-system.log"
 
+/* package update progress, written by senkod --update and read by the app */
+#define SENKO_UPDATE_LOG "/tmp/senko-update.log"
+
 /* the ui stages pasted or picked content here and the daemon consumes it. a
    fixed path keeps the privileged reader free of any caller supplied path */
 #define SENKO_IMPORT_STAGE "/var/mobile/Library/Preferences/Senko/import.dat"

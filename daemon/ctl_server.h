@@ -1,17 +1,24 @@
 #ifndef CTL_SERVER_H
 #define CTL_SERVER_H
 
+#include <poll.h>
 #include <stddef.h>
 #include <stdint.h>
 
 #include "ctl_engine.h"
+#include "helper_jobs.h"
 #include "settings.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define CTL_SERVER_MAX_CLIENTS 4
+/* the app opens one connection per request: a status poll (STATUS and AWG
+   STATUS), three list pings and a subscription refresh that holds its slot for
+   the whole download already overran four, and the fifth was hung up on */
+#define CTL_SERVER_MAX_CLIENTS 16
+/* the listener, the result pipe, every client and every helper job */
+#define CTL_SERVER_POLL_MAX (2 + CTL_SERVER_MAX_CLIENTS + HELPER_JOB_MAX)
 #define CTL_CLIENT_OUT_MAX (1024 * 1024)
 
 typedef int (*ctl_apply_fn)(void *ctx, const ctl_action_t *action);
@@ -29,6 +36,10 @@ typedef struct {
 /* the panel served a device gated placeholder instead of the node list */
     int  gated;
     char gate_reason[256];
+/* why the fetch failed, for the user; empty on success */
+    char error[160];
+/* the body ran past the buffer and only its first part was kept */
+    int  body_cut;
 } ctl_fetch_meta_t;
 
 typedef int (*ctl_fetch_fn)(void *ctx, const char *url,
@@ -85,6 +96,14 @@ typedef int (*ctl_flush_fn)(void *ctx, const char *what,
 typedef int (*ctl_native_config_fn)(void *ctx, const vl_server_t *server,
                                     char *buf, size_t cap, size_t *len);
 
+/* amneziawg requests: flag is the helper flag of the AWG verb. returns an exit
+   code with the status line in out, or CTL_AWG_CHILD when the request has to
+   run as a senkod child (the handshake probe) */
+#define CTL_AWG_CHILD 2
+typedef int (*ctl_awg_fn)(void *ctx, const char *flag, const char *path,
+                          char *out, size_t cap);
+typedef int (*ctl_awg_busy_fn)(void *ctx);
+
 /* append DIAG lines the daemon owns; the server adds its own before streaming */
 typedef int (*ctl_diag_fn)(void *ctx, char *buf, size_t cap, size_t *len);
 
@@ -119,6 +138,8 @@ typedef struct {
     ctl_fwconf_fn fwconf;
     ctl_flush_fn  flush;
     ctl_native_config_fn native_config;
+    ctl_awg_fn    awg;
+    ctl_awg_busy_fn awg_busy;
     ctl_stats_fn stats;
     uint64_t stat_at_ms;
     int stat_failed;
@@ -130,8 +151,8 @@ typedef struct {
     long          retry_at_ms;
     int           retry_attempts;
 /* last measured latency per server index, -1 when unknown or unreachable.
-   failover orders candidates by it, and it is dropped whenever a command can
-   move server indexes */
+   failover orders candidates by it. a refresh moves it with its server, other
+   commands that can move server indexes drop it */
     int           ping_ms[STORE_MAX_SERVERS];
 /* default egress seen at the last check, to notice a wifi to cellular move */
     char          egress_iface[32];
@@ -141,11 +162,22 @@ typedef struct {
 /* earliest retry per subscription after a scheduled refresh failed, so a dead
    panel is not pulled every minute */
     long          sub_retry_at_ms[STORE_MAX_SUBS];
-    int           refresh_in_progress;
+/* a subscription pull runs on its own thread (the control socket went silent
+   for its whole 16 s budget otherwise), and one per subscription at a time */
+    unsigned char sub_fetching[STORE_MAX_SUBS];
+    size_t        fetch_active;
+/* ping and fetch threads hand their results back through this pipe */
     int           ping_pipe[2];
     size_t        ping_active;
     uint64_t      client_generation;
     ctl_client_t  clients[CTL_SERVER_MAX_CLIENTS];
+/* amneziawg handshake probes running in senkod children */
+    helper_jobs_t helpers;
+/* what each slot ctl_server_prepare filled serves: a client index, or -1 the
+   result pipe, -2 the listener, -3 a helper job */
+    int           poll_slot[CTL_SERVER_POLL_MAX];
+    size_t        poll_count;
+    int           poll_helpers_busy;
 } ctl_server_t;
 
 typedef enum {
@@ -184,6 +216,7 @@ void ctl_server_set_diag(ctl_server_t *s, ctl_diag_fn diag);
 void ctl_server_set_fwconf(ctl_server_t *s, ctl_fwconf_fn fwconf);
 void ctl_server_set_flush(ctl_server_t *s, ctl_flush_fn flush);
 void ctl_server_set_native_config(ctl_server_t *s, ctl_native_config_fn render);
+void ctl_server_set_awg(ctl_server_t *s, ctl_awg_fn awg, ctl_awg_busy_fn busy);
 
 int ctl_server_restore_tunnel(ctl_server_t *s);
 
@@ -194,6 +227,15 @@ void ctl_server_tunnel_lost(ctl_server_t *s);
 /* run what has no client behind it: redial backoff, egress changes and
    scheduled subscription refreshes */
 void ctl_server_tick(ctl_server_t *s);
+
+/* one poll() can serve the control socket beside other owners: prepare
+   fills at most CTL_SERVER_POLL_MAX slots and lowers *timeout_ms (-1 waits
+   forever) to the nearest stats, helper or ctl_server_tick deadline, dispatch
+   services those slots after the poll. returns the slots used, 0 when cap is
+   too small */
+size_t ctl_server_prepare(ctl_server_t *s, struct pollfd *pfd, size_t cap,
+                          int *timeout_ms);
+void ctl_server_dispatch(ctl_server_t *s, const struct pollfd *pfd, size_t count);
 
 ctls_status_t ctl_server_step(ctl_server_t *s, int timeout_ms);
 

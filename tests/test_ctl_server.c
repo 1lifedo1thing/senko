@@ -1,6 +1,7 @@
 #define _DEFAULT_SOURCE
 
 #include "ctl_server.h"
+#include "senkod_helper.h"
 #include "daemon_ctl.h"
 #include "settings.h"
 #include "core/b64.h"
@@ -42,6 +43,27 @@ typedef struct {
     int               fail_next;    /* fail this many starts */
 } apply_rec_t;
 
+/* the daemon side of the AWG verb */
+static struct {
+    char flag[32];
+    char path[256];
+    int busy;
+} g_awg;
+
+static int mock_awg(void *ctx, const char *flag, const char *path, char *out, size_t cap) {
+    (void)ctx;
+    snprintf(g_awg.flag, sizeof g_awg.flag, "%s", flag);
+    snprintf(g_awg.path, sizeof g_awg.path, "%s", path ? path : "");
+    if (strcmp(flag, "--awg-probe") == 0) return CTL_AWG_CHILD;
+    snprintf(out, cap, "%s", strcmp(flag, "--awg") == 0 ? "connecting" : "connected");
+    return 0;
+}
+
+static int mock_awg_busy(void *ctx) {
+    (void)ctx;
+    return g_awg.busy;
+}
+
 /* the daemon owns the settings copy, so the mock applies a SET the same way */
 static daemon_settings_t *g_settings;
 
@@ -73,6 +95,7 @@ typedef struct {
     uint64_t expire;
     int  gated;
     const char *gate_reason;
+    int  hold_fd; /* when set, the fetch waits for a byte here like a slow panel */
 } fetch_rec_t;
 
 static fetch_rec_t g_fetch;
@@ -82,6 +105,10 @@ static int mock_fetch(void *ctx, const char *url,
                       unsigned char *buf, size_t cap, size_t *len,
                       ctl_fetch_meta_t *meta) {
     (void)ctx;
+    if (g_fetch.hold_fd > 0) {
+        char b;
+        (void)read(g_fetch.hold_fd, &b, 1);
+    }
     if (meta) {
         meta->expire = g_fetch.expire;
         meta->gated = g_fetch.gated;
@@ -173,7 +200,7 @@ static int mock_flush(void *ctx, const char *what, char *reason, size_t cap) {
     (void)ctx;
     snprintf(g_flush_what, sizeof g_flush_what, "%s", what ? what : "");
     if (what && strcmp(what, "bypass") == 0) {
-        if (reason && cap) snprintf(reason, cap, "no pf bypass table on this backend");
+        if (reason && cap) snprintf(reason, cap, "no direct address table on this backend");
         return -1;
     }
     return 0;
@@ -351,6 +378,10 @@ int main(void) {
        strcmp(parsed.name, "handshake") == 0);
     ok("reject unknown check",
        ctl_parse_cmd("CHECK magic 1\n", 14, &parsed) == CTL_ERR_PARSE);
+    ok("parse the real delay check",
+       ctl_parse_cmd("CHECK real 3 stages\n", 20, &parsed) == CTL_OK &&
+       parsed.kind == CTL_CMD_CHECK && parsed.server_index == 3 &&
+       strcmp(parsed.name, "real") == 0 && parsed.want_stages == 1);
     ok("a check without the keyword asks for no stages",
        ctl_parse_cmd("CHECK tcp 0\n", 12, &parsed) == CTL_OK &&
        parsed.server_index == 0 && parsed.want_stages == 0);
@@ -363,6 +394,25 @@ int main(void) {
        parsed.kind == CTL_CMD_NATIVE_CONFIG && parsed.server_index == 4);
     ok("reject native vpn configuration without index",
        ctl_parse_cmd("NATIVE_CONFIG\n", 14, &parsed) == CTL_ERR_PARSE);
+    /* the root work the app used to run through a setuid helper */
+    static const char awg_start[] = "AWG START /var/mobile/Library/Preferences/Senko/a.conf\n";
+    ok("parse amneziawg start with its config",
+       ctl_parse_cmd(awg_start, sizeof awg_start - 1, &parsed) == CTL_OK &&
+       parsed.kind == CTL_CMD_AWG && strcmp(parsed.name, "--awg") == 0 &&
+       strcmp(parsed.text, "/var/mobile/Library/Preferences/Senko/a.conf") == 0);
+    ok("parse amneziawg stop without a path",
+       ctl_parse_cmd("AWG STOP\n", 9, &parsed) == CTL_OK &&
+       strcmp(parsed.name, "--awg-stop") == 0 && parsed.text[0] == '\0');
+    ok("amneziawg start needs a path",
+       ctl_parse_cmd("AWG START\n", 10, &parsed) == CTL_ERR_PARSE);
+    ok("amneziawg status takes no path",
+       ctl_parse_cmd("AWG STATUS /x\n", 14, &parsed) == CTL_ERR_PARSE);
+    ok("an unknown amneziawg verb is refused",
+       ctl_parse_cmd("AWG REBOOT\n", 11, &parsed) == CTL_ERR_PARSE);
+    ok("parse a package update",
+       ctl_parse_cmd("UPDATE /tmp/senko.deb\n", 22, &parsed) == CTL_OK &&
+       parsed.kind == CTL_CMD_UPDATE && strcmp(parsed.text, "/tmp/senko.deb") == 0);
+    ok("an update needs a path", ctl_parse_cmd("UPDATE\n", 7, &parsed) == CTL_ERR_PARSE);
     ok("the keyword is not mistaken for an index",
        ctl_parse_cmd("CHECK tcp stages\n", 17, &parsed) == CTL_ERR_PARSE);
     ok("parse the firewall dump",
@@ -417,7 +467,7 @@ int main(void) {
 
     write(cli, "STATUS\n", 7);
     exchange(&s, cli, buf, sizeof buf);
-/* senko-kick treats this exact line as proof that a daemon is listening, so the
+/* senkod --update treats this exact line as proof that a daemon is listening, so the
    wording is part of the control contract, not just a message */
     ok("status needs auth", strcmp(buf, "ERR auth required\n") == 0);
 
@@ -449,6 +499,55 @@ int main(void) {
     exchange(&s, cli, buf, sizeof buf);
     ok("disconnect event", state_line_is(buf, "idle"));
     ok("apply got stop", rec.last_kind == CTL_ACT_STOP);
+
+    write(cli, "AWG STATUS\n", 11);
+    exchange(&s, cli, buf, sizeof buf);
+    ok("amneziawg without a daemon hook is refused",
+       strcmp(buf, "ERR amneziawg is not available\n") == 0);
+
+    ctl_server_set_awg(&s, mock_awg, mock_awg_busy);
+    write(cli, "AWG STATUS\n", 11);
+    exchange(&s, cli, buf, sizeof buf);
+    ok("an amneziawg status comes back as one AWG line and its end",
+       strcmp(buf, "AWG connected\nAWGEND 0 0\n") == 0 &&
+       strcmp(g_awg.flag, "--awg-status") == 0);
+
+    ctl_engine_notify(&s.engine, CTL_STATE_CONNECTED, ev, sizeof ev, &en);
+    rec.last_kind = CTL_ACT_NONE;
+    static const char awg_start_line[] =
+        "AWG START /var/mobile/Library/Preferences/Senko/a.conf\n";
+    write(cli, awg_start_line, sizeof awg_start_line - 1);
+    exchange(&s, cli, buf, sizeof buf);
+    ok("starting amneziawg takes a running vless tunnel down first",
+       rec.last_kind == CTL_ACT_STOP && s.engine.state == CTL_STATE_IDLE &&
+       strstr(buf, "STATE idle") != NULL && strstr(buf, "AWG connecting\nAWGEND 0 0\n") != NULL);
+    ok("the profile path reaches the daemon",
+       strcmp(g_awg.flag, "--awg") == 0 &&
+       strcmp(g_awg.path, "/var/mobile/Library/Preferences/Senko/a.conf") == 0);
+
+    g_awg.busy = 1;
+    write(cli, "CONNECT 0\n", 10);
+    exchange(&s, cli, buf, sizeof buf);
+    ok("vless does not start under a running amneziawg tunnel",
+       strcmp(buf, "ERR amneziawg active\n") == 0);
+    g_awg.busy = 0;
+
+    /* the host has no installed senkod to run in a helper mode */
+    if (access(senkod_binary_path(), X_OK) != 0) {
+        static const char probe_line[] =
+            "AWG PROBE /var/mobile/Library/Preferences/Senko/a.conf\n";
+        write(cli, probe_line, sizeof probe_line - 1);
+        exchange(&s, cli, buf, sizeof buf);
+        ok("a probe that cannot start its child says which binary it needed",
+           strncmp(buf, "AWG error ", 10) == 0 && strstr(buf, senkod_binary_path()) != NULL &&
+           strstr(buf, "\nAWGEND 1 0\n") != NULL);
+        write(cli, "UPDATE /tmp/senko.deb\n", 22);
+        exchange(&s, cli, buf, sizeof buf);
+        ok("an update names the helper it could not run",
+           strncmp(buf, "ERR ", 4) == 0 && strstr(buf, "cannot be run") != NULL);
+    }
+
+    ctl_server_set_awg(&s, NULL, NULL);
 
     int calls_before = rec.calls;
     write(cli, "FLOOP\n", 6);
@@ -572,6 +671,52 @@ int main(void) {
         g_fetch.gated = 0;
         g_fetch.gate_reason = NULL;
         g_fetch.blob = saved_blob;
+    }
+
+/* a panel that takes seconds to answer used to stall the whole control
+   socket, so the app saw "senkod did not answer" for every other request */
+    {
+        int hold[2];
+        ok("hold pipe", pipe(hold) == 0);
+        g_fetch.hold_fd = hold[0];
+        write(cli, "REFRESH 0\n", 10);
+        for (int i = 0; i < 20; ++i) ctl_server_step(&s, 2);
+        write(cli, "STATUS\n", 7);
+        exchange(&s, cli, buf, sizeof buf);
+        ok("status answers while a refresh downloads",
+           strncmp(buf, "STATE ", 6) == 0 && strstr(buf, "refreshed") == NULL);
+        write(cli, "REFRESH 0\n", 10);
+        exchange(&s, cli, buf, sizeof buf);
+        ok("a second refresh of the same subscription waits its turn",
+           strstr(buf, "ERR refresh in progress") != NULL);
+        (void)write(hold[1], "x", 1);
+        exchange(&s, cli, buf, sizeof buf);
+        ok("the slow refresh still answers", strncmp(buf, "OK refreshed", 12) == 0);
+
+        size_t kept = s.engine.store.n;
+        write(cli, "REFRESH 0\n", 10);
+        for (int i = 0; i < 20; ++i) ctl_server_step(&s, 2);
+        {
+            const char *cmd = "REPLACESUB 0 https://moved.example/feed - Home\n";
+            write(cli, cmd, strlen(cmd));
+        }
+        exchange(&s, cli, buf, sizeof buf);
+        ok("the subscription is replaced mid refresh", strncmp(buf, "OK ", 3) == 0);
+        (void)write(hold[1], "x", 1);
+        exchange(&s, cli, buf, sizeof buf);
+        ok("a replaced subscription does not take the old feed",
+           strstr(buf, "ERR the subscription was changed during the refresh") != NULL &&
+           s.engine.store.n == kept);
+        g_fetch.hold_fd = 0;
+        close(hold[0]);
+        close(hold[1]);
+        {
+            const char *cmd =
+                "REPLACESUB 0 https://sub.example.com/feed Authorization%3A%20Bearer%20abc%2Btest Home%20updated\n";
+            write(cli, cmd, strlen(cmd));
+        }
+        exchange(&s, cli, buf, sizeof buf);
+        ok("the subscription is restored", strncmp(buf, "OK ", 3) == 0);
     }
 
     {
@@ -727,7 +872,29 @@ int main(void) {
     write(cli, "STATUS\n", 7);
     exchange(&s, cli, buf, sizeof buf);
     ok("stats recovery", strstr(buf, "STAT ") != NULL && !s.stat_failed);
+/* the main poll sleeps until the next real deadline: the stats beat only while
+   an authed client listens, a redial when one is due, otherwise no timeout */
+    struct pollfd idle_pfd[CTL_SERVER_POLL_MAX];
+    int idle_wait = -1;
+    ok("prepare fills the poll set",
+       ctl_server_prepare(&s, idle_pfd, CTL_SERVER_POLL_MAX, &idle_wait) >= 2);
+    ok("an authed stats client bounds the wait to the next sample",
+       idle_wait >= 0 && idle_wait <= 1000);
+    ok("prepare refuses a short poll set",
+       ctl_server_prepare(&s, idle_pfd, CTL_SERVER_POLL_MAX - 1, &idle_wait) == 0);
     ctl_server_set_stats(&s, NULL);
+    const daemon_settings_t *kept_settings = s.settings;
+    long kept_retry = s.retry_at_ms;
+    s.settings = NULL;
+    s.retry_at_ms = 0;
+    idle_wait = -1;
+    ctl_server_prepare(&s, idle_pfd, CTL_SERVER_POLL_MAX, &idle_wait);
+    ok("an idle control server asks for no timeout", idle_wait == -1);
+    s.retry_at_ms = 1;
+    ctl_server_prepare(&s, idle_pfd, CTL_SERVER_POLL_MAX, &idle_wait);
+    ok("an overdue redial wakes at once", idle_wait == 0);
+    s.settings = kept_settings;
+    s.retry_at_ms = kept_retry;
     close(unauth);
 
 /* the settings verbs: the daemon owns the values, so SET goes out as an action
@@ -771,6 +938,25 @@ int main(void) {
     ok("settings dump carries defaults",
        strstr(buf, "SET auto_reconnect 1\n") != NULL &&
        strstr(buf, "SET sub_refresh_hours 0\n") != NULL);
+
+/* the egress is sampled only for a tunnel that could be rebuilt, so an idle
+   senkod with auto_reconnect on still sleeps without a timeout */
+    ctl_state_t kept_state = s.engine.state;
+    s.retry_at_ms = 0;
+    s.engine.state = CTL_STATE_IDLE;
+    snprintf(s.egress_iface, sizeof s.egress_iface, "en0");
+    s.egress_check_ms = 1;
+    ctl_server_tick(&s);
+    ok("an idle tunnel forgets the egress baseline",
+       s.egress_iface[0] == '\0' && s.egress_check_ms == 0);
+    idle_wait = -1;
+    ctl_server_prepare(&s, idle_pfd, CTL_SERVER_POLL_MAX, &idle_wait);
+    ok("an idle tunnel does not sample the egress", idle_wait == -1);
+    s.engine.state = CTL_STATE_CONNECTED;
+    idle_wait = -1;
+    ctl_server_prepare(&s, idle_pfd, CTL_SERVER_POLL_MAX, &idle_wait);
+    ok("a live tunnel takes its first egress sample at once", idle_wait == 0);
+    s.engine.state = kept_state;
 
     memset(&g_persist, 0, sizeof g_persist);
     write(cli, "SET auto_connect 1\n", 19);
@@ -888,7 +1074,7 @@ int main(void) {
     write(cli, "FLUSH bypass\n", 13);
     exchange(&s, cli, buf, sizeof buf);
     ok("a refused flush answers with the daemon's own words",
-       strstr(buf, "ERR no pf bypass table on this backend") != NULL);
+       strstr(buf, "ERR no direct address table on this backend") != NULL);
 
     g_flush_what[0] = '\0';
     {
@@ -926,6 +1112,28 @@ int main(void) {
     close(cli);
     for (int i = 0; i < 10; ++i) ctl_server_step(&s, 2);
     ok("client reaped", ctl_server_client_count(&s) == 0);
+
+/* the app's status poll, three pings and a refresh are open at once; a full
+   table has to say so instead of hanging up without a word */
+    {
+        int held[CTL_SERVER_MAX_CLIENTS];
+        for (int i = 0; i < CTL_SERVER_MAX_CLIENTS; ++i) {
+            held[i] = connect_unix(path);
+            for (int k = 0; k < 3; ++k) ctl_server_step(&s, 2);
+        }
+        ok("the app's usual burst fits", ctl_server_client_count(&s) == CTL_SERVER_MAX_CLIENTS);
+        int extra = connect_unix(path);
+        for (int k = 0; k < 5; ++k) ctl_server_step(&s, 2);
+        ssize_t en = extra >= 0 ? read(extra, buf, sizeof buf - 1) : -1;
+        if (en >= 0) buf[en] = '\0';
+        ok("a connection past the cap is refused with a reason",
+           en > 0 && strcmp(buf, "ERR too many control connections\n") == 0);
+        if (extra >= 0) close(extra);
+        for (int i = 0; i < CTL_SERVER_MAX_CLIENTS; ++i)
+            if (held[i] >= 0) close(held[i]);
+        for (int i = 0; i < 20; ++i) ctl_server_step(&s, 2);
+        ok("held clients reaped", ctl_server_client_count(&s) == 0);
+    }
 
     ctl_server_close(&s);
 

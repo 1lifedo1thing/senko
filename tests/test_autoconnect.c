@@ -103,6 +103,13 @@ static void fire_retry(ctl_server_t *s) {
     ctl_server_tick(s);
 }
 
+/* a scheduled pull runs on a fetch thread and lands on a later step */
+static void tick_refresh(ctl_server_t *s) {
+    ctl_server_tick(s);
+    for (int i = 0; i < 500 && s->fetch_active > 0; ++i) ctl_server_step(s, 10);
+    ok("the scheduled pull finished", s->fetch_active == 0);
+}
+
 static void go_connected(ctl_server_t *s) {
     char ev[64]; size_t en = 0;
     ctl_engine_notify(&s->engine, CTL_STATE_CONNECTED, ev, sizeof ev, &en);
@@ -263,31 +270,31 @@ int main(void) {
     g_persist_calls = 0;
 
     s.sub_check_ms = 0;
-    ctl_server_tick(&s);
+    tick_refresh(&s);
     ok("a subscription that was never pulled is refreshed", g_fetch.calls == 1);
     ok("the refresh time is recorded", s.engine.store.subs[0].last_refresh != 0);
     ok("the refresh is saved", g_persist_calls > 0);
 
     s.sub_check_ms = 0;
-    ctl_server_tick(&s);
+    tick_refresh(&s);
     ok("a fresh subscription is left alone", g_fetch.calls == 1);
 
     /* a panel that is down must not be pulled once a minute all day */
     s.engine.store.subs[0].last_refresh = 0;
     s.sub_check_ms = 0;
     g_fetch.fail_next = 1;
-    ctl_server_tick(&s);
+    tick_refresh(&s);
     ok("a failed refresh was attempted", g_fetch.calls == 2);
     ok("a failed refresh backs off", s.sub_retry_at_ms[0] > now_ms());
     s.sub_check_ms = 0;
-    ctl_server_tick(&s);
+    tick_refresh(&s);
     ok("the backoff holds the next attempt", g_fetch.calls == 2);
 
     set.sub_refresh_hours = 0;
     s.sub_check_ms = 0;
     s.sub_retry_at_ms[0] = 0;
     s.engine.store.subs[0].last_refresh = 0;
-    ctl_server_tick(&s);
+    tick_refresh(&s);
     ok("the timer off means no refresh", g_fetch.calls == 2);
 
     ctl_server_close(&s);

@@ -26,36 +26,86 @@ THREAD_CFLAGS  ?= -pthread
 THREAD_LDFLAGS ?= -pthread
 CORE     = ../daemon/core
 DAEMON   = ../daemon
+# the vendored stack and senko's port of it, see daemon/third_party/lwip/VENDOR
+LWIP      = ../daemon/third_party/lwip/src
+LWIP_PORT = ../daemon/lwip_port
+LWIP_CFLAGS = -I$(LWIP_PORT) -I$(LWIP)/include
+LWIP_SRC  = $(wildcard $(LWIP)/core/*.c) $(wildcard $(LWIP)/core/ipv4/*.c) \
+            $(wildcard $(LWIP)/core/ipv6/*.c) $(LWIP_PORT)/lwip_sys.c
+TUN_SESSION_SRC = $(CORE)/session.c $(CORE)/socks5.c $(NET_SAFE) \
+                  $(CORE)/vless.c $(CORE)/vless_conn.c $(CORE)/socks5_client.c \
+                  $(CORE)/http_client.c $(CORE)/vision.c $(CORE)/trojan_client.c \
+                  $(CORE)/shadowsocks_client.c $(CORE)/reality_crypto.c \
+                  $(TRACE) $(REPLAY) $(UPLOAD) $(TIME)
 TRACE    = $(CORE)/senko_trace.c
+# the utun rule, dns cache and direct socket modules the udp and tcp relays share
+TUN_POLICY_SRC = $(CORE)/tun_policy.c $(CORE)/dns_policy.c $(CORE)/dns_cache.c \
+                 $(DAEMON)/direct_socket.c $(DAEMON)/route_socket.c $(CORE)/route_message.c
 REPLAY   = $(CORE)/senko_replay.c
 UPLOAD   = $(CORE)/senko_upload.c
+TIME     = $(CORE)/senko_time.c
 NET_SAFE = $(CORE)/net_safe.c
 CJSON    = $(CORE)/third_party/cJSON.c
-CFG_SRC  = $(CORE)/config.c $(CORE)/rules.c $(CORE)/happ.c $(CORE)/happ_crypt5.c $(CORE)/b64.c $(CORE)/profiles.c $(CJSON)
+CFG_SRC  = $(CORE)/config.c $(CORE)/share_link.c $(CORE)/rules.c $(CORE)/happ.c $(CORE)/happ_crypt5.c $(CORE)/b64.c $(CORE)/profiles.c $(CJSON)
 TLS_CFLAGS  := $(shell pkg-config --cflags openssl 2>/dev/null)
 TLS_LDFLAGS := $(shell pkg-config --libs openssl 2>/dev/null || echo -lssl -lcrypto)
 
 .PHONY: all test clean sanitizers fuzz fuzz-smoke
 
 HOST_TESTS = test_ctl_server test_autoconnect test_session_direct test_config_compat \
-             test_transport_ws test_store_contract test_storefile test_routing_exec \
-             test_pf_natlook test_reality_crypto test_tls13_kdf \
+             test_transport_ws test_store_contract test_storefile \
+             test_reality_crypto test_tls13_kdf \
              test_tls13_keysched test_tls13_record test_tls_clienthello test_vision \
              test_transport_pick test_awg_config test_awg_handshake test_awg_tunnel test_awg_route \
              test_xray_json test_url_headers test_grpc_core test_transport_grpc test_hpack \
-             test_app_proxy test_go_config test_net_safe test_legacy_ios \
+             test_app_proxy test_senko_core_config test_net_safe test_legacy_ios \
              test_subinfo test_profiles test_amnezia_bundle test_happ_links \
              test_b64 test_traffic test_loop_traffic test_rules
 HOST_TESTS += test_dns_msg
 HOST_TESTS += test_dns_cache
-HOST_TESTS += test_pf_table
 HOST_TESTS += test_trojan
 HOST_TESTS += test_shadowsocks
 HOST_TESTS += test_qr_zbar
+HOST_TESTS += test_subfetch_budget
+HOST_TESTS += test_blake2b256
+HOST_TESTS += test_tun_plan
+HOST_TESTS += test_endpoint_pool
+HOST_TESTS += test_utun_framing
+HOST_TESTS += test_backend_rollback
+HOST_TESTS += test_tun_flow
+HOST_TESTS += test_backend_state
+HOST_TESTS += test_handshake_latency
+HOST_TESTS += test_failover_health
+HOST_TESTS += test_route_message
+HOST_TESTS += test_route_socket
+HOST_TESTS += test_lwip_smoke
+HOST_TESTS += test_tun_stack
+HOST_TESTS += test_tun_nat
+HOST_TESTS += test_tun_loop
+HOST_TESTS += test_tun_tcp
+HOST_TESTS += test_session_reset
+HOST_TESTS += test_transport_tls_shared
+HOST_TESTS += test_tun_dialer
+HOST_TESTS += test_vless_udp
+HOST_TESTS += test_tun_udp
+HOST_TESTS += test_transport_tls_eof
+HOST_TESTS += test_dns_policy
+HOST_TESTS += test_tun_policy
+HOST_TESTS += test_tun_udp_policy
+HOST_TESTS += test_tun_udp_wait
+HOST_TESTS += test_helper_jobs
+HOST_TESTS += test_awg_link
+HOST_TESTS += test_sub_links
+HOST_TESTS += test_real_probe
+HOST_TESTS += test_direct_dns
+HOST_TESTS += test_proc_detach
 
 all: test
 
 test: $(HOST_TESTS)
+	python3 check_emoji_assets.py
+	./test_blake2b256
+	./test_real_probe
 	./test_trojan
 	./test_shadowsocks
 	./test_qr_zbar
@@ -63,8 +113,8 @@ test: $(HOST_TESTS)
 	./test_loop_traffic
 	./test_rules
 	./test_dns_msg
+	./test_direct_dns
 	./test_dns_cache
-	./test_pf_table
 	./test_ctl_server
 	./test_autoconnect
 	./test_session_direct
@@ -72,8 +122,6 @@ test: $(HOST_TESTS)
 	./test_transport_ws
 	./test_store_contract
 	./test_storefile
-	./test_routing_exec
-	./test_pf_natlook
 	./test_reality_crypto
 	./test_tls13_kdf
 	./test_tls13_keysched
@@ -92,13 +140,86 @@ test: $(HOST_TESTS)
 	./test_transport_grpc
 	./test_hpack
 	./test_app_proxy
-	./test_go_config
+	./test_senko_core_config
 	./test_net_safe
 	./test_legacy_ios
+	./test_proc_detach
 	./test_subinfo
+	./test_subfetch_budget
 	./test_profiles
 	./test_happ_links
 	./test_amnezia_bundle
+	./test_tun_plan
+	./test_endpoint_pool
+	./test_utun_framing
+	./test_backend_rollback
+	./test_tun_flow
+	./test_backend_state
+	./test_handshake_latency
+	./test_failover_health
+	./test_route_message
+	./test_route_socket
+	./test_lwip_smoke
+	./test_tun_stack
+	./test_tun_nat
+	./test_tun_loop
+	./test_tun_tcp
+	./test_session_reset
+	./test_transport_tls_shared
+	./test_tun_dialer
+	./test_vless_udp
+	./test_tun_udp
+	./test_transport_tls_eof
+	./test_dns_policy
+	./test_tun_policy
+	./test_tun_udp_policy
+	./test_tun_udp_wait
+	./test_helper_jobs
+	./test_awg_link
+	./test_sub_links
+
+test_tun_udp: test_tun_udp.c packet_fixture.h $(DAEMON)/tun_udp.c \
+              $(DAEMON)/tun_opener.c $(DAEMON)/tun_loop.c $(DAEMON)/utun_device.c \
+              $(DAEMON)/tun_stack.c $(CORE)/tun_nat.c $(CORE)/utun_frame.c \
+              $(CORE)/vless_udp.c $(CORE)/dns_msg.c $(CORE)/rules.c $(TUN_POLICY_SRC) \
+              $(TUN_SESSION_SRC) $(CORE)/transport_tcp.c $(CORE)/transport_tls.c $(LWIP_SRC)
+	$(CC) $(CFLAGS) $(LWIP_CFLAGS) $(THREAD_CFLAGS) -DSENKO_RELEASE -I$(DAEMON) \
+	      test_tun_udp.c $(DAEMON)/tun_udp.c $(DAEMON)/tun_opener.c \
+	      $(DAEMON)/tun_loop.c $(DAEMON)/utun_device.c $(DAEMON)/tun_stack.c \
+	      $(CORE)/tun_nat.c $(CORE)/utun_frame.c $(CORE)/vless_udp.c \
+	      $(CORE)/dns_msg.c $(CORE)/rules.c $(TUN_POLICY_SRC) $(TUN_SESSION_SRC) \
+	      $(CORE)/transport_tcp.c $(CORE)/transport_tls.c $(LWIP_SRC) -o $@ \
+	      $(TLS_LDFLAGS) $(THREAD_LDFLAGS)
+
+test_tun_udp_policy: test_tun_udp_policy.c packet_fixture.h $(DAEMON)/tun_udp.c \
+              $(DAEMON)/tun_opener.c $(DAEMON)/tun_loop.c $(DAEMON)/utun_device.c \
+              $(DAEMON)/tun_stack.c $(CORE)/tun_nat.c $(CORE)/utun_frame.c \
+              $(CORE)/vless_udp.c $(CORE)/dns_msg.c $(CORE)/rules.c $(TUN_POLICY_SRC) \
+              $(TUN_SESSION_SRC) $(CORE)/transport_tcp.c $(CORE)/transport_tls.c $(LWIP_SRC)
+	$(CC) $(CFLAGS) $(LWIP_CFLAGS) $(THREAD_CFLAGS) -DSENKO_RELEASE -I$(DAEMON) \
+	      test_tun_udp_policy.c $(DAEMON)/tun_udp.c $(DAEMON)/tun_opener.c \
+	      $(DAEMON)/tun_loop.c $(DAEMON)/utun_device.c $(DAEMON)/tun_stack.c \
+	      $(CORE)/tun_nat.c $(CORE)/utun_frame.c $(CORE)/vless_udp.c \
+	      $(CORE)/dns_msg.c $(CORE)/rules.c $(TUN_POLICY_SRC) $(TUN_SESSION_SRC) \
+	      $(CORE)/transport_tcp.c $(CORE)/transport_tls.c $(LWIP_SRC) -o $@ \
+	      $(TLS_LDFLAGS) $(THREAD_LDFLAGS)
+
+test_tun_udp_wait: test_tun_udp_wait.c $(DAEMON)/tun_udp.c \
+              $(DAEMON)/tun_opener.c $(DAEMON)/tun_loop.c $(DAEMON)/utun_device.c \
+              $(DAEMON)/tun_stack.c $(CORE)/tun_nat.c $(CORE)/utun_frame.c \
+              $(CORE)/vless_udp.c $(CORE)/dns_msg.c $(CORE)/rules.c $(TUN_POLICY_SRC) \
+              $(TUN_SESSION_SRC) $(CORE)/transport_tcp.c $(CORE)/transport_tls.c $(LWIP_SRC)
+	$(CC) $(CFLAGS) $(LWIP_CFLAGS) $(THREAD_CFLAGS) -DSENKO_RELEASE -I$(DAEMON) \
+	      test_tun_udp_wait.c $(DAEMON)/tun_opener.c \
+	      $(DAEMON)/tun_loop.c $(DAEMON)/utun_device.c $(DAEMON)/tun_stack.c \
+	      $(CORE)/tun_nat.c $(CORE)/utun_frame.c $(CORE)/vless_udp.c \
+	      $(CORE)/dns_msg.c $(CORE)/rules.c $(TUN_POLICY_SRC) $(TUN_SESSION_SRC) \
+	      $(CORE)/transport_tcp.c $(CORE)/transport_tls.c $(LWIP_SRC) -o $@ \
+	      $(TLS_LDFLAGS) $(THREAD_LDFLAGS)
+
+test_vless_udp: test_vless_udp.c $(CORE)/vless_udp.c $(CORE)/vless_udp.h \
+                $(CORE)/vless.c $(CORE)/vless.h
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_vless_udp.c $(CORE)/vless_udp.c $(CORE)/vless.c -o $@ $(TLS_LDFLAGS)
 
 test_traffic: test_traffic.c $(CORE)/control.c $(CORE)/traffic.h
 	$(CC) $(CFLAGS) test_traffic.c $(CORE)/control.c -o $@
@@ -109,24 +230,26 @@ test_rules: test_rules.c $(CORE)/rules.c $(CORE)/rules.h
 test_dns_msg: test_dns_msg.c $(CORE)/dns_msg.c $(CORE)/dns_msg.h
 	$(CC) $(CFLAGS) test_dns_msg.c $(CORE)/dns_msg.c -o $@
 
+test_direct_dns: test_direct_dns.c $(DAEMON)/direct_dns.c $(DAEMON)/direct_socket.c $(DAEMON)/route_socket.c $(CORE)/route_message.c $(CORE)/dns_msg.c $(NET_SAFE)
+	$(CC) $(CFLAGS) $(THREAD_CFLAGS) -I$(DAEMON) test_direct_dns.c \
+	      $(DAEMON)/direct_dns.c $(DAEMON)/direct_socket.c $(DAEMON)/route_socket.c \
+	      $(CORE)/route_message.c $(CORE)/dns_msg.c $(NET_SAFE) -o $@ $(THREAD_LDFLAGS)
+
 test_dns_cache: test_dns_cache.c $(CORE)/dns_cache.c $(CORE)/dns_cache.h \
                 $(CORE)/dns_msg.c $(CORE)/dns_msg.h $(CORE)/rules.h
 	$(CC) $(CFLAGS) test_dns_cache.c $(CORE)/dns_cache.c $(CORE)/dns_msg.c -o $@
 
-test_pf_table: test_pf_table.c $(DAEMON)/pf_table.c $(DAEMON)/pf_table.h $(CORE)/rules.h
-	$(CC) $(CFLAGS) -I$(DAEMON) test_pf_table.c $(DAEMON)/pf_table.c -o $@
-
 test_loop_traffic: test_loop_traffic.c $(DAEMON)/loop.c $(CORE)/session.c
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) $(THREAD_CFLAGS) -DSENKO_RELEASE -I$(DAEMON) test_loop_traffic.c \
-	      $(DAEMON)/pf_natlook.c $(CORE)/session.c $(CORE)/socks5.c $(NET_SAFE) \
+	      $(CORE)/session.c $(CORE)/socks5.c $(NET_SAFE) \
 	      $(CORE)/vless.c $(CORE)/vless_conn.c $(CORE)/socks5_client.c \
 	      $(CORE)/http_client.c $(CORE)/vision.c $(CORE)/transport_tcp.c \
 	      $(CORE)/trojan_client.c $(CORE)/shadowsocks_client.c $(CORE)/reality_crypto.c \
-	      $(TRACE) $(REPLAY) $(UPLOAD) -o $@ $(TLS_LDFLAGS) $(THREAD_LDFLAGS)
+	      $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) -o $@ $(TLS_LDFLAGS) $(THREAD_LDFLAGS)
 
-test_go_config: test_go_config.c $(DAEMON)/go_config.c $(CFG_SRC)
-	$(CC) $(CFLAGS) $(TLS_CFLAGS) -I$(DAEMON) test_go_config.c \
-	      $(DAEMON)/go_config.c $(CFG_SRC) -o $@ $(TLS_LDFLAGS)
+test_senko_core_config: test_senko_core_config.c $(DAEMON)/senko_core_config.c $(CFG_SRC)
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) -I$(DAEMON) test_senko_core_config.c \
+	      $(DAEMON)/senko_core_config.c $(CFG_SRC) -o $@ $(TLS_LDFLAGS)
 
 test_url_headers: test_url_headers.c $(CORE)/url.c $(CORE)/net_safe.c $(CORE)/url.h
 	$(CC) $(CFLAGS) test_url_headers.c $(CORE)/url.c $(CORE)/net_safe.c -o $@
@@ -137,10 +260,19 @@ test_net_safe: test_net_safe.c $(NET_SAFE) $(CORE)/net_safe.h
 test_subinfo: test_subinfo.c $(CORE)/subfetch.c $(CORE)/subfetch.h
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) -DSENKO_HOST_TEST -I$(DAEMON) test_subinfo.c \
 	      $(CORE)/subfetch.c $(CORE)/http.c $(CORE)/url.c $(CORE)/net_safe.c \
-	      $(CORE)/b64.c -o $@ $(TLS_LDFLAGS) -lz
+	      $(CORE)/b64.c $(TIME) -o $@ $(TLS_LDFLAGS) -lz
+
+test_subfetch_budget: test_subfetch_budget.c $(CORE)/subfetch.c $(CORE)/subfetch.h
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) -DSENKO_HOST_TEST -I$(DAEMON) test_subfetch_budget.c \
+	      $(CORE)/subfetch.c $(CORE)/http.c $(CORE)/url.c $(CORE)/net_safe.c \
+	      $(CORE)/b64.c $(CORE)/transport_tcp.c $(CORE)/transport_tls.c \
+	      $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) -o $@ $(TLS_LDFLAGS) -lz
 
 test_legacy_ios: test_legacy_ios.c $(DAEMON)/legacy_ios.c $(DAEMON)/legacy_ios.h
 	$(CC) $(CFLAGS) -I$(DAEMON) test_legacy_ios.c $(DAEMON)/legacy_ios.c -o $@
+
+test_proc_detach: test_proc_detach.c $(DAEMON)/proc_detach.c $(DAEMON)/proc_detach.h
+	$(CC) $(CFLAGS) test_proc_detach.c $(DAEMON)/proc_detach.c -o $@ -rdynamic -ldl
 
 test_grpc_core: test_grpc_core.c $(CORE)/grpc_core.c $(CORE)/grpc_core.h
 	$(CC) $(CFLAGS) test_grpc_core.c $(CORE)/grpc_core.c -o $@
@@ -156,13 +288,20 @@ test_amnezia_bundle: test_amnezia_bundle.c amnezia_fixture.inc $(CORE)/amnezia_b
 test_awg_handshake: test_awg_handshake.c $(CORE)/awg_handshake.c $(CORE)/awg_handshake.h \
                     $(CORE)/awg_config.c $(CORE)/b64.c $(CORE)/reality_crypto.c
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_awg_handshake.c $(CORE)/awg_handshake.c \
-	      $(CORE)/awg_config.c $(CORE)/b64.c $(CORE)/reality_crypto.c -o $@ $(TLS_LDFLAGS)
+	      $(CORE)/awg_config.c $(CORE)/b64.c $(CORE)/reality_crypto.c $(TIME) -o $@ $(TLS_LDFLAGS)
+
+test_awg_link: test_awg_link.c $(DAEMON)/awg_link.c $(DAEMON)/awg_link.h $(CORE)/awg_tunnel.c \
+               $(CORE)/awg_handshake.c $(DAEMON)/utun_device.c $(CORE)/utun_frame.c
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) $(THREAD_CFLAGS) -I$(DAEMON) test_awg_link.c $(DAEMON)/awg_link.c \
+	      $(DAEMON)/utun_device.c $(CORE)/utun_frame.c $(CORE)/awg_tunnel.c $(CORE)/awg_handshake.c \
+	      $(CORE)/awg_config.c $(CORE)/b64.c $(CORE)/reality_crypto.c $(TIME) \
+	      -o $@ $(TLS_LDFLAGS) $(THREAD_LDFLAGS)
 
 test_awg_tunnel: test_awg_tunnel.c $(CORE)/awg_tunnel.c $(CORE)/awg_tunnel.h \
                  $(CORE)/awg_handshake.c $(CORE)/awg_config.c $(CORE)/b64.c $(CORE)/reality_crypto.c
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_awg_tunnel.c $(CORE)/awg_tunnel.c \
 	      $(CORE)/awg_handshake.c $(CORE)/awg_config.c $(CORE)/b64.c $(CORE)/reality_crypto.c \
-	      -o $@ $(TLS_LDFLAGS)
+	      $(TIME) -o $@ $(TLS_LDFLAGS)
 
 test_awg_route: test_awg_route.c $(DAEMON)/awg_route.c $(DAEMON)/awg_route.h $(CORE)/awg_config.c $(CORE)/b64.c
 	$(CC) $(CFLAGS) -I$(DAEMON) test_awg_route.c $(DAEMON)/awg_route.c $(CORE)/awg_config.c $(CORE)/b64.c -o $@ -lcrypto
@@ -170,11 +309,118 @@ test_awg_route: test_awg_route.c $(DAEMON)/awg_route.c $(DAEMON)/awg_route.h $(C
 test_config_compat: test_config_compat.c $(CFG_SRC) $(CORE)/config.h $(CORE)/b64.h $(CORE)/happ.h
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_config_compat.c $(CFG_SRC) -o $@ $(TLS_LDFLAGS)
 
+test_sub_links: test_sub_links.c $(CFG_SRC) $(CORE)/vless.c $(CORE)/store.c $(CORE)/config.h
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) -I$(CORE) test_sub_links.c $(CFG_SRC) $(CORE)/vless.c $(CORE)/store.c \
+	      -o $@ $(TLS_LDFLAGS)
+
 test_xray_json: test_xray_json.c $(CFG_SRC) $(CORE)/config.h
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_xray_json.c $(CFG_SRC) -o $@ $(TLS_LDFLAGS)
 
 test_b64: test_b64.c $(CORE)/b64.c $(CORE)/b64.h
 	$(CC) $(CFLAGS) test_b64.c $(CORE)/b64.c -o $@
+
+test_blake2b256: test_blake2b256.c $(CORE)/blake2b256.c $(CORE)/blake2b256.h
+	$(CC) $(CFLAGS) test_blake2b256.c $(CORE)/blake2b256.c -o $@
+
+test_tun_plan: test_tun_plan.c $(CORE)/tun_plan.c $(CORE)/tun_plan.h
+	$(CC) $(CFLAGS) test_tun_plan.c $(CORE)/tun_plan.c -o $@
+
+test_endpoint_pool: test_endpoint_pool.c $(CORE)/endpoint_pool.c $(CORE)/endpoint_pool.h
+	$(CC) $(CFLAGS) test_endpoint_pool.c $(CORE)/endpoint_pool.c -o $@
+
+test_utun_framing: test_utun_framing.c $(CORE)/utun_frame.c $(CORE)/utun_frame.h
+	$(CC) $(CFLAGS) test_utun_framing.c $(CORE)/utun_frame.c -o $@
+
+test_backend_rollback: test_backend_rollback.c $(DAEMON)/utun_route.c $(DAEMON)/utun_route.h \
+                       $(DAEMON)/route_socket.c $(CORE)/route_message.c \
+                       $(CORE)/tun_plan.c $(CORE)/tun_plan.h
+	$(CC) $(CFLAGS) -I$(DAEMON) test_backend_rollback.c $(DAEMON)/utun_route.c \
+	      $(DAEMON)/route_socket.c $(CORE)/route_message.c $(CORE)/tun_plan.c -o $@
+
+test_route_socket: test_route_socket.c $(DAEMON)/route_socket.c $(DAEMON)/route_socket.h \
+                   $(CORE)/route_message.c $(CORE)/route_message.h
+	$(CC) $(CFLAGS) -I$(DAEMON) test_route_socket.c $(DAEMON)/route_socket.c \
+	      $(CORE)/route_message.c -o $@
+
+test_lwip_smoke: test_lwip_smoke.c $(LWIP_SRC) $(LWIP_PORT)/lwipopts.h
+	$(CC) $(CFLAGS) $(LWIP_CFLAGS) -I$(DAEMON) test_lwip_smoke.c $(LWIP_SRC) \
+	      $(TIME) -o $@
+
+test_tun_stack: test_tun_stack.c packet_fixture.h $(DAEMON)/tun_stack.c $(DAEMON)/tun_stack.h \
+                $(CORE)/tun_nat.c $(CORE)/tun_nat.h $(CORE)/utun_frame.c \
+                $(LWIP_SRC) $(LWIP_PORT)/lwipopts.h
+	$(CC) $(CFLAGS) $(LWIP_CFLAGS) $(THREAD_CFLAGS) -I$(DAEMON) test_tun_stack.c \
+	      $(DAEMON)/tun_stack.c $(CORE)/tun_nat.c $(CORE)/utun_frame.c $(LWIP_SRC) $(TIME) \
+	      -o $@ $(THREAD_LDFLAGS)
+
+test_tun_nat: test_tun_nat.c packet_fixture.h $(CORE)/tun_nat.c $(CORE)/tun_nat.h
+	$(CC) $(CFLAGS) test_tun_nat.c $(CORE)/tun_nat.c -o $@
+
+test_tun_loop: test_tun_loop.c packet_fixture.h $(DAEMON)/tun_loop.c $(DAEMON)/tun_loop.h \
+               $(DAEMON)/utun_device.c $(DAEMON)/tun_stack.c $(CORE)/tun_nat.c \
+               $(CORE)/utun_frame.c $(LWIP_SRC) $(LWIP_PORT)/lwipopts.h
+	$(CC) $(CFLAGS) $(LWIP_CFLAGS) $(THREAD_CFLAGS) -I$(DAEMON) test_tun_loop.c \
+	      $(DAEMON)/tun_loop.c $(DAEMON)/utun_device.c $(DAEMON)/tun_stack.c \
+	      $(CORE)/tun_nat.c $(CORE)/utun_frame.c $(LWIP_SRC) $(TIME) \
+	      -o $@ $(THREAD_LDFLAGS)
+
+test_tun_tcp: test_tun_tcp.c packet_fixture.h $(DAEMON)/tun_tcp.c \
+              $(DAEMON)/tun_opener.c $(DAEMON)/tun_loop.c $(DAEMON)/utun_device.c \
+              $(DAEMON)/tun_stack.c $(CORE)/tun_nat.c $(CORE)/utun_frame.c \
+              $(CORE)/dns_msg.c $(CORE)/rules.c $(TUN_POLICY_SRC) $(TUN_SESSION_SRC) $(CORE)/transport_tcp.c $(CORE)/transport_tls.c $(LWIP_SRC)
+	$(CC) $(CFLAGS) $(LWIP_CFLAGS) $(THREAD_CFLAGS) -DSENKO_RELEASE -I$(DAEMON) \
+	      test_tun_tcp.c $(DAEMON)/tun_tcp.c $(DAEMON)/tun_opener.c \
+	      $(DAEMON)/tun_loop.c $(DAEMON)/utun_device.c $(DAEMON)/tun_stack.c \
+	      $(CORE)/tun_nat.c $(CORE)/utun_frame.c $(CORE)/dns_msg.c $(CORE)/rules.c \
+	      $(TUN_POLICY_SRC) $(TUN_SESSION_SRC) \
+	      $(CORE)/transport_tcp.c $(CORE)/transport_tls.c $(LWIP_SRC) -o $@ \
+	      $(TLS_LDFLAGS) $(THREAD_LDFLAGS)
+
+test_session_reset: test_session_reset.c $(TUN_SESSION_SRC) $(CORE)/transport_tcp.c
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) -DSENKO_RELEASE test_session_reset.c \
+	      $(TUN_SESSION_SRC) $(CORE)/transport_tcp.c -o $@ $(TLS_LDFLAGS)
+
+test_tun_policy: test_tun_policy.c $(CORE)/tun_policy.c $(CORE)/dns_policy.c \
+                 $(CORE)/dns_cache.c $(CORE)/dns_msg.c $(CORE)/rules.c
+	$(CC) $(CFLAGS) test_tun_policy.c $(CORE)/tun_policy.c $(CORE)/dns_policy.c \
+	      $(CORE)/dns_cache.c $(CORE)/dns_msg.c $(CORE)/rules.c -o $@
+
+test_helper_jobs: test_helper_jobs.c $(DAEMON)/helper_jobs.c $(DAEMON)/helper_jobs.h
+	$(CC) $(CFLAGS) -I$(DAEMON) test_helper_jobs.c $(DAEMON)/helper_jobs.c \
+	      $(DAEMON)/route_socket.c $(CORE)/route_message.c -o $@
+
+test_dns_policy: test_dns_policy.c $(CORE)/dns_policy.c $(CORE)/dns_policy.h
+	$(CC) $(CFLAGS) test_dns_policy.c $(CORE)/dns_policy.c -o $@
+
+test_transport_tls_eof: test_transport_tls_eof.c $(CORE)/transport_tls.c
+	$(CC) $(CFLAGS) $(THREAD_CFLAGS) $(TLS_CFLAGS) test_transport_tls_eof.c \
+	      $(CORE)/transport_tls.c -o $@ $(TLS_LDFLAGS) $(THREAD_LDFLAGS)
+
+test_transport_tls_shared: test_transport_tls_shared.c $(CORE)/transport_tls.c
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_transport_tls_shared.c \
+	      $(CORE)/transport_tls.c -o $@ $(TLS_LDFLAGS)
+
+test_tun_dialer: test_tun_dialer.c $(DAEMON)/tun_dialer.c $(CORE)/endpoint_pool.c $(TIME) \
+                 $(DAEMON)/route_socket.c $(CORE)/route_message.c
+	$(CC) $(CFLAGS) $(THREAD_CFLAGS) -I$(DAEMON) test_tun_dialer.c \
+	      $(DAEMON)/tun_dialer.c $(CORE)/endpoint_pool.c $(TIME) \
+	      $(DAEMON)/route_socket.c $(CORE)/route_message.c \
+	      -o $@ $(THREAD_LDFLAGS)
+
+test_tun_flow: test_tun_flow.c $(CORE)/tun_flow.c $(CORE)/tun_flow.h $(CORE)/rules.c
+	$(CC) $(CFLAGS) test_tun_flow.c $(CORE)/tun_flow.c $(CORE)/rules.c -o $@
+
+test_backend_state: test_backend_state.c $(CORE)/backend_state.c $(CORE)/backend_state.h
+	$(CC) $(CFLAGS) test_backend_state.c $(CORE)/backend_state.c -o $@
+
+test_handshake_latency: test_handshake_latency.c $(CORE)/probe_stats.c $(CORE)/probe_stats.h
+	$(CC) $(CFLAGS) test_handshake_latency.c $(CORE)/probe_stats.c -o $@
+
+test_failover_health: test_failover_health.c $(CORE)/probe_stats.c $(CORE)/probe_stats.h
+	$(CC) $(CFLAGS) test_failover_health.c $(CORE)/probe_stats.c -o $@
+
+test_route_message: test_route_message.c $(CORE)/route_message.c $(CORE)/route_message.h
+	$(CC) $(CFLAGS) test_route_message.c $(CORE)/route_message.c -o $@
 
 sub_audit: sub_audit.c $(CFG_SRC) $(CORE)/config.h $(CORE)/b64.h
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) sub_audit.c $(CFG_SRC) -o $@ $(TLS_LDFLAGS)
@@ -193,12 +439,23 @@ test_storefile: test_storefile.c $(DAEMON)/storefile.c $(DAEMON)/settings.c \
 
 test_session_direct: test_session_direct.c $(CORE)/session.c $(CORE)/socks5.c $(NET_SAFE) \
               $(CORE)/vless.c $(CORE)/vless_conn.c $(CORE)/socks5_client.c $(CORE)/http_client.c $(CORE)/vision.c \
-              $(CORE)/trojan_client.c $(CORE)/shadowsocks_client.c $(CORE)/reality_crypto.c $(TRACE) $(REPLAY) $(UPLOAD)
+              $(CORE)/trojan_client.c $(CORE)/shadowsocks_client.c $(CORE)/reality_crypto.c $(TRACE) $(REPLAY) $(UPLOAD) $(TIME)
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_session_direct.c $(CORE)/session.c \
 	      $(CORE)/socks5.c $(NET_SAFE) $(CORE)/vless.c $(CORE)/vless_conn.c \
 	      $(CORE)/socks5_client.c $(CORE)/http_client.c $(CORE)/vision.c \
 	      $(CORE)/trojan_client.c $(CORE)/shadowsocks_client.c $(CORE)/reality_crypto.c \
-	      $(TRACE) $(REPLAY) $(UPLOAD) -o $@ $(TLS_LDFLAGS)
+	      $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) -o $@ $(TLS_LDFLAGS)
+
+# the probe drives a whole protocol session over the real transports
+REAL_PROBE_SRC = $(CORE)/real_probe.c $(CORE)/transport_pick.c $(TUN_SESSION_SRC) \
+                 $(CFG_SRC) $(CORE)/transport_tcp.c $(CORE)/transport_tls.c \
+                 $(CORE)/transport_ws.c $(CORE)/transport_xhttp.c $(CORE)/hpack.c \
+                 $(CORE)/reality_handshake.c $(CORE)/reality_auth.c \
+                 $(CORE)/tls_clienthello.c $(CORE)/tls13_kdf.c $(CORE)/tls13_keysched.c \
+                 $(CORE)/tls13_record.c $(CORE)/tls13_transcript.c $(CORE)/tls13_handshake.c \
+                 $(CORE)/grpc_core.c
+test_real_probe: test_real_probe.c $(REAL_PROBE_SRC)
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_real_probe.c $(REAL_PROBE_SRC) -o $@ $(TLS_LDFLAGS) -lpthread
 
 test_trojan: test_trojan.c $(CORE)/trojan_client.c $(CFG_SRC)
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_trojan.c $(CORE)/trojan_client.c $(CFG_SRC) -o $@ $(TLS_LDFLAGS)
@@ -206,8 +463,13 @@ test_trojan: test_trojan.c $(CORE)/trojan_client.c $(CFG_SRC)
 test_shadowsocks: test_shadowsocks.c $(CORE)/shadowsocks_client.c $(CORE)/reality_crypto.c $(CFG_SRC)
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_shadowsocks.c $(CORE)/shadowsocks_client.c $(CORE)/reality_crypto.c $(CFG_SRC) -o $@ $(TLS_LDFLAGS)
 
+# zbar's fixed-point qr math shifts negative values left on purpose; clang and
+# gcc define that as multiplication, so only that check is off for its sources.
+# it follows CFLAGS so a sanitizer build cannot turn it back on
+ZBAR_NO_SHIFT_CHECK = -fno-sanitize=shift-base
+
 test_qr_zbar: test_qr_zbar.c $(ZBAR_SRC)
-	$(CC) $(ZBAR_CFLAGS) $(CFLAGS) test_qr_zbar.c $(ZBAR_SRC) -o $@
+	$(CC) $(ZBAR_CFLAGS) $(CFLAGS) $(ZBAR_NO_SHIFT_CHECK) test_qr_zbar.c $(ZBAR_SRC) -o $@
 
 test_reality_crypto: test_reality_crypto.c $(CORE)/reality_crypto.c $(CORE)/reality_crypto.h
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_reality_crypto.c $(CORE)/reality_crypto.c \
@@ -238,7 +500,7 @@ test_transport_grpc: test_transport_grpc.c $(CORE)/transport_pick.c $(CFG_SRC) \
                      $(CORE)/reality_crypto.c $(CORE)/reality_auth.c \
                      $(CORE)/tls_clienthello.c $(CORE)/tls13_kdf.c \
                      $(CORE)/tls13_keysched.c $(CORE)/tls13_record.c \
-                     $(CORE)/tls13_transcript.c $(CORE)/tls13_handshake.c $(TRACE) $(REPLAY) $(UPLOAD) $(CORE)/grpc_core.c
+                     $(CORE)/tls13_transcript.c $(CORE)/tls13_handshake.c $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) $(CORE)/grpc_core.c
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_transport_grpc.c $(CORE)/transport_pick.c \
 	      $(CFG_SRC) \
 	      $(CORE)/transport_tcp.c $(CORE)/transport_tls.c $(CORE)/transport_ws.c \
@@ -246,7 +508,7 @@ test_transport_grpc: test_transport_grpc.c $(CORE)/transport_pick.c $(CFG_SRC) \
 	      $(CORE)/reality_handshake.c $(CORE)/reality_crypto.c $(CORE)/reality_auth.c \
 	      $(CORE)/tls_clienthello.c $(CORE)/tls13_kdf.c $(CORE)/tls13_keysched.c \
 	      $(CORE)/tls13_record.c $(CORE)/tls13_transcript.c $(CORE)/tls13_handshake.c \
-	      $(TRACE) $(REPLAY) $(UPLOAD) $(CORE)/grpc_core.c $(TLS_LDFLAGS) -o $@
+	      $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) $(CORE)/grpc_core.c $(TLS_LDFLAGS) -o $@
 
 test_transport_pick: test_transport_pick.c $(CORE)/transport_pick.c $(CFG_SRC) \
                      $(CORE)/transport_tcp.c $(CORE)/transport_tls.c \
@@ -254,7 +516,7 @@ test_transport_pick: test_transport_pick.c $(CORE)/transport_pick.c $(CFG_SRC) \
                      $(CORE)/reality_crypto.c $(CORE)/reality_auth.c \
                      $(CORE)/tls_clienthello.c $(CORE)/tls13_kdf.c \
                      $(CORE)/tls13_keysched.c $(CORE)/tls13_record.c \
-                      $(CORE)/tls13_transcript.c $(CORE)/tls13_handshake.c $(TRACE) $(REPLAY) $(UPLOAD) $(CORE)/grpc_core.c
+                      $(CORE)/tls13_transcript.c $(CORE)/tls13_handshake.c $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) $(CORE)/grpc_core.c
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_transport_pick.c $(CORE)/transport_pick.c \
 	      $(CFG_SRC) \
 	      $(CORE)/transport_tcp.c $(CORE)/transport_tls.c $(CORE)/transport_ws.c \
@@ -262,19 +524,7 @@ test_transport_pick: test_transport_pick.c $(CORE)/transport_pick.c $(CFG_SRC) \
 	      $(CORE)/reality_handshake.c $(CORE)/reality_crypto.c $(CORE)/reality_auth.c \
 	      $(CORE)/tls_clienthello.c $(CORE)/tls13_kdf.c $(CORE)/tls13_keysched.c \
 	      $(CORE)/tls13_record.c $(CORE)/tls13_transcript.c $(CORE)/tls13_handshake.c \
-      $(TRACE) $(REPLAY) $(UPLOAD) $(CORE)/grpc_core.c -o $@ $(TLS_LDFLAGS)
-
-test_routing_exec: test_routing_exec.c $(DAEMON)/routing_exec.c $(DAEMON)/routing.c \
-                   $(DAEMON)/legacy_ios.c $(DAEMON)/routing_exec.h $(DAEMON)/routing.h \
-                   $(CORE)/rules.c $(CORE)/rules.h $(CORE)/dns_msg.c \
-                   $(CORE)/dns_cache.c $(DAEMON)/pf_table.c
-	$(CC) $(CFLAGS) -I$(DAEMON) test_routing_exec.c $(DAEMON)/routing_exec.c \
-	      $(DAEMON)/routing.c $(DAEMON)/legacy_ios.c $(NET_SAFE) $(CORE)/rules.c \
-	      $(CORE)/dns_msg.c $(CORE)/dns_cache.c $(DAEMON)/pf_table.c -o $@
-
-test_pf_natlook: test_pf_natlook.c $(DAEMON)/pf_natlook.c $(DAEMON)/pf_natlook.h
-	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L -DSENKO_HOST_TEST -I$(DAEMON) test_pf_natlook.c \
-	      $(DAEMON)/pf_natlook.c -o $@
+      $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) $(CORE)/grpc_core.c -o $@ $(TLS_LDFLAGS)
 
 test_app_proxy: test_app_proxy.c ../senkotlsfix/stl_proxy.c ../senkotlsfix/stl_proxy.h
 	$(CC) $(CFLAGS) $(THREAD_CFLAGS) -DSENKO_HOST_TEST \
@@ -282,29 +532,28 @@ test_app_proxy: test_app_proxy.c ../senkotlsfix/stl_proxy.c ../senkotlsfix/stl_p
 	      -I../senkotlsfix test_app_proxy.c ../senkotlsfix/stl_proxy.c \
 	      -o $@ $(THREAD_LDFLAGS)
 
+# senkod's amneziawg and update helper children
+HELPER_SRC = $(DAEMON)/helper_jobs.c $(DAEMON)/senkod_helper.c \
+             $(DAEMON)/route_socket.c $(CORE)/route_message.c \
+             $(CORE)/awg_config.c $(CORE)/awg_handshake.c $(CORE)/reality_crypto.c $(TIME)
+
 test_ctl_server: test_ctl_server.c $(DAEMON)/ctl_server.c $(CORE)/ctl_engine.c \
                  $(CORE)/control.c $(CORE)/store.c $(CORE)/url.c $(NET_SAFE) \
-                 $(DAEMON)/settings.c $(DAEMON)/routing_exec.c $(DAEMON)/routing.c \
-                 $(DAEMON)/legacy_ios.c $(CFG_SRC) $(CORE)/dns_msg.c \
-                 $(CORE)/dns_cache.c $(DAEMON)/pf_table.c
+                 $(DAEMON)/settings.c $(DAEMON)/egress.c \
+                 $(DAEMON)/legacy_ios.c $(CFG_SRC) $(CORE)/dns_msg.c $(HELPER_SRC)
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) -I$(DAEMON) test_ctl_server.c $(DAEMON)/ctl_server.c \
 	      $(CORE)/ctl_engine.c $(CORE)/control.c $(CORE)/store.c $(CORE)/url.c \
-	      $(DAEMON)/settings.c $(DAEMON)/routing_exec.c $(DAEMON)/routing.c \
-	      $(DAEMON)/legacy_ios.c \
-	      $(NET_SAFE) $(CFG_SRC) $(CORE)/dns_msg.c $(CORE)/dns_cache.c \
-	      $(DAEMON)/pf_table.c -o $@ $(TLS_LDFLAGS)
+	      $(DAEMON)/settings.c $(DAEMON)/egress.c $(DAEMON)/legacy_ios.c \
+	      $(NET_SAFE) $(CFG_SRC) $(CORE)/dns_msg.c $(HELPER_SRC) -o $@ $(TLS_LDFLAGS)
 
 test_autoconnect: test_autoconnect.c $(DAEMON)/ctl_server.c $(CORE)/ctl_engine.c \
                  $(CORE)/control.c $(CORE)/store.c $(CORE)/url.c $(NET_SAFE) \
-                 $(DAEMON)/settings.c $(DAEMON)/routing_exec.c $(DAEMON)/routing.c \
-                 $(DAEMON)/legacy_ios.c $(CFG_SRC) $(CORE)/dns_msg.c \
-                 $(CORE)/dns_cache.c $(DAEMON)/pf_table.c
+                 $(DAEMON)/settings.c $(DAEMON)/egress.c \
+                 $(DAEMON)/legacy_ios.c $(CFG_SRC) $(CORE)/dns_msg.c $(HELPER_SRC)
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) -I$(DAEMON) test_autoconnect.c $(DAEMON)/ctl_server.c \
 	      $(CORE)/ctl_engine.c $(CORE)/control.c $(CORE)/store.c $(CORE)/url.c \
-	      $(DAEMON)/settings.c $(DAEMON)/routing_exec.c $(DAEMON)/routing.c \
-	      $(DAEMON)/legacy_ios.c \
-	      $(NET_SAFE) $(CFG_SRC) $(CORE)/dns_msg.c $(CORE)/dns_cache.c \
-	      $(DAEMON)/pf_table.c -o $@ $(TLS_LDFLAGS)
+	      $(DAEMON)/settings.c $(DAEMON)/egress.c $(DAEMON)/legacy_ios.c \
+	      $(NET_SAFE) $(CFG_SRC) $(CORE)/dns_msg.c $(HELPER_SRC) -o $@ $(TLS_LDFLAGS)
 
 test_profiles: test_profiles.c $(CFG_SRC)
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_profiles.c $(CFG_SRC) -o $@ $(TLS_LDFLAGS)
@@ -313,7 +562,7 @@ test_happ_links: test_happ_links.c $(CFG_SRC)
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_happ_links.c $(CFG_SRC) -o $@ $(TLS_LDFLAGS)
 
 clean:
-	rm -f $(HOST_TESTS) sub_audit fuzz_uri fuzz_json fuzz_http fuzz_h2_grpc fuzz_wire fuzz_ws fuzz_vision fuzz_dns
+	rm -f $(HOST_TESTS) sub_audit fuzz_uri fuzz_json fuzz_http fuzz_h2_grpc fuzz_wire fuzz_ws fuzz_vision fuzz_dns fuzz_utun fuzz_tun_nat
 
 sanitizers:
 	$(MAKE) clean
@@ -324,7 +573,7 @@ sanitizers:
 FUZZ_FLAGS = -std=c99 -O1 -g -fno-omit-frame-pointer -fsanitize=fuzzer,address,undefined \
              -I../daemon/core -I../daemon/core/third_party
 
-fuzz: fuzz_uri fuzz_json fuzz_http fuzz_h2_grpc fuzz_wire fuzz_ws fuzz_vision fuzz_dns
+fuzz: fuzz_uri fuzz_json fuzz_http fuzz_h2_grpc fuzz_wire fuzz_ws fuzz_vision fuzz_dns fuzz_utun fuzz_tun_nat
 
 fuzz_uri: fuzz_uri.c $(CFG_SRC)
 	/usr/bin/clang $(FUZZ_FLAGS) fuzz_uri.c $(CFG_SRC) -o $@ -lssl -lcrypto
@@ -340,7 +589,7 @@ fuzz_h2_grpc: fuzz_h2_grpc.c $(CORE)/h2_core.c $(CORE)/grpc_core.c $(CORE)/hpack
 
 fuzz_wire: fuzz_wire.c $(CORE)/socks5.c $(CORE)/vless.c $(CORE)/url.c $(NET_SAFE)
 	/usr/bin/clang $(FUZZ_FLAGS) fuzz_wire.c $(CORE)/socks5.c $(CORE)/vless.c \
-	      $(CORE)/url.c $(NET_SAFE) -o $@
+	      $(CORE)/url.c $(NET_SAFE) -o $@ $(TLS_LDFLAGS)
 
 fuzz_ws: fuzz_ws.c $(CORE)/transport_ws.c $(CORE)/transport_tcp.c $(CORE)/transport_tls.c
 	/usr/bin/clang $(FUZZ_FLAGS) fuzz_ws.c $(CORE)/transport_ws.c \
@@ -352,6 +601,12 @@ fuzz_vision: fuzz_vision.c $(CORE)/vision.c
 fuzz_dns: fuzz_dns.c $(CORE)/dns_msg.c $(CORE)/dns_msg.h
 	/usr/bin/clang $(FUZZ_FLAGS) fuzz_dns.c $(CORE)/dns_msg.c -o $@
 
+fuzz_utun: fuzz_utun.c $(CORE)/utun_frame.c $(CORE)/utun_frame.h
+	/usr/bin/clang $(FUZZ_FLAGS) fuzz_utun.c $(CORE)/utun_frame.c -o $@
+
+fuzz_tun_nat: fuzz_tun_nat.c $(CORE)/tun_nat.c $(CORE)/tun_nat.h
+	/usr/bin/clang $(FUZZ_FLAGS) fuzz_tun_nat.c $(CORE)/tun_nat.c -o $@
+
 fuzz-smoke: fuzz
 	./fuzz_uri -runs=1000
 	./fuzz_json -runs=1000
@@ -361,6 +616,8 @@ fuzz-smoke: fuzz
 	./fuzz_ws -runs=1000
 	./fuzz_vision -runs=1000
 	./fuzz_dns -runs=1000
+	./fuzz_utun -runs=1000
+	./fuzz_tun_nat -runs=1000
 
 test_hpack: test_hpack.c $(CORE)/hpack.c
 	$(CC) $(CFLAGS) test_hpack.c $(CORE)/hpack.c -o $@

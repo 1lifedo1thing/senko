@@ -87,7 +87,8 @@ ctl_status_t ctl_parse_cmd(const char *line, size_t len, ctl_cmd_t *out) {
         memcpy(out->name, rest, ml);
         out->name[ml] = '\0';
         if (strcmp(out->name, "tcp") != 0 && strcmp(out->name, "proxy") != 0 &&
-            strcmp(out->name, "tunnel") != 0 && strcmp(out->name, "handshake") != 0)
+            strcmp(out->name, "tunnel") != 0 && strcmp(out->name, "handshake") != 0 &&
+            strcmp(out->name, "real") != 0)
             return CTL_ERR_PARSE;
         out->server_index = idx;
         out->kind = CTL_CMD_CHECK;
@@ -287,6 +288,34 @@ ctl_status_t ctl_parse_cmd(const char *line, size_t len, ctl_cmd_t *out) {
             return CTL_ERR_PARSE;
         out->kind = CTL_CMD_NATIVE_CONFIG;
         out->server_index = idx;
+        return CTL_OK;
+    }
+    /* root work the app cannot do as mobile; senkod runs its own binary in
+       the helper mode named by the flag */
+    if (verb_is(line, len, "AWG", &rest, &rl)) {
+        static const struct { const char *word; const char *flag; int path; } verbs[] = {
+            { "START", "--awg", 1 }, { "STOP", "--awg-stop", 0 },
+            { "STATUS", "--awg-status", 0 }, { "PROBE", "--awg-probe", 1 },
+            { "VALIDATE", "--awg-validate", 1 }
+        };
+        for (size_t i = 0; i < sizeof verbs / sizeof verbs[0]; ++i) {
+            const char *arg = NULL;
+            size_t al = 0;
+            if (!verb_is(rest, rl, verbs[i].word, &arg, &al)) continue;
+            if ((al != 0) != verbs[i].path || al >= sizeof out->text) return CTL_ERR_PARSE;
+            memcpy(out->text, arg, al);
+            out->text[al] = '\0';
+            snprintf(out->name, sizeof out->name, "%s", verbs[i].flag);
+            out->kind = CTL_CMD_AWG;
+            return CTL_OK;
+        }
+        return CTL_ERR_PARSE;
+    }
+    if (verb_is(line, len, "UPDATE", &rest, &rl)) {
+        if (rl == 0 || rl >= sizeof out->text) return CTL_ERR_PARSE;
+        memcpy(out->text, rest, rl);
+        out->text[rl] = '\0';
+        out->kind = CTL_CMD_UPDATE;
         return CTL_OK;
     }
     if (verb_is(line, len, "FETCH", &rest, &rl)) {

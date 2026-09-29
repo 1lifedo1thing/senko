@@ -8,8 +8,9 @@
 #include "core/happ.h"
 #include "core/store.h"
 #include "daemon_ctl.h"
-#include "routing_exec.h"
+#include "egress.h"
 #include "settings.h"
+#include "senkod_helper.h"
 #include "../common/senko_paths.h"
 
 #include <errno.h>
@@ -39,18 +40,12 @@
 #define S_ISSOCK(m) (((m) & S_IFMT) == S_IFSOCK)
 #endif
 
-#define AWG_PID_PATH "/var/run/senkoawgd.pid"
-
 /* one connect has to answer while a client is still waiting, and every attempt
    carries a dns lookup, a handshake and a verify probe */
 #define CTL_FAILOVER_MAX_TRIES 8
 
-static int awg_tunnel_running(void) {
-    FILE *f = fopen(AWG_PID_PATH, "r");
-    long pid = 0;
-    int ok = f && fscanf(f, "%ld", &pid) == 1 && pid > 1 && kill((pid_t)pid, 0) == 0;
-    if (f) fclose(f);
-    return ok;
+static int awg_tunnel_running(const ctl_server_t *s) {
+    return s->awg_busy && s->awg_busy(s->apply_ctx);
 }
 
 static void set_nonblock(int fd) {
@@ -157,6 +152,7 @@ ctls_status_t ctl_server_init(ctl_server_t *s, const char *path,
     s->ping_pipe[0] = -1;
     s->ping_pipe[1] = -1;
     for (size_t i = 0; i < CTL_SERVER_MAX_CLIENTS; ++i) s->clients[i].fd = -1;
+    helper_jobs_init(&s->helpers);
     s->apply = apply;
     s->apply_ctx = apply_ctx;
     for (size_t i = 0; i < STORE_MAX_SERVERS; ++i) s->ping_ms[i] = -1;
@@ -210,7 +206,7 @@ ctls_status_t ctl_server_init(ctl_server_t *s, const char *path,
         s->ping_pipe[0] = s->ping_pipe[1] = -1;
         return CTLS_ERR_BIND;
     }
-    if (listen(fd, 4) != 0) {
+    if (listen(fd, CTL_SERVER_MAX_CLIENTS) != 0) {
         close(fd);
         unlink(path);
         close(s->ping_pipe[0]);
@@ -310,9 +306,21 @@ static size_t build_stats(ctl_server_t *s, char *line, size_t cap) {
     return n;
 }
 
+static int any_authed_client(const ctl_server_t *s) {
+    for (size_t i = 0; i < CTL_SERVER_MAX_CLIENTS; ++i)
+        if (s->clients[i].fd >= 0 && s->clients[i].authed) return 1;
+    return 0;
+}
+
+/* the counters only go to authed clients, so with none connected there is
+   nothing to wake for */
+static int stats_wanted(const ctl_server_t *s) {
+    return s->stats && any_authed_client(s);
+}
+
 static void broadcast_stats(ctl_server_t *s) {
     uint64_t now = stat_now_ms();
-    if (!s->stats || (s->stat_at_ms && now - s->stat_at_ms < 1000)) return;
+    if (!stats_wanted(s) || (s->stat_at_ms && now - s->stat_at_ms < 1000)) return;
     s->stat_at_ms = now;
     char line[64];
     size_t n = build_stats(s, line, sizeof line);
@@ -342,6 +350,12 @@ void ctl_server_set_flush(ctl_server_t *s, ctl_flush_fn flush) {
 void ctl_server_set_native_config(ctl_server_t *s, ctl_native_config_fn render) {
     if (!s) return;
     s->native_config = render;
+}
+
+void ctl_server_set_awg(ctl_server_t *s, ctl_awg_fn awg, ctl_awg_busy_fn busy) {
+    if (!s) return;
+    s->awg = awg;
+    s->awg_busy = busy;
 }
 
 /* every fact goes through one appender so a full buffer ends the report rather
@@ -434,7 +448,14 @@ static void accept_one(ctl_server_t *s) {
         return;
     }
     ctl_client_t *c = alloc_client(s);
-    if (!c) { close(cfd); return; }
+    if (!c) {
+        static const char busy[] = "ERR too many control connections\n";
+        fprintf(stderr, "senkod: control connection refused, all %d slots busy\n",
+                CTL_SERVER_MAX_CLIENTS);
+        (void)write(cfd, busy, sizeof busy - 1);
+        close(cfd);
+        return;
+    }
     set_nonblock(cfd);
     c->fd = cfd;
     c->authed = 0;
@@ -493,12 +514,15 @@ static void client_write(ctl_client_t *c, const char *buf, size_t len) {
     (void)client_flush(c);
 }
 
+typedef struct ctl_fetch_job ctl_fetch_job_t;
+
 typedef struct {
     int slot;
     int fd;
     uint64_t generation;
     int server_index;
     int ms;
+    ctl_fetch_job_t *fetch; /* set when a fetch thread finished instead */
 } ctl_ping_result_t;
 
 typedef struct {
@@ -561,13 +585,16 @@ static void finish_ping_result(ctl_server_t *s, const ctl_ping_result_t *result)
         client_write(c, reply, rn);
 }
 
+static void finish_fetch_job(ctl_server_t *s, ctl_fetch_job_t *job);
+
 static void drain_ping_results(ctl_server_t *s) {
     if (!s || s->ping_pipe[0] < 0) return;
     for (;;) {
         ctl_ping_result_t result;
         ssize_t n = read(s->ping_pipe[0], &result, sizeof result);
         if (n == (ssize_t)sizeof result) {
-            finish_ping_result(s, &result);
+            if (result.fetch) finish_fetch_job(s, result.fetch);
+            else finish_ping_result(s, &result);
             continue;
         }
         if (n < 0 && errno == EINTR) continue;
@@ -609,6 +636,7 @@ static const char *server_proto_name(const vl_server_t *sv) {
     if (sv->proto == VL_PROTO_TROJAN) return "trojan";
     if (sv->proto == VL_PROTO_SHADOWSOCKS) return "shadowsocks";
     if (sv->proto == VL_PROTO_HYSTERIA2) return "hysteria2";
+    if (sv->proto == VL_PROTO_UNSUPPORTED) return "unsupported";
     return "vless";
 }
 
@@ -635,6 +663,10 @@ static const char *server_sec_name(const vl_server_t *sv) {
 #define FETCH_CHUNK_RAW 384
 #define FETCH_BODY_MAX (512 * 1024)
 
+/* every request goes out as happ, because panels that filter on the client name
+   answer that one. public aggregator feeds run to several megabytes; their first
+   512 KB already carries more nodes than the store holds, so a cut body keeps
+   its whole entries instead of failing the subscription */
 static int fetch_body_alloc(ctl_server_t *s, const char *url,
                             const char *request_header,
                             unsigned char **body_out, size_t *len_out,
@@ -650,23 +682,22 @@ static int fetch_body_alloc(ctl_server_t *s, const char *url,
         free(body);
         return -1;
     }
+    if (meta && meta->body_cut && cfg_subscription_prefix((char *)body, &len) != 0) {
+        url_t u;
+        snprintf(meta->error, sizeof meta->error,
+                 "the subscription from %.96s is too large",
+                 url_parse(url, &u) == URL_OK ? u.host : "the server");
+        free(body);
+        return -1;
+    }
     *body_out = body;
     *len_out = len;
     return 0;
 }
 
-/* every request goes out as happ, because panels that filter on the client name
-   answer that one. a bundle senko cannot open is reported as such rather than
-   asked for again under a second name */
-static int fetch_body_alloc(ctl_server_t *s, const char *url,
-                            const char *request_header,
-                            unsigned char **body_out, size_t *len_out,
-                            ctl_fetch_meta_t *meta);
-
 #define LOG_TAIL_MAX (48 * 1024)
 
-/* a pf ruleset with a full routing table in it is the largest thing this verb
-   can be asked for, and the writer that produced it caps at the same size */
+/* the utun route plan is far smaller, but the verb keeps its old ceiling */
 #define FWCONF_MAX (64 * 1024)
 #define FWLINE_MAX 512
 
@@ -692,6 +723,75 @@ static void sub_name_from_url(const char *url, char *out, size_t cap) {
     out[n] = '\0';
 }
 
+typedef enum {
+    FETCH_FOR_BODY = 0, /* FETCH streams the body back */
+    FETCH_FOR_IMPORT,   /* the feed a happ link named, just registered */
+    FETCH_FOR_REFRESH,  /* REFRESH from a client */
+    FETCH_FOR_SCHEDULE  /* the refresh timer, nobody waiting */
+} fetch_purpose_t;
+
+struct ctl_fetch_job {
+    ctl_server_t *server;
+    fetch_purpose_t purpose;
+    int slot;
+    int fd;
+    uint64_t generation;
+    int sub_index;
+    char url[2048];
+    char header[512];
+    int rc;
+    unsigned char *body;
+    size_t len;
+    ctl_fetch_meta_t meta;
+};
+
+static void *run_fetch_job(void *arg) {
+    ctl_fetch_job_t *job = (ctl_fetch_job_t *)arg;
+    job->rc = fetch_body_alloc(job->server, job->url,
+                               job->header[0] ? job->header : NULL,
+                               &job->body, &job->len, &job->meta);
+    ctl_ping_result_t result;
+    memset(&result, 0, sizeof result);
+    result.fetch = job;
+    ping_result_write(job->server, &result);
+    return NULL;
+}
+
+/* c is who gets the answer, NULL for the timer. sub_index is -1 for FETCH */
+static int start_fetch_job(ctl_server_t *s, ctl_client_t *c, fetch_purpose_t purpose,
+                           int sub_index, const char *url, const char *header) {
+    if (!s || !s->fetch || !url || s->fetch_active >= CTL_SERVER_MAX_CLIENTS) return -1;
+    if (sub_index >= STORE_MAX_SUBS || (sub_index >= 0 && s->sub_fetching[sub_index]))
+        return -1;
+    ctl_fetch_job_t *job = (ctl_fetch_job_t *)calloc(1, sizeof *job);
+    if (!job) return -1;
+    job->server = s;
+    job->purpose = purpose;
+    job->sub_index = sub_index;
+    job->slot = -1;
+    job->fd = -1;
+    if (c) {
+        job->slot = (int)(c - s->clients);
+        job->fd = c->fd;
+        job->generation = c->generation;
+    }
+    int n = snprintf(job->url, sizeof job->url, "%s", url);
+    int hn = snprintf(job->header, sizeof job->header, "%s", header ? header : "");
+    if (n < 0 || (size_t)n >= sizeof job->url || hn < 0 || (size_t)hn >= sizeof job->header) {
+        free(job);
+        return -1;
+    }
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, run_fetch_job, job) != 0) {
+        free(job);
+        return -1;
+    }
+    pthread_detach(thread);
+    s->fetch_active++;
+    if (sub_index >= 0) s->sub_fetching[sub_index] = 1;
+    return 0;
+}
+
 /* register the feed the deep link pointed at, then pull it once so the user
    sees nodes instead of an empty section */
 static void import_subscription_url(ctl_server_t *s, ctl_client_t *c,
@@ -700,10 +800,6 @@ static void import_subscription_url(ctl_server_t *s, ctl_client_t *c,
     size_t rn = 0;
     char name[128];
     size_t si = 0;
-    unsigned char *blob = NULL;
-    size_t blen = 0;
-    size_t added = 0;
-    ctl_fetch_meta_t meta;
 
     sub_name_from_url(url, name, sizeof name);
     if (store_add_sub(&s->engine.store, name, url, &si) != STORE_OK) {
@@ -718,32 +814,48 @@ static void import_subscription_url(ctl_server_t *s, ctl_client_t *c,
             client_write(c, reply, rn);
         return;
     }
-    memset(&meta, 0, sizeof meta);
-    if (fetch_body_alloc(s, url, NULL, &blob, &blen, &meta) != 0) {
-        if (ctl_build_ok("subscription added, refresh failed", reply, sizeof reply, &rn) == CTL_OK)
-            client_write(c, reply, rn);
-        return;
-    }
-    if (!blob || meta.gated ||
-        store_refresh_sub(&s->engine.store, si, (const char *)blob, blen,
-                          &added) != STORE_OK) {
-        const char *why = blob ? cfg_reject_reason((const char *)blob, blen, url) : NULL;
-        char msg[224];
-        snprintf(msg, sizeof msg, "subscription added, %s",
-                 why ? why : "refresh failed");
-        free(blob);
-        if (ctl_build_ok(msg, reply, sizeof reply, &rn) == CTL_OK)
-            client_write(c, reply, rn);
-        return;
-    }
-    if (meta.expire) store_set_sub_expire(&s->engine.store, si, meta.expire);
-    store_set_sub_meta(&s->engine.store, si, meta.upload, meta.download,
-                       meta.total, meta.description, meta.support_url);
-    free(blob);
-    if (s->persist) s->persist(s->apply_ctx, &s->engine.store);
-    snprintf(name, sizeof name, "subscription added, %zu server(s)", added);
-    if (ctl_build_ok(name, reply, sizeof reply, &rn) == CTL_OK)
+    if (start_fetch_job(s, c, FETCH_FOR_IMPORT, (int)si, url, NULL) != 0 &&
+        ctl_build_ok("subscription added, refresh failed: senkod is busy",
+                     reply, sizeof reply, &rn) == CTL_OK)
         client_write(c, reply, rn);
+}
+
+/* the answer to an import once its feed came back (rc is the fetch result) */
+static void import_result(ctl_server_t *s, size_t si, int rc,
+                          const unsigned char *blob, size_t blen,
+                          const ctl_fetch_meta_t *meta, char *msg, size_t cap) {
+    size_t added = 0;
+    char skipped[160];
+    if (rc != 0) {
+        snprintf(msg, cap, "subscription added, refresh failed: %s",
+                 meta->error[0] ? meta->error : "no reason given");
+        return;
+    }
+    cfg_import_stats_t stats;
+    memset(&stats, 0, sizeof stats);
+    if (!blob || meta->gated ||
+        store_refresh_sub_ex(&s->engine.store, si, (const char *)blob, blen,
+                             &added, &stats, NULL) != STORE_OK) {
+        const char *why = blob ? cfg_reject_reason((const char *)blob, blen,
+                                                   s->engine.store.subs[si].url) : NULL;
+        cfg_import_stats_text(&stats, skipped, sizeof skipped);
+        if (why)
+            snprintf(msg, cap, "subscription added, %s", why);
+        else if (skipped[0])
+            snprintf(msg, cap, "subscription added, no server senko can run%s (%s)",
+                     meta->body_cut ? " in the first 512 KB" : "", skipped);
+        else
+            snprintf(msg, cap, "subscription added, refresh failed");
+        return;
+    }
+    if (meta->expire) store_set_sub_expire(&s->engine.store, si, meta->expire);
+    store_set_sub_meta(&s->engine.store, si, meta->upload, meta->download,
+                       meta->total, meta->description, meta->support_url);
+    if (s->persist) s->persist(s->apply_ctx, &s->engine.store);
+    cfg_import_stats_text(&stats, skipped, sizeof skipped);
+    snprintf(msg, cap, "subscription added, %zu server(s)%s%s%s", added,
+             meta->body_cut ? " from the first 512 KB" : "",
+             skipped[0] ? ", " : "", skipped);
 }
 
 /* read a staged import file whole; the cap is what the parser is allowed to see */
@@ -817,7 +929,8 @@ static void fetch_reply_body(ctl_client_t *c,
     if (ln > 0) client_write(c, line, (size_t)ln);
 }
 
-static int refresh_subscription(ctl_server_t *s, int si, char *msg, size_t cap);
+static int refresh_start(ctl_server_t *s, ctl_client_t *c, fetch_purpose_t purpose,
+                         int si, char *msg, size_t cap);
 
 typedef struct {
     char layer[24];
@@ -838,8 +951,9 @@ static const char *connect_verify_layer(const char *reason) {
 
 static void connect_failure_from_apply(ctl_server_t *s, connect_failure_t *f, int r) {
     const char *detail = (s && s->reason) ? s->reason(s->apply_ctx) : NULL;
-    if ((r == DCTL_ERR_ROUTING || r == DCTL_ERR_GO) && detail && detail[0]) {
-        connect_failure_set(f, r == DCTL_ERR_GO ? "tunnel" : "routing", detail);
+    if ((r == DCTL_ERR_ROUTING || r == DCTL_ERR_CORE || r == DCTL_ERR_UTUN) &&
+        detail && detail[0]) {
+        connect_failure_set(f, r == DCTL_ERR_ROUTING ? "routing" : "tunnel", detail);
         return;
     }
     if (r == DCTL_ERR_TRANSPORT)
@@ -851,9 +965,11 @@ static void connect_failure_from_apply(ctl_server_t *s, connect_failure_t *f, in
     else if (r == DCTL_ERR_DNS)
         connect_failure_set(f, "server", "dns resolution failed");
     else if (r == DCTL_ERR_ROUTING)
-        connect_failure_set(f, "routing", "routing setup failed");
-    else if (r == DCTL_ERR_GO)
-        connect_failure_set(f, "tunnel", "the go backend core could not start; open System Logs for the exact cause");
+        connect_failure_set(f, "routing", "the connect hook could not start");
+    else if (r == DCTL_ERR_CORE)
+        connect_failure_set(f, "tunnel", "senko-core could not start; open System Logs for the exact cause");
+    else if (r == DCTL_ERR_UTUN)
+        connect_failure_set(f, "tunnel", "the embedded utun backend could not start");
     else
         connect_failure_set(f, "server", "unknown error");
 }
@@ -897,6 +1013,15 @@ static int client_still_open(const ctl_client_t *c) {
    whole table rather than keeping entries that now name another server */
 static void forget_pings(ctl_server_t *s) {
     for (size_t i = 0; i < STORE_MAX_SERVERS; ++i) s->ping_ms[i] = -1;
+}
+
+/* moved[old] is the new index or -1, as store_refresh_sub_ex reports it */
+static void remap_pings(ctl_server_t *s, const int *moved) {
+    int old[STORE_MAX_SERVERS];
+    memcpy(old, s->ping_ms, sizeof old);
+    forget_pings(s);
+    for (size_t i = 0; i < STORE_MAX_SERVERS; ++i)
+        if (moved[i] >= 0 && moved[i] < STORE_MAX_SERVERS) s->ping_ms[moved[i]] = old[i];
 }
 
 /* only a probe that reached the server itself belongs here: a measurement
@@ -1172,19 +1297,34 @@ void ctl_server_tunnel_lost(ctl_server_t *s) {
     schedule_retry(s, ctl_now_ms());
 }
 
-/* the redirect rules name the address the egress had when they went up, so a
-   wifi to cellular move leaves a tunnel that looks connected and carries
+/* the tunnel pins its server to the gateway the egress had when it went up,
+   so a wifi to cellular move leaves a tunnel that looks connected and carries
    nothing. SystemConfiguration is not linked into the armv7 slice, and its
    reachability callbacks need a run loop the daemon does not have, so the
    interface list is polled instead */
+#define EGRESS_CHECK_MS 2000
+
+/* a network move only matters to a tunnel that is up or being redialed */
+static int egress_watched(const ctl_server_t *s) {
+    if (!s->settings || !s->settings->auto_reconnect) return 0;
+    return s->engine.state == CTL_STATE_CONNECTED || s->retry_at_ms ||
+        awg_tunnel_running(s);
+}
+
 static void check_egress_change(ctl_server_t *s, long now) {
-    if (!s->settings || !s->settings->auto_reconnect) return;
-    if (s->egress_check_ms && now - s->egress_check_ms < 2000) return;
+    if (!egress_watched(s)) {
+/* the next tunnel starts from its own network, not the one senko idled on */
+        s->egress_iface[0] = '\0';
+        s->egress_ip[0] = '\0';
+        s->egress_check_ms = 0;
+        return;
+    }
+    if (s->egress_check_ms && now - s->egress_check_ms < EGRESS_CHECK_MS) return;
     s->egress_check_ms = now;
 
     char name[sizeof s->egress_iface];
     char ip[sizeof s->egress_ip];
-    if (routing_exec_egress_snapshot(name, sizeof name, ip, sizeof ip) != 0) return;
+    if (egress_snapshot(name, sizeof name, ip, sizeof ip) != 0) return;
 
     int first = (s->egress_iface[0] == '\0');
     int changed = strcmp(name, s->egress_iface) != 0 ||
@@ -1192,7 +1332,13 @@ static void check_egress_change(ctl_server_t *s, long now) {
     snprintf(s->egress_iface, sizeof s->egress_iface, "%s", name);
     snprintf(s->egress_ip, sizeof s->egress_ip, "%s", ip);
     if (first || !changed) return;
-    if (s->engine.state != CTL_STATE_CONNECTED && !s->retry_at_ms) return;
+    if (awg_tunnel_running(s) && s->awg) {
+        char status[256];
+        fprintf(stderr, "senkod: egress moved to %s %s, rebuilding the amneziawg tunnel\n",
+                name, ip);
+        (void)s->awg(s->apply_ctx, "--awg-restart", NULL, status, sizeof status);
+        return;
+    }
 
     fprintf(stderr, "senkod: egress moved to %s %s, rebuilding the tunnel\n",
             name, ip);
@@ -1202,13 +1348,20 @@ static void check_egress_change(ctl_server_t *s, long now) {
     publish_state(s, CTL_STATE_CONNECTING);
 }
 
-/* a refresh blocks the control loop while it fetches, so at most one goes per
-   pass and the most overdue subscription is the one that gets it */
-static int refresh_subscription(ctl_server_t *s, int si, char *msg, size_t cap);
+/* the refresh timer starts at most one pull per pass, the most overdue
+   subscription first. the pull itself runs on a fetch thread */
+static int refresh_start(ctl_server_t *s, ctl_client_t *c, fetch_purpose_t purpose,
+                         int si, char *msg, size_t cap);
+
+#define SUB_CHECK_MS 60000
+
+static int refresh_scheduled(const ctl_server_t *s) {
+    return s->settings && s->settings->sub_refresh_hours > 0 && s->fetch;
+}
 
 static void check_scheduled_refresh(ctl_server_t *s, long now) {
-    if (!s->settings || s->settings->sub_refresh_hours <= 0 || !s->fetch) return;
-    if (s->sub_check_ms && now - s->sub_check_ms < 60000) return;
+    if (!refresh_scheduled(s)) return;
+    if (s->sub_check_ms && now - s->sub_check_ms < SUB_CHECK_MS) return;
     s->sub_check_ms = now;
 
     uint64_t nowsec = (uint64_t)ctl_engine_now();
@@ -1216,7 +1369,7 @@ static void check_scheduled_refresh(ctl_server_t *s, long now) {
     int pick = -1;
     uint64_t oldest = 0;
     for (int i = 0; i < STORE_MAX_SUBS; ++i) {
-        if (!s->engine.store.subs[i].used) continue;
+        if (!s->engine.store.subs[i].used || s->sub_fetching[i]) continue;
         if (s->sub_retry_at_ms[i] && now < s->sub_retry_at_ms[i]) continue;
         uint64_t last = s->engine.store.subs[i].last_refresh;
         if (last && nowsec < last + period) continue;
@@ -1225,17 +1378,9 @@ static void check_scheduled_refresh(ctl_server_t *s, long now) {
     if (pick < 0) return;
 
     char msg[352];
-    if (refresh_subscription(s, pick, msg, sizeof msg) == 0) {
-        s->sub_retry_at_ms[pick] = 0;
-        fprintf(stderr, "senkod: scheduled refresh of subscription %d: %s\n",
+    if (refresh_start(s, NULL, FETCH_FOR_SCHEDULE, pick, msg, sizeof msg) != 0)
+        fprintf(stderr, "senkod: scheduled refresh of subscription %d not started: %s\n",
                 pick, msg);
-        return;
-    }
-/* a panel that is down must not be pulled once a minute for the rest of the
-   day, and the schedule itself cannot tell a broken url from a flaky link */
-    s->sub_retry_at_ms[pick] = now + 15 * 60 * 1000;
-    fprintf(stderr, "senkod: scheduled refresh of subscription %d failed: %s\n",
-            pick, msg);
 }
 
 void ctl_server_tick(ctl_server_t *s) {
@@ -1261,6 +1406,24 @@ void ctl_server_tick(ctl_server_t *s) {
     check_scheduled_refresh(s, now);
 }
 
+static void lower_wait_until(int *timeout_ms, long now, long due) {
+    long left = due - now;
+    if (left < 0) left = 0;
+    if (*timeout_ms < 0 || left < *timeout_ms) *timeout_ms = (int)left;
+}
+
+/* the soonest moment ctl_server_tick has work, so an idle daemon sleeps in
+   poll() instead of waking on a fixed beat */
+static void lower_to_tick(const ctl_server_t *s, int *timeout_ms) {
+    if (!s->apply) return;
+    long now = ctl_now_ms();
+    if (egress_watched(s))
+        lower_wait_until(timeout_ms, now, s->egress_check_ms + EGRESS_CHECK_MS);
+    if (s->retry_at_ms) lower_wait_until(timeout_ms, now, s->retry_at_ms);
+    if (refresh_scheduled(s))
+        lower_wait_until(timeout_ms, now, s->sub_check_ms + SUB_CHECK_MS);
+}
+
 static int server_supported(const vl_server_t *sv) {
     return cfg_validate_server(sv, NULL, 0);
 }
@@ -1268,14 +1431,11 @@ static int server_supported(const vl_server_t *sv) {
 /* one refresh path for the REFRESH command and for the scheduled pull: the panel
    quirks handled here (the happ retry, the gate placeholder, the reject reason)
    are not something two call sites could keep in step. msg carries the text the
-   caller reports, success or failure */
-static int refresh_subscription(ctl_server_t *s, int si, char *msg, size_t cap) {
+   caller reports when the pull cannot start */
+static int refresh_start(ctl_server_t *s, ctl_client_t *c, fetch_purpose_t purpose,
+                         int si, char *msg, size_t cap) {
     if (!s || !msg || cap == 0) return -1;
     msg[0] = '\0';
-    if (s->refresh_in_progress) {
-        snprintf(msg, cap, "refresh in progress");
-        return -1;
-    }
     if (!s->fetch) {
         snprintf(msg, cap, "refresh not supported");
         return -1;
@@ -1284,65 +1444,160 @@ static int refresh_subscription(ctl_server_t *s, int si, char *msg, size_t cap) 
         snprintf(msg, cap, "no such subscription");
         return -1;
     }
-
-    s->refresh_in_progress = 1;
-    unsigned char *blob = NULL;
-    size_t blen = 0;
-    ctl_fetch_meta_t meta;
-    memset(&meta, 0, sizeof meta);
-    if (fetch_body_alloc(s, s->engine.store.subs[si].url,
-                         s->engine.store.subs[si].header,
-                         &blob, &blen, &meta) != 0) {
-        s->refresh_in_progress = 0;
-        snprintf(msg, cap, "fetch failed");
+    if (s->sub_fetching[si]) {
+        snprintf(msg, cap, "refresh in progress");
         return -1;
     }
-    if (meta.gated && !(s->settings && s->settings->sub_ignore_gating)) {
+    if (start_fetch_job(s, c, purpose, si, s->engine.store.subs[si].url,
+                        s->engine.store.subs[si].header) != 0) {
+        snprintf(msg, cap, "senkod is busy, try again");
+        return -1;
+    }
+    return 0;
+}
+
+/* the pulled feed into the store; msg is the text the caller reports */
+static int refresh_result(ctl_server_t *s, int si, int rc,
+                          const unsigned char *blob, size_t blen,
+                          const ctl_fetch_meta_t *meta, char *msg, size_t cap) {
+    if (rc != 0) {
+        snprintf(msg, cap, "fetch failed: %s", meta->error[0] ? meta->error : "no reason given");
+        return -1;
+    }
+    if (meta->gated && !(s->settings && s->settings->sub_ignore_gating)) {
 /* the panel answers a device it will not serve with a one entry placeholder
    profile, so keeping the previous nodes is the only correct outcome */
-        free(blob);
-        s->refresh_in_progress = 0;
-        snprintf(msg, cap, "subscription refused this device: %s", meta.gate_reason);
+        snprintf(msg, cap, "subscription refused this device: %s", meta->gate_reason);
         return -1;
     }
-    if (meta.gated)
+    if (meta->gated)
         fprintf(stderr, "senkod: taking a device gated feed anyway: %s\n",
-                meta.gate_reason);
+                meta->gate_reason);
     size_t added = 0;
-    if (store_refresh_sub(&s->engine.store, (size_t)si, (const char *)blob, blen,
-                          &added) != STORE_OK) {
+    cfg_import_stats_t stats;
+    char skipped[160];
+    int moved[STORE_MAX_SERVERS];
+    if (store_refresh_sub_ex(&s->engine.store, (size_t)si, (const char *)blob, blen,
+                             &added, &stats, moved) != STORE_OK) {
 /* "parse failed" tells the user nothing they can act on, and the two answers a
    panel actually gives instead of a feed are both nameable */
         const char *why = cfg_reject_reason((const char *)blob, blen,
                                             s->engine.store.subs[si].url);
-        free(blob);
-        s->refresh_in_progress = 0;
-        snprintf(msg, cap, "%s", why ? why : "refresh parse failed");
+        cfg_import_stats_text(&stats, skipped, sizeof skipped);
+        if (why) snprintf(msg, cap, "%s", why);
+        else if (skipped[0]) snprintf(msg, cap, "no server senko can run%s (%s)",
+                                      meta->body_cut ? " in the first 512 KB" : "", skipped);
+        else snprintf(msg, cap, "refresh parse failed");
         return -1;
     }
-    free(blob);
-    if (meta.expire)
-        store_set_sub_expire(&s->engine.store, (size_t)si, meta.expire);
-    store_set_sub_meta(&s->engine.store, (size_t)si, meta.upload,
-                       meta.download, meta.total, meta.description,
-                       meta.support_url);
-    if (meta.title[0]) {
+    cfg_import_stats_text(&stats, skipped, sizeof skipped);
+    if (meta->expire)
+        store_set_sub_expire(&s->engine.store, (size_t)si, meta->expire);
+    store_set_sub_meta(&s->engine.store, (size_t)si, meta->upload,
+                       meta->download, meta->total, meta->description,
+                       meta->support_url);
+    if (meta->title[0]) {
         url_t u;
         if (url_parse(s->engine.store.subs[si].url, &u) == URL_OK)
-            store_set_sub_title(&s->engine.store, (size_t)si, meta.title, u.host);
+            store_set_sub_title(&s->engine.store, (size_t)si, meta->title, u.host);
     }
     store_set_sub_refresh(&s->engine.store, (size_t)si,
                           (uint64_t)ctl_engine_now());
-/* a refresh renumbers the catalog, so every measurement taken against the old
-   indexes is now pointing at a different server */
-    forget_pings(s);
+/* a refresh renumbers the catalog; each measurement follows its server to the
+   new index, so failover keeps its latency order across a refresh */
+    remap_pings(s, moved);
     if (s->persist) s->persist(s->apply_ctx, &s->engine.store);
-    s->refresh_in_progress = 0;
-    if (s->engine.store.n >= STORE_MAX_SERVERS)
-        snprintf(msg, cap, "refreshed %zu server(s) (list full)", added);
-    else
-        snprintf(msg, cap, "refreshed %zu server(s)", added);
+    snprintf(msg, cap, "refreshed %zu server(s)%s%s%s%s", added,
+             meta->body_cut ? " from the first 512 KB" : "",
+             s->engine.store.n >= STORE_MAX_SERVERS ? " (list full)" : "",
+             skipped[0] ? ", " : "", skipped);
     return 0;
+}
+
+static void finish_fetch_job(ctl_server_t *s, ctl_fetch_job_t *job) {
+    if (s->fetch_active > 0) s->fetch_active--;
+    int si = job->sub_index;
+    if (si >= 0 && si < STORE_MAX_SUBS) s->sub_fetching[si] = 0;
+    ctl_client_t *c = NULL;
+    if (job->slot >= 0 && job->slot < CTL_SERVER_MAX_CLIENTS &&
+        s->clients[job->slot].fd == job->fd &&
+        s->clients[job->slot].generation == job->generation)
+        c = &s->clients[job->slot];
+/* the list can change while a feed downloads: a deleted or replaced
+   subscription must not receive the nodes pulled for the old one */
+    int same_sub = si >= 0 && si < STORE_MAX_SUBS && s->engine.store.subs[si].used &&
+                   strcmp(s->engine.store.subs[si].url, job->url) == 0;
+    char msg[352];
+    char reply[384];
+    size_t rn = 0;
+    int r = 0;
+    if (job->purpose == FETCH_FOR_BODY) {
+        if (job->rc == 0) {
+            if (c) fetch_reply_body(c, job->body, job->len);
+            free(job->body);
+            free(job);
+            return;
+        }
+        snprintf(msg, sizeof msg, "fetch failed: %s",
+                 job->meta.error[0] ? job->meta.error : "no reason given");
+        r = -1;
+    } else if (!same_sub) {
+        snprintf(msg, sizeof msg, "the subscription was changed during the refresh");
+        r = job->purpose == FETCH_FOR_IMPORT ? 0 : -1;
+    } else if (job->purpose == FETCH_FOR_IMPORT) {
+        import_result(s, (size_t)si, job->rc, job->body, job->len, &job->meta,
+                      msg, sizeof msg);
+    } else {
+        r = refresh_result(s, si, job->rc, job->body, job->len, &job->meta,
+                           msg, sizeof msg);
+    }
+    if (job->purpose == FETCH_FOR_SCHEDULE && same_sub) {
+/* a panel that is down must not be pulled once a minute for the rest of the
+   day, and the schedule itself cannot tell a broken url from a flaky link */
+        s->sub_retry_at_ms[si] = r == 0 ? 0 : ctl_now_ms() + 15 * 60 * 1000;
+        fprintf(stderr, "senkod: scheduled refresh of subscription %d%s: %s\n",
+                si, r == 0 ? "" : " failed", msg);
+    }
+    if (c && (r == 0 ? ctl_build_ok(msg, reply, sizeof reply, &rn)
+                     : ctl_build_err(msg, reply, sizeof reply, &rn)) == CTL_OK)
+        client_write(c, reply, rn);
+    free(job->body);
+    free(job);
+}
+
+/* the helper's own lines, then AWGEND. a helper that failed without a word
+   still gets an "error" line, the form the app already shows for amneziawg */
+static void helper_job_finished(void *ctx, const helper_job_done_t *job) {
+    ctl_server_t *s = ctx;
+    if (job->client_slot < 0 || job->client_slot >= CTL_SERVER_MAX_CLIENTS) return;
+    ctl_client_t *c = &s->clients[job->client_slot];
+    if (c->fd < 0 || c->generation != job->client_generation) return;
+    char line[HELPER_JOB_OUTPUT_MAX + 16];
+    size_t start = 0;
+    int wrote = 0;
+    for (size_t i = 0; i <= job->output_len; ++i) {
+        if (i < job->output_len && job->output[i] != '\n') continue;
+        size_t n = i - start;
+        while (n > 0 && job->output[start + n - 1] == '\r') --n;
+        if (n > 0) {
+            int ln = snprintf(line, sizeof line, "AWG %.*s\n", (int)n, job->output + start);
+            if (ln > 0) client_write(c, line, (size_t)ln);
+            wrote = 1;
+        }
+        start = i + 1;
+    }
+    if (!wrote && job->timed_out) {
+        int ln = snprintf(line, sizeof line, "AWG error amneziawg request did not finish in %d s\n",
+                          HELPER_JOB_TIMEOUT_MS / 1000);
+        if (ln > 0) client_write(c, line, (size_t)ln);
+    } else if (!wrote && job->exit_code != 0) {
+        int ln = snprintf(line, sizeof line, "AWG error amneziawg helper failed (exit %d)\n",
+                          job->exit_code);
+        if (ln > 0) client_write(c, line, (size_t)ln);
+    }
+    int ln = snprintf(line, sizeof line, "AWGEND %d %lld\n", job->exit_code,
+                      (long long)job->elapsed_ms);
+    if (ln > 0) client_write(c, line, (size_t)ln);
 }
 
 static void dispatch_line(ctl_server_t *s, ctl_client_t *c,
@@ -1499,7 +1754,7 @@ static void dispatch_line(ctl_server_t *s, ctl_client_t *c,
     if (cmd.kind == CTL_CMD_FWCONF) {
         char reply[96]; size_t rn = 0;
         if (!s->fwconf) {
-            if (ctl_build_err("no firewall ruleset: this device is not on the pf or ipfw backend", reply, sizeof reply, &rn) == CTL_OK)
+            if (ctl_build_err("no route plan: the utun tunnel is not running", reply, sizeof reply, &rn) == CTL_OK)
                 client_write(c, reply, rn);
             return;
         }
@@ -1512,7 +1767,7 @@ static void dispatch_line(ctl_server_t *s, ctl_client_t *c,
         }
         if (s->fwconf(s->apply_ctx, conf, FWCONF_MAX, &clen) != 0 || clen == 0) {
             free(conf);
-            if (ctl_build_err("no firewall ruleset: this device is not on the pf or ipfw backend", reply, sizeof reply, &rn) == CTL_OK)
+            if (ctl_build_err("no route plan: the utun tunnel is not running", reply, sizeof reply, &rn) == CTL_OK)
                 client_write(c, reply, rn);
             return;
         }
@@ -1545,6 +1800,14 @@ static void dispatch_line(ctl_server_t *s, ctl_client_t *c,
         char reason[96];
         reason[0] = '\0';
         if (strcmp(cmd.name, "rules") == 0) {
+/* a running tunnel reads the ruleset on its own thread */
+            if (s->engine.state == CTL_STATE_CONNECTED ||
+                s->engine.state == CTL_STATE_CONNECTING) {
+                if (ctl_build_err("disconnect before changing rules", reply,
+                                  sizeof reply, &rn) == CTL_OK)
+                    client_write(c, reply, rn);
+                return;
+            }
 /* the ruleset belongs to the store, so it is cleared here and saved with it
    rather than behind the daemon's back */
             size_t had = s->engine.store.rules.count;
@@ -1616,6 +1879,14 @@ static void dispatch_line(ctl_server_t *s, ctl_client_t *c,
                 client_write(c, reply, rn);
             return;
         }
+        const vl_server_t *target = &s->engine.store.servers[cmd.server_index];
+/* a placeholder has an address to reach but nothing senko can speak to it */
+        if (target->proto == VL_PROTO_UNSUPPORTED && strcmp(cmd.name, "tcp") != 0) {
+            if (ctl_build_err(target->unsupported[0] ? target->unsupported : "unsupported",
+                              reply, sizeof reply, &rn) == CTL_OK)
+                client_write(c, reply, rn);
+            return;
+        }
         char reason[96];
         reason[0] = '\0';
         ctl_check_trace_t trace;
@@ -1624,9 +1895,10 @@ static void dispatch_line(ctl_server_t *s, ctl_client_t *c,
                           &s->engine.store.servers[cmd.server_index],
                           cmd.want_stages ? &trace : NULL,
                           reason, sizeof reason);
-/* tcp and handshake dial the node; proxy and tunnel measure whatever the live
-   tunnel currently carries, which is not this entry */
-        if (strcmp(cmd.name, "tcp") == 0 || strcmp(cmd.name, "handshake") == 0)
+/* real and handshake carry a request through the node; tcp stops at its
+   front, which is a cdn edge for many nodes, and proxy and tunnel measure
+   whatever the live tunnel currently carries, which is not this entry */
+        if (strcmp(cmd.name, "real") == 0 || strcmp(cmd.name, "handshake") == 0)
             record_ping(s, cmd.server_index, ms);
 /* the stages go out before the verdict so a client reading line by line has
    the whole path in hand by the time it sees PONG or ERR */
@@ -1674,7 +1946,7 @@ static void dispatch_line(ctl_server_t *s, ctl_client_t *c,
     }
 
     if (cmd.kind == CTL_CMD_IMPORT) {
-        char reply[128]; size_t rn = 0;
+        char reply[272]; size_t rn = 0;
         unsigned char *blob = NULL;
         size_t blen = 0;
         if (read_whole_file(SENKO_IMPORT_STAGE, IMPORT_STAGE_MAX, &blob, &blen) != 0 ||
@@ -1712,13 +1984,20 @@ static void dispatch_line(ctl_server_t *s, ctl_client_t *c,
             return;
         }
         size_t found = 0;
-        (void)cfg_parse_subscription((const char *)blob, blen, parsed,
-                                     STORE_MAX_SERVERS, &found);
+        cfg_import_stats_t stats;
+        char kinds[160];
+        (void)cfg_parse_subscription_ex((const char *)blob, blen, parsed,
+                                        STORE_MAX_SERVERS, &found, &stats);
         free(blob);
+        cfg_import_stats_text(&stats, kinds, sizeof kinds);
         if (found == 0) {
+            char why[224];
             free(parsed);
-            if (ctl_build_err("no server senko can run in this file",
-                              reply, sizeof reply, &rn) == CTL_OK)
+            if (kinds[0])
+                snprintf(why, sizeof why, "no server senko can run in this file (%s)", kinds);
+            else
+                snprintf(why, sizeof why, "no server senko can run in this file");
+            if (ctl_build_err(why, reply, sizeof reply, &rn) == CTL_OK)
                 client_write(c, reply, rn);
             return;
         }
@@ -1732,12 +2011,13 @@ static void dispatch_line(ctl_server_t *s, ctl_client_t *c,
         free(parsed);
         if (added) forget_pings(s);
         if (added && s->persist) s->persist(s->apply_ctx, &s->engine.store);
-        char msg[96];
+        char msg[288];
         if (skipped)
-            snprintf(msg, sizeof msg, "imported %zu server(s), skipped %zu",
-                     added, skipped);
+            snprintf(msg, sizeof msg, "imported %zu server(s), %zu already saved%s%s",
+                     added, skipped, kinds[0] ? ", " : "", kinds);
         else
-            snprintf(msg, sizeof msg, "imported %zu server(s)", added);
+            snprintf(msg, sizeof msg, "imported %zu server(s)%s%s", added,
+                     kinds[0] ? ", " : "", kinds);
         if (added == 0) {
             if (ctl_build_err("every server in this file is already saved",
                               reply, sizeof reply, &rn) == CTL_OK)
@@ -1763,6 +2043,56 @@ static void dispatch_line(ctl_server_t *s, ctl_client_t *c,
         return;
     }
 
+    if (cmd.kind == CTL_CMD_AWG) {
+        char line[320];
+        char status[256];
+        if (!s->awg) {
+            size_t ln = 0;
+            if (ctl_build_err("amneziawg is not available", line, sizeof line, &ln) == CTL_OK)
+                client_write(c, line, ln);
+            return;
+        }
+        /* vless and amneziawg never run together, and the newer request wins */
+        if (strcmp(cmd.name, "--awg") == 0) {
+            cancel_retry(s);
+            if (s->engine.state != CTL_STATE_IDLE) {
+                ctl_action_t stop = { .kind = CTL_ACT_STOP };
+                (void)s->apply(s->apply_ctx, &stop);
+                publish_state(s, CTL_STATE_IDLE);
+            }
+        }
+        int code = s->awg(s->apply_ctx, cmd.name, cmd.text[0] ? cmd.text : NULL,
+                          status, sizeof status);
+        if (code == CTL_AWG_CHILD) {
+            char reason[192];
+            char *argv[] = { (char *)senkod_binary_path(), cmd.name, cmd.text, NULL };
+            if (helper_jobs_start(&s->helpers, argv, (int)(c - s->clients),
+                                  c->generation, ctl_now_ms(), reason, sizeof reason) == 0)
+                return; /* helper_job_finished answers */
+            fprintf(stderr, "senkod: amneziawg probe not started: %s\n", reason);
+            snprintf(status, sizeof status, "error %s", reason);
+            code = 1;
+        }
+        int n = snprintf(line, sizeof line, "AWG %s\nAWGEND %d 0\n", status, code);
+        if (n > 0) client_write(c, line, (size_t)n < sizeof line ? (size_t)n : sizeof line - 1);
+        return;
+    }
+
+    if (cmd.kind == CTL_CMD_UPDATE) {
+        char reason[192], reply[256]; size_t rn = 0;
+/* its own session: the update stops senkod halfway through */
+        char *argv[] = { (char *)senkod_binary_path(), (char *)"--update", cmd.text, NULL };
+        if (helper_detached_start(argv, SENKO_UPDATE_LOG, reason, sizeof reason) == 0) {
+            if (ctl_build_ok("update started", reply, sizeof reply, &rn) == CTL_OK)
+                client_write(c, reply, rn);
+            return;
+        }
+        fprintf(stderr, "senkod: update request failed: %s\n", reason);
+        if (ctl_build_err(reason, reply, sizeof reply, &rn) == CTL_OK)
+            client_write(c, reply, rn);
+        return;
+    }
+
     if (cmd.kind == CTL_CMD_LOGS) {
 /* the ui runs as mobile and, on jailbreaks that keep the app sandboxed, cannot
    open the log at all, so the daemon that owns the file hands it over */
@@ -1780,21 +2110,15 @@ static void dispatch_line(ctl_server_t *s, ctl_client_t *c,
     }
 
     if (cmd.kind == CTL_CMD_FETCH) {
-        char reply[128]; size_t rn = 0;
+        char reply[256]; size_t rn = 0;
         if (!s->fetch) {
             if (ctl_build_err("fetch not supported", reply, sizeof reply, &rn) == CTL_OK)
                 client_write(c, reply, rn);
             return;
         }
-        unsigned char *blob = NULL;
-        size_t blen = 0;
-        if (fetch_body_alloc(s, cmd.text, NULL, &blob, &blen, NULL) != 0) {
-            if (ctl_build_err("fetch failed", reply, sizeof reply, &rn) == CTL_OK)
-                client_write(c, reply, rn);
-            return;
-        }
-        fetch_reply_body(c, blob, blen);
-        free(blob);
+        if (start_fetch_job(s, c, FETCH_FOR_BODY, -1, cmd.text, NULL) != 0 &&
+            ctl_build_err("senkod is busy, try again", reply, sizeof reply, &rn) == CTL_OK)
+            client_write(c, reply, rn);
         return;
     }
 
@@ -1924,8 +2248,19 @@ static void dispatch_line(ctl_server_t *s, ctl_client_t *c,
         for (size_t i = 0; i < st->n; ++i) {
             const vl_server_t *sv = &st->servers[i];
             int sel = (st->selected >= 0 && (size_t)st->selected == i) ? 1 : 0;
+            const char *proto = server_proto_name(sv);
+            char kind[32];
+/* a placeholder names what it is ("vmess", "shadowsocks-plugin-obfs") in the
+   protocol field, which the list splits on spaces */
+            if (sv->proto == VL_PROTO_UNSUPPORTED && sv->unsupported[0]) {
+                size_t k = 0;
+                for (; sv->unsupported[k] && k + 1 < sizeof kind; ++k)
+                    kind[k] = sv->unsupported[k] == ' ' ? '-' : sv->unsupported[k];
+                kind[k] = '\0';
+                proto = kind;
+            }
             if (ctl_build_srv((int)i, sel, st->group[i],
-                              server_proto_name(sv), server_net_name(sv),
+                              proto, server_net_name(sv),
                               server_sec_name(sv), server_supported(sv),
                               sv->host, sv->port, sv->remark,
                               ln, sizeof ln, &lnn) == CTL_OK)
@@ -1937,7 +2272,7 @@ static void dispatch_line(ctl_server_t *s, ctl_client_t *c,
     }
 
     if (cmd.kind == CTL_CMD_CONNECT) {
-        if (awg_tunnel_running()) {
+        if (awg_tunnel_running(s)) {
             char err[64]; size_t en = 0;
             if (ctl_build_err("amneziawg active", err, sizeof err, &en) == CTL_OK)
                 client_write(c, err, en);
@@ -2016,13 +2351,10 @@ static void dispatch_line(ctl_server_t *s, ctl_client_t *c,
     if (action.kind == CTL_ACT_REFRESH) {
         char detail[352];
         char reply[384]; size_t rn = 0;
-        int r = refresh_subscription(s, action.server_index, detail, sizeof detail);
-        if (r == 0) {
-            if (ctl_build_ok(detail, reply, sizeof reply, &rn) == CTL_OK)
-                client_write(c, reply, rn);
-        } else if (ctl_build_err(detail, reply, sizeof reply, &rn) == CTL_OK) {
+        if (refresh_start(s, c, FETCH_FOR_REFRESH, action.server_index,
+                          detail, sizeof detail) != 0 &&
+            ctl_build_err(detail, reply, sizeof reply, &rn) == CTL_OK)
             client_write(c, reply, rn);
-        }
         return;
     }
 
@@ -2072,23 +2404,24 @@ static void service_client(ctl_server_t *s, ctl_client_t *c) {
     }
 }
 
-ctls_status_t ctl_server_step(ctl_server_t *s, int timeout_ms) {
-    if (!s) return CTLS_ERR_ARG;
+size_t ctl_server_prepare(ctl_server_t *s, struct pollfd *pfd, size_t cap,
+                          int *timeout_ms) {
+    if (!s || !pfd || !timeout_ms || cap < CTL_SERVER_POLL_MAX) return 0;
     broadcast_stats(s);
-    if (s->stats && (timeout_ms < 0 || timeout_ms > 1000)) timeout_ms = 1000;
+    if (stats_wanted(s))
+        lower_wait_until(timeout_ms, ctl_now_ms(), (long)s->stat_at_ms + 1000);
 
-    struct pollfd pfd[2 + CTL_SERVER_MAX_CLIENTS];
-    int map[2 + CTL_SERVER_MAX_CLIENTS];
-    nfds_t nf = 0;
-
+    size_t nf = 0;
     pfd[nf].fd = s->listen_fd;
     pfd[nf].events = POLLIN;
-    map[nf] = -2;
+    pfd[nf].revents = 0;
+    s->poll_slot[nf] = -2;
     nf++;
 
     pfd[nf].fd = s->ping_pipe[0];
     pfd[nf].events = POLLIN;
-    map[nf] = -1;
+    pfd[nf].revents = 0;
+    s->poll_slot[nf] = -1;
     nf++;
 
     for (size_t i = 0; i < CTL_SERVER_MAX_CLIENTS; ++i) {
@@ -2097,21 +2430,43 @@ ctls_status_t ctl_server_step(ctl_server_t *s, int timeout_ms) {
         pfd[nf].events = POLLIN;
         if (s->clients[i].out_len > s->clients[i].out_off)
             pfd[nf].events |= POLLOUT;
-        map[nf] = (int)i;
+        pfd[nf].revents = 0;
+        s->poll_slot[nf] = (int)i;
         nf++;
     }
 
-    int r = poll(pfd, nf, timeout_ms);
-    if (r < 0) return (errno == EINTR) ? CTLS_OK : CTLS_ERR;
-    if (r == 0) return CTLS_OK;
+    int helper_fds[HELPER_JOB_MAX];
+    size_t helper_n = helper_jobs_fds(&s->helpers, helper_fds, HELPER_JOB_MAX);
+    for (size_t i = 0; i < helper_n; ++i) {
+        pfd[nf].fd = helper_fds[i];
+        pfd[nf].events = POLLIN;
+        pfd[nf].revents = 0;
+        s->poll_slot[nf] = -3;
+        nf++;
+    }
+    /* a running helper is reaped and timed out from here, not from its pipe */
+    s->poll_helpers_busy = 0;
+    for (size_t i = 0; i < HELPER_JOB_MAX; ++i) s->poll_helpers_busy |= s->helpers.jobs[i].used;
+    if (s->poll_helpers_busy && (*timeout_ms < 0 || *timeout_ms > 250)) *timeout_ms = 250;
+
+    lower_to_tick(s, timeout_ms);
+    s->poll_count = nf;
+    return nf;
+}
+
+void ctl_server_dispatch(ctl_server_t *s, const struct pollfd *pfd, size_t count) {
+    if (!s || !pfd || count != s->poll_count || count < 2) return;
+    s->poll_count = 0;
+    if (s->poll_helpers_busy)
+        helper_jobs_service(&s->helpers, ctl_now_ms(), helper_job_finished, s);
 
     if (pfd[0].revents & POLLIN) accept_one(s);
 
     if (pfd[1].revents & (POLLIN | POLLHUP | POLLERR))
         drain_ping_results(s);
 
-    for (nfds_t i = 2; i < nf; ++i) {
-        int slot = map[i];
+    for (size_t i = 2; i < count; ++i) {
+        int slot = s->poll_slot[i];
         if (slot < 0 || slot >= CTL_SERVER_MAX_CLIENTS) continue;
         ctl_client_t *c = &s->clients[slot];
         if (c->fd < 0) continue;
@@ -2121,6 +2476,19 @@ ctls_status_t ctl_server_step(ctl_server_t *s, int timeout_ms) {
         if (pfd[i].revents & (POLLIN | POLLHUP | POLLERR))
             service_client(s, c);
     }
+}
+
+ctls_status_t ctl_server_step(ctl_server_t *s, int timeout_ms) {
+    if (!s) return CTLS_ERR_ARG;
+    struct pollfd pfd[CTL_SERVER_POLL_MAX];
+    size_t nf = ctl_server_prepare(s, pfd, CTL_SERVER_POLL_MAX, &timeout_ms);
+    if (nf == 0) return CTLS_ERR;
+    int r = poll(pfd, (nfds_t)nf, timeout_ms);
+    if (r < 0) {
+        s->poll_count = 0;
+        return (errno == EINTR) ? CTLS_OK : CTLS_ERR;
+    }
+    ctl_server_dispatch(s, pfd, nf);
     return CTLS_OK;
 }
 
@@ -2143,7 +2511,7 @@ size_t ctl_server_client_count(const ctl_server_t *s) {
 
 void ctl_server_close(ctl_server_t *s) {
     if (!s) return;
-    while (s->ping_active > 0) {
+    while (s->ping_active > 0 || s->fetch_active > 0) {
         struct pollfd pfd;
         pfd.fd = s->ping_pipe[0];
         pfd.events = POLLIN;
@@ -2151,6 +2519,7 @@ void ctl_server_close(ctl_server_t *s) {
         if (poll(&pfd, 1, 1000) > 0)
             drain_ping_results(s);
     }
+    helper_jobs_stop(&s->helpers);
     for (size_t i = 0; i < CTL_SERVER_MAX_CLIENTS; ++i)
         if (s->clients[i].fd >= 0) drop_client(&s->clients[i]);
     if (s->listen_fd >= 0) { close(s->listen_fd); s->listen_fd = -1; }

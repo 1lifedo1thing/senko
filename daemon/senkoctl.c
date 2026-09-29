@@ -6,6 +6,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/time.h>
+#include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,6 +45,19 @@ static int reply_complete(const char *buf, size_t len) {
 }
 
 /* wait for terminal state so connect does not report success before verify */
+/* amneziawg requests end with AWGEND */
+static int awg_reply_complete(const char *buf, size_t len) {
+    size_t start = 0;
+    for (size_t i = 0; i < len; ++i) {
+        if (buf[i] != '\n') continue;
+        if ((i - start >= 7 && memcmp(buf + start, "AWGEND ", 7) == 0) ||
+            (i - start >= 4 && memcmp(buf + start, "ERR ", 4) == 0))
+            return 1;
+        start = i + 1;
+    }
+    return 0;
+}
+
 static int tunnel_reply_complete(const char *buf, size_t len) {
     size_t start = 0;
     int terminal = 0;
@@ -116,15 +130,16 @@ static int load_token(const char *sock, char *token, size_t cap) {
     return n > 0 ? 0 : -1;
 }
 
-/* without AUTH any local process can mutate the tunnel on a jailbreak */
-static int ctl_auth(int fd, const char *sock) {
+/* without AUTH any local process can mutate the tunnel on a jailbreak. senkod
+   answers it only between two commands, so it gets the command's own timeout */
+static int ctl_auth(int fd, const char *sock, int timeout_sec) {
     char token[48];
     if (load_token(sock, token, sizeof token) != 0) return -1;
     char line[80];
     int ln = snprintf(line, sizeof line, "AUTH %s\n", token);
     if (ln <= 0 || (size_t)ln >= sizeof line) return -1;
     if (write_all(fd, line, (size_t)ln) < 0) return -1;
-    struct timeval tv; tv.tv_sec = 2; tv.tv_usec = 0;
+    struct timeval tv; tv.tv_sec = timeout_sec; tv.tv_usec = 0;
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
     char buf[128];
     size_t tot = 0;
@@ -170,8 +185,9 @@ static ssize_t talk_ex(const char *sock, const char *line, size_t line_len,
     if (out_timed_out) *out_timed_out = 0;
     if (connect_sock(sock, &fd) != 0) return -1;
 
+    if (timeout_sec <= 0) timeout_sec = 2;
 /* every command needs the token, including read-only status */
-    if (ctl_auth(fd, sock) != 0) {
+    if (ctl_auth(fd, sock, timeout_sec) != 0) {
         close(fd);
         return -1;
     }
@@ -179,7 +195,6 @@ static ssize_t talk_ex(const char *sock, const char *line, size_t line_len,
     if (write_all(fd, line, line_len) < 0) { close(fd); return -1; }
 
     if (!done) done = reply_complete;
-    if (timeout_sec <= 0) timeout_sec = 2;
     struct timeval tv; tv.tv_sec = timeout_sec; tv.tv_usec = 0;
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
 
@@ -208,7 +223,7 @@ static ssize_t talk_ex(const char *sock, const char *line, size_t line_len,
 static int run_fetch(const char *sock, const char *url) {
     int fd;
     if (connect_sock(sock, &fd) != 0) return 2;
-    if (ctl_auth(fd, sock) != 0) { close(fd); return 2; }
+    if (ctl_auth(fd, sock, 30) != 0) { close(fd); return 2; }
 
     char line[1200];
     int ln = snprintf(line, sizeof line, "FETCH %s\n", url);
@@ -228,6 +243,9 @@ static int run_fetch(const char *sock, const char *url) {
             close(fd);
             return 1;
         }
+        /* traffic counters are broadcast independently of the fetch reply */
+        if (strncmp(reply, "STAT ", 5) == 0)
+            continue;
         if (strncmp(reply, "FDATA ", 6) == 0) {
             const char *b64 = reply + 6;
             size_t blen = strlen(b64);
@@ -277,8 +295,9 @@ static void usage(const char *a0) {
         "  settings | set <key> <value>\n"
         "  rules | rule <action> <type> <value> | delrule <idx>\n"
         "  diag | fwconf | flush <dns|bypass|rules|config> | hwidreset\n"
-        "  check <tcp|proxy|tunnel|handshake> <idx>\n"
+        "  check <tcp|real|proxy|tunnel|handshake> <idx>\n"
         "  fetch <url> | addsrv <link> | addsub <url> <name...> | raw <verb...>\n"
+        "  awg <start|probe|validate> <conf> | awg <stop|status> | update <deb>\n"
         "sock defaults to $SENKOD_SOCK or " DEFAULT_SOCK "\n", a0);
 }
 
@@ -396,6 +415,18 @@ int main(int argc, char **argv) {
             fprintf(stderr, "senkoctl: arguments too long\n"); return 2;
         }
         snprintf(line, sizeof line, "ADDSUB %s\n", rest);
+    } else if (strcmp(cmd, "awg") == 0) {
+        if (i >= argc) { usage(argv[0]); return 2; }
+        char verb[16];
+        size_t k = 0;
+        for (; argv[i][k] && k + 1 < sizeof verb; ++k)
+            verb[k] = (char)toupper((unsigned char)argv[i][k]);
+        verb[k] = '\0';
+        if (i + 1 < argc) snprintf(line, sizeof line, "AWG %s %s\n", verb, argv[i + 1]);
+        else snprintf(line, sizeof line, "AWG %s\n", verb);
+    } else if (strcmp(cmd, "update") == 0) {
+        if (i >= argc) { usage(argv[0]); return 2; }
+        snprintf(line, sizeof line, "UPDATE %s\n", argv[i]);
     } else if (strcmp(cmd, "raw") == 0) {
         if (i >= argc) { usage(argv[0]); return 2; }
         char rest[1100];
@@ -416,10 +447,11 @@ int main(int argc, char **argv) {
 /* leave timeout headroom for verification, two ping samples, and a refresh's
    own 15s network fetch budget (daemon_ctl_fetch), which a shorter client
    timeout would cut off before the daemon ever answers */
+    int is_awg = strncmp(line, "AWG ", 4) == 0;
     int timeout_sec = is_tunnel ? 60 : (is_ping ? 8 : (is_check ? 12 :
-                      (is_refresh ? 20 : 5)));
+                      (is_refresh ? 20 : (is_awg ? 65 : 5))));
     int (*done)(const char *, size_t) =
-        is_tunnel ? tunnel_reply_complete : reply_complete;
+        is_tunnel ? tunnel_reply_complete : (is_awg ? awg_reply_complete : reply_complete);
     int timed_out = 0;
     ssize_t n = talk_ex(sock, line, strlen(line), buf, sizeof buf,
                         timeout_sec, done, &timed_out);

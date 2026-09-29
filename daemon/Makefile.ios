@@ -6,6 +6,7 @@ TC      ?= $(if $(SENKO_TC),$(SENKO_TC),$(THEOS)/toolchain/linux/iphone/bin)
 SDK     ?= $(if $(SENKO_SDK_V7),$(SENKO_SDK_V7),$(error set SDK=/path/to/iphoneos.sdk))
 OSSL    ?= $(if $(SENKO_OSSL_V7),$(SENKO_OSSL_V7),$(error set OSSL=/path/to/openssl-prefix))
 LDID    ?= $(TC)/ldid
+SENKO_AR ?= $(TC)/llvm-ar
 CRT     ?=
 EXTRA_CFLAGS ?=
 
@@ -15,7 +16,8 @@ CC      := $(TC)/clang -target $(TRIPLE) -B $(TC)
 ARCH    ?= -arch armv7 -miphoneos-version-min=5.0
 IOS_BINDIR ?= build/ios
 CFLAGS  := -std=c99 -Wall -Wextra -O2 -DSENKO_RELEASE $(EXTRA_CFLAGS) $(ARCH) -isysroot $(SDK) \
-           -Icore -Icore/third_party -I. -I$(OSSL)/include
+           -Icore -Icore/third_party -I. -I$(OSSL)/include \
+           -Ilwip_port -Ithird_party/lwip/src/include
 # link archives directly because device openssl is not a supported dependency
 # discard unreachable archive code so static openssl does not inflate both slices
 LIBS    := $(OSSL)/lib/libssl.a $(OSSL)/lib/libcrypto.a -lz
@@ -23,54 +25,59 @@ LDFLAGS := $(ARCH) -isysroot $(SDK) \
            -Wl,-dead_strip \
            $(if $(CRT),-nostartfiles $(CRT),)
 
-CORE_SRC = core/vless.c core/b64.c core/config.c core/rules.c core/dns_msg.c core/dns_cache.c core/profiles.c core/happ.c core/happ_crypt5.c core/third_party/cJSON.c core/net_safe.c core/socks5.c core/senko_trace.c core/senko_replay.c core/senko_upload.c \
-           core/vless_conn.c core/session.c core/store.c core/control.c \
+CORE_SRC = core/vless.c core/b64.c core/config.c core/share_link.c core/rules.c core/dns_msg.c core/dns_cache.c core/profiles.c core/happ.c core/happ_crypt5.c core/third_party/cJSON.c core/net_safe.c core/socks5.c core/senko_trace.c core/senko_replay.c core/senko_upload.c core/senko_time.c \
+           core/vless_conn.c core/session.c core/real_probe.c core/store.c core/control.c \
            core/ctl_engine.c core/http.c core/url.c core/subfetch.c \
            core/transport_tcp.c core/transport_tls.c core/transport_ws.c \
            core/transport_xhttp.c core/transport_pick.c core/grpc_core.c core/h2_core.c core/hpack.c \
            core/reality_crypto.c core/reality_auth.c core/tls_clienthello.c \
            core/tls13_kdf.c core/tls13_keysched.c core/tls13_record.c \
            core/tls13_transcript.c core/tls13_handshake.c core/reality_handshake.c \
-           core/socks5_client.c core/http_client.c core/vision.c core/awg_config.c core/awg_handshake.c \
-           core/trojan_client.c core/shadowsocks_client.c core/blake2b256.c
-DAEMON_SRC = dialer.c loop.c pf_natlook.c ctl_server.c daemon_ctl.c storefile.c settings.c status.c \
-             routing.c routing_exec.c routing_fwd.c pf_table.c c_backend.c go_config.c go_backend.c \
-             awg_utun.c awg_route.c awg_pfroute.c legacy_ios.c proc_detach.c main.c
+           core/socks5_client.c core/http_client.c core/vision.c core/awg_config.c core/awg_handshake.c core/awg_tunnel.c \
+           core/trojan_client.c core/shadowsocks_client.c core/blake2b256.c \
+           core/backend_state.c core/endpoint_pool.c core/probe_stats.c core/route_message.c \
+           core/tun_flow.c core/tun_nat.c core/tun_plan.c core/utun_frame.c core/vless_udp.c core/dns_policy.c core/tun_policy.c
+DAEMON_SRC = dialer.c loop.c ctl_server.c daemon_ctl.c storefile.c settings.c status.c \
+             app_proxy.c egress.c senko_core_config.c senko_core_backend.c \
+             awg_utun.c awg_route.c awg_pfroute.c legacy_ios.c proc_detach.c \
+             route_socket.c tun_dialer.c tun_loop.c tun_opener.c tun_stack.c tun_tcp.c tun_udp.c \
+             utun_device.c utun_route.c utun_dns.c utun_backend.c direct_socket.c direct_dns.c helper_jobs.c senkod_helper.c awg_link.c awg_backend.c main.c
+LWIP_DIR = third_party/lwip/src
+LWIP_SRC = $(wildcard $(LWIP_DIR)/core/*.c) $(wildcard $(LWIP_DIR)/core/ipv4/*.c) \
+           $(wildcard $(LWIP_DIR)/core/ipv6/*.c) lwip_port/lwip_sys.c
+LWIP_OBJ = $(patsubst %.c,$(IOS_BINDIR)/%.o,$(LWIP_SRC))
+LWIP_LIB = $(IOS_BINDIR)/libsenko_lwip.a
+# a __RESTRICT segment makes dyld ignore DYLD_INSERT_LIBRARIES, which is how
+# substrate loads tweaks. senkod runs as root and owns the routes, and a tweak
+# that hooks connect() inside it on an ios 10 ipad made it exit right after
+# start with nothing in the log
+RESTRICT_LDFLAGS := -Wl,-sectcreate,__RESTRICT,__restrict,/dev/null
 
-.PHONY: all senkod senkoctl senko-kick senkoawgd clean
-all: $(IOS_BINDIR)/senkod $(IOS_BINDIR)/senkoctl $(IOS_BINDIR)/senko-kick $(IOS_BINDIR)/senkoawgd
+.PHONY: all senkod senkoctl clean
+all: $(IOS_BINDIR)/senkod $(IOS_BINDIR)/senkoctl
 
 senkod: $(IOS_BINDIR)/senkod
 
 senkoctl: $(IOS_BINDIR)/senkoctl
 
-senko-kick: $(IOS_BINDIR)/senko-kick
-
-senkoawgd: $(IOS_BINDIR)/senkoawgd
-
-$(IOS_BINDIR)/senkod: $(CORE_SRC) $(DAEMON_SRC)
+$(IOS_BINDIR)/senkod: $(CORE_SRC) $(DAEMON_SRC) $(LWIP_LIB)
 	mkdir -p $(IOS_BINDIR)
-	$(CC) $(CFLAGS) $(CORE_SRC) $(DAEMON_SRC) -o $@ $(LDFLAGS) $(LIBS)
+	$(CC) $(CFLAGS) $(CORE_SRC) $(DAEMON_SRC) $(LWIP_LIB) -o $@ $(LDFLAGS) $(LIBS) \
+	      -framework CoreFoundation -framework SystemConfiguration $(RESTRICT_LDFLAGS)
 	$(LDID) -S $@
 	@echo "signed. deps:"; $(TC)/otool -L $@ | tail -n +2
+
+$(IOS_BINDIR)/%.o: %.c
+	mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(LWIP_LIB): $(LWIP_OBJ)
+	$(SENKO_AR) rcs $@ $(LWIP_OBJ)
 
 # senkoctl decodes the plain control protocol and fetch payloads
 $(IOS_BINDIR)/senkoctl: senkoctl.c core/b64.c
 	mkdir -p $(IOS_BINDIR)
 	$(CC) $(CFLAGS) senkoctl.c core/b64.c -o $@ $(LDFLAGS)
-	$(LDID) -S $@
-	@echo "signed. deps:"; $(TC)/otool -L $@ | tail -n +2
-
-$(IOS_BINDIR)/senkoawgd: senkoawgd.c awg_utun.c awg_route.c awg_pfroute.c core/awg_config.c core/awg_handshake.c core/awg_tunnel.c core/b64.c core/reality_crypto.c status.c legacy_ios.c proc_detach.c
-	mkdir -p $(IOS_BINDIR)
-	$(CC) $(CFLAGS) senkoawgd.c awg_utun.c awg_route.c awg_pfroute.c core/awg_config.c core/awg_handshake.c core/awg_tunnel.c core/b64.c core/reality_crypto.c status.c legacy_ios.c proc_detach.c -o $@ $(LDFLAGS) $(LIBS)
-	$(LDID) -S $@
-	@echo "signed. deps:"; $(TC)/otool -L $@ | tail -n +2
-
-# setuid root kick: mobile app restarts launchd job without rebooting
-$(IOS_BINDIR)/senko-kick: senko_kick.c
-	mkdir -p $(IOS_BINDIR)
-	$(CC) $(CFLAGS) senko_kick.c -o $@ $(LDFLAGS)
 	$(LDID) -S $@
 	@echo "signed. deps:"; $(TC)/otool -L $@ | tail -n +2
 

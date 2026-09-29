@@ -12,6 +12,7 @@
 #include "dialer.h"
 #include "loop.h"
 #include "proc_detach.h"
+#include "senkod_helper.h"
 #include "storefile.h"
 #include "settings.h"
 #include "status.h"
@@ -20,6 +21,8 @@
 
 #include <signal.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,7 +31,35 @@
 #include <unistd.h>
 
 static volatile sig_atomic_t g_stop = 0;
-static void on_signal(int sig) { (void)sig; g_stop = 1; }
+/* the managed loop sleeps in poll() with no timeout while idle, so a signal
+   that lands between the g_stop check and poll() has to wake it through here */
+static int g_signal_pipe[2] = { -1, -1 };
+
+static void on_signal(int sig) {
+    (void)sig;
+    int saved = errno;
+    g_stop = 1;
+    if (g_signal_pipe[1] >= 0) {
+        ssize_t wrote = write(g_signal_pipe[1], "s", 1);
+        (void)wrote; /* a full pipe already holds the wakeup */
+    }
+    errno = saved;
+}
+
+static int open_signal_pipe(void) {
+    if (pipe(g_signal_pipe) != 0) return -1;
+    for (int i = 0; i < 2; ++i) {
+        int fl = fcntl(g_signal_pipe[i], F_GETFL, 0);
+        if (fl < 0 || fcntl(g_signal_pipe[i], F_SETFL, fl | O_NONBLOCK) != 0 ||
+            fcntl(g_signal_pipe[i], F_SETFD, FD_CLOEXEC) != 0) {
+            close(g_signal_pipe[0]);
+            close(g_signal_pipe[1]);
+            g_signal_pipe[0] = g_signal_pipe[1] = -1;
+            return -1;
+        }
+    }
+    return 0;
+}
 
 static void install_signals(void) {
     signal(SIGPIPE, SIG_IGN); /* ignore broken client sockets */
@@ -87,7 +118,7 @@ static int run_single(const char *link, int port) {
 }
 
 static int run_managed(const char *ctl_path, const char *config_path,
-                       int full_device, daemon_settings_t *settings) {
+                       daemon_settings_t *settings) {
     if (!settings) return 2;
     /* the tunnel has to outlive whatever started it */
     senko_proc_detach();
@@ -95,6 +126,8 @@ static int run_managed(const char *ctl_path, const char *config_path,
     int socks_public = settings->socks_public;
     /* stale socket files survive crashes, so a live connect decides ownership */
     int check_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (check_fd < 0)
+        fprintf(stderr, "senkod: control socket check skipped: %s\n", strerror(errno));
     if (check_fd >= 0) {
         struct sockaddr_un addr;
         memset(&addr, 0, sizeof addr);
@@ -107,10 +140,15 @@ static int run_managed(const char *ctl_path, const char *config_path,
         } else {
             int connect_errno = errno;
             close(check_fd);
-            if (connect_errno == ENOENT || connect_errno == ECONNREFUSED)
+            if (connect_errno == ENOENT || connect_errno == ECONNREFUSED) {
                 unlink(ctl_path);
-            else
+            } else {
+/* launchd restarts a daemon that exits, so a silent exit here left an empty
+   log and a restart every few seconds with nothing to say why */
+                fprintf(stderr, "senkod: control socket %s is unusable: %s\n",
+                        ctl_path, strerror(connect_errno));
                 return 1;
+            }
         }
     }
 
@@ -134,14 +172,9 @@ static int run_managed(const char *ctl_path, const char *config_path,
 
     daemon_ctl_t dc;
     daemon_ctl_init(&dc, &lp, config_path);
-    daemon_ctl_set_full_device(&dc, full_device);
     daemon_ctl_set_settings(&dc, settings);
 
     status_set(0);
-
-    /* a crash can leave either rule set behind, and only the go backend
-       installs none of them */
-    if (!go_backend_supported()) c_backend_clear_stale();
 
     static ctl_server_t cs;
     if (ctl_server_init(&cs, ctl_path, daemon_ctl_apply, &dc) != CTLS_OK) {
@@ -171,6 +204,7 @@ static int run_managed(const char *ctl_path, const char *config_path,
     ctl_server_set_fwconf(&cs, daemon_ctl_fwconf);
     ctl_server_set_flush(&cs, daemon_ctl_flush);
     ctl_server_set_native_config(&cs, daemon_ctl_native_config);
+    ctl_server_set_awg(&cs, daemon_ctl_awg, daemon_ctl_awg_busy);
     ctl_server_set_stats(&cs, daemon_ctl_stats);
     daemon_ctl_set_rules(&dc, &cs.engine.store.rules);
 
@@ -189,14 +223,15 @@ static int run_managed(const char *ctl_path, const char *config_path,
                 "senkod: WARNING socks_public=1 binds SOCKS on 0.0.0.0 "
                 "(LAN-reachable; disable unless intentional)\n");
     }
-    fprintf(stderr, "senkod: managed mode%s. socks5 on %s:%u, control at %s\n",
-            full_device ? " (full-device routing)" : "",
+    fprintf(stderr, "senkod: managed mode. socks5 on %s:%u, control at %s\n",
             socks_public ? "0.0.0.0" : "127.0.0.1",
             loop_listen_port(&lp), ctl_path);
 
-/* a daemon started by senko-kick after a reboot has no client to ask for the
-   tunnel, so the stored selection is what brings routing back */
-    if (dc.settings.auto_connect) {
+/* a daemon started by launchd after a reboot has no client to ask for the
+   tunnel, so the stored selection is what brings routing back. an amneziawg
+   profile the previous senkod left running (an update, a crash) is what the
+   user chose last, so it wins */
+    if (!daemon_ctl_awg_restore(&dc) && dc.settings.auto_connect) {
         if (ctl_server_restore_tunnel(&cs) == 0)
             fprintf(stderr, "senkod: auto-connected to server %d\n",
                     cs.engine.store.selected);
@@ -204,9 +239,47 @@ static int run_managed(const char *ctl_path, const char *config_path,
             fprintf(stderr, "senkod: auto-connect found no server to start\n");
     }
 
+    if (open_signal_pipe() != 0) {
+        fprintf(stderr, "senkod: signal pipe failed (errno %d)\n", errno);
+        daemon_ctl_shutdown(&dc);
+        ctl_server_close(&cs);
+        loop_close(&lp);
+        return 1;
+    }
+
+/* one poll for every owner on this thread, waiting only as long as the
+   nearest deadline any of them has: a fixed beat woke an idle ios device
+   many times a second */
     while (!g_stop) {
-        if (loop_step(&lp, 50) != LOOP_OK) break;
-        ctl_server_step(&cs, 50);
+        struct pollfd pfd[2 + LOOP_POLL_MAX + CTL_SERVER_POLL_MAX];
+        int timeout_ms = daemon_ctl_wait_ms(&dc);
+        size_t n = 0;
+        pfd[n].fd = g_signal_pipe[0];
+        pfd[n].events = POLLIN;
+        pfd[n].revents = 0;
+        n++;
+        int ended_fd = daemon_ctl_wait_fd(&dc);
+        if (ended_fd >= 0) {
+            pfd[n].fd = ended_fd;
+            pfd[n].events = POLLIN;
+            pfd[n].revents = 0;
+            n++;
+        }
+        size_t loop_at = n;
+        size_t loop_n = loop_prepare(&lp, pfd + loop_at, LOOP_POLL_MAX, &timeout_ms);
+        size_t ctl_at = loop_at + loop_n;
+        size_t ctl_n = ctl_server_prepare(&cs, pfd + ctl_at, CTL_SERVER_POLL_MAX,
+                                          &timeout_ms);
+        if (loop_n == 0 || ctl_n == 0) break;
+
+        int r = poll(pfd, (nfds_t)(ctl_at + ctl_n), timeout_ms);
+        if (r < 0 && errno != EINTR) {
+            fprintf(stderr, "senkod: poll failed (errno %d)\n", errno);
+            break;
+        }
+        if (r > 0) loop_dispatch(&lp, pfd + loop_at, loop_n);
+        /* helper jobs time out from dispatch, so it runs on a timeout too */
+        if (r >= 0) ctl_server_dispatch(&cs, pfd + ctl_at, ctl_n);
 /* the backend can die between two control commands, and the redial schedule
    lives with the store that knows which server to dial */
         if (daemon_ctl_maintain(&dc) != 0)
@@ -228,16 +301,14 @@ static void usage(const char *argv0) {
         "usage:\n"
         "  %s <vless://link> [socks_port]\n"
         "  %s --managed [--ctl <sockpath>] [--config <path>]\n"
-        "       [--socks-port <n>] [--socks-public] [--dns-upstream <ip>]\n"
-        "       [--dns-local-port <n>] [--full-device]\n",
+        "       [--socks-port <n>] [--socks-public] [--dns-upstream <ip>]\n",
         argv0, argv0);
 }
 
 static void parse_managed_args(int argc, char **argv,
                                const char **ctl_path,
                                const char **config_path,
-                               daemon_settings_t *settings,
-                               int *full_device) {
+                               daemon_settings_t *settings) {
     for (int i = 2; i < argc; ++i) {
         if (strcmp(argv[i], "--ctl") == 0 && i + 1 < argc) {
             *ctl_path = argv[++i];
@@ -253,10 +324,9 @@ static void parse_managed_args(int argc, char **argv,
                 snprintf(settings->dns_upstream, sizeof settings->dns_upstream,
                          "%s", ip);
         } else if (strcmp(argv[i], "--dns-local-port") == 0 && i + 1 < argc) {
-            int p = atoi(argv[++i]);
-            if (p > 0 && p <= 65535) settings->dns_local_port = (uint16_t)p;
-        } else if (strcmp(argv[i], "--full-device") == 0) {
-            *full_device = 1;
+            /* the pf dns forwarder's port; skipped so its value is not read
+               as a socks port by the fallback below */
+            ++i;
         } else if (strcmp(argv[i], "--socks-public") == 0) {
             settings->socks_public = 1;
         } else {
@@ -272,22 +342,36 @@ int main(int argc, char **argv) {
 
     if (argc < 2) { usage(argv[0]); return 2; }
 
+    int helper_rc = senkod_helper_main(argc, argv);
+    if (helper_rc >= 0) return helper_rc;
+
     if (strcmp(argv[1], "--managed") == 0) {
+/* the first line of every run, written before anything that can fail: an
+   empty log then means launchd never started senkod, not that it died */
+        fprintf(stderr, "senkod: starting, pid %d\n", (int)getpid());
+        /* before the config and the loop tables are touched: on ios 16 the
+           launchd limit is lower than the daemon's first allocations */
+        senko_raise_memory_limit();
         daemon_settings_t settings;
         daemon_settings_defaults(&settings);
         const char *ctl_path = "/var/tmp/senkod.sock";
         const char *config_path = "";
-        int full_device = 0;
-        parse_managed_args(argc, argv, &ctl_path, &config_path, &settings, &full_device);
+        parse_managed_args(argc, argv, &ctl_path, &config_path, &settings);
         if (config_path[0]) {
+            fprintf(stderr, "senkod: loading saved configuration\n");
             /* half a megabyte of servers does not fit the small default stack
                on ios 5, and the daemon reads the config once at startup */
             static store_t preload;
             store_init(&preload);
-            storefile_load(&preload, &settings, config_path);
-            parse_managed_args(argc, argv, &ctl_path, &config_path, &settings, &full_device);
+            storefile_status_t loaded = storefile_load(&preload, &settings, config_path);
+            if (loaded != STOREFILE_OK)
+                fprintf(stderr, "senkod: saved configuration could not be read (rc=%d)\n",
+                        (int)loaded);
+            else
+                fprintf(stderr, "senkod: saved configuration read\n");
+            parse_managed_args(argc, argv, &ctl_path, &config_path, &settings);
         }
-        return run_managed(ctl_path, config_path, full_device, &settings);
+        return run_managed(ctl_path, config_path, &settings);
     }
 
     int port = SENKO_DEFAULT_SOCKS_PORT;

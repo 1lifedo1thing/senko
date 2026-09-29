@@ -40,10 +40,12 @@ typedef enum {
     CTL_CMD_RULES,
     CTL_CMD_DEL_RULE,
     CTL_CMD_DIAG, /* report which rung of every fallback ladder was taken */
-    CTL_CMD_FWCONF, /* dump the firewall ruleset the kernel is running */
+    CTL_CMD_FWCONF, /* dump the route plan the utun tunnel installed */
     CTL_CMD_FLUSH,  /* drop one piece of accumulated state by name */
     CTL_CMD_HWID_RESET, /* issue a new device id for the subscription panels */
-    CTL_CMD_NATIVE_CONFIG /* render a provider configuration for iOS 12+ */
+    CTL_CMD_NATIVE_CONFIG, /* render a provider configuration for iOS 12+ */
+    CTL_CMD_AWG,    /* amneziawg start/stop/status/probe/validate; name is the helper flag */
+    CTL_CMD_UPDATE  /* install the staged package at text */
 } ctl_cmd_kind_t;
 
 typedef struct {
