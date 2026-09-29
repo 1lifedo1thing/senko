@@ -199,74 +199,13 @@ void SenkoFPSOverlaySetEnabled(BOOL enabled) {
     [[SenkoFPSOverlay shared] setEnabled:enabled];
 }
 
-NSString *SenkoAboutAppReport(void) {
-    int tlsfix = ExternalTlsfixInstalled();
+NSString *SenkoAboutTLSMode(void) {
     BOOL systemTLS = [[[UIDevice currentDevice] systemVersion] floatValue] >= 12.0f;
-    if (SenkoLanguageIsChinese()) {
-        return [NSString stringWithFormat:
-                @"全设备 VPN\n"
-                 "应用和系统流量使用选中的配置。路由需要 root，越狱已经提供了权限。\n\n"
-                 "传输协议\n"
-                 "TCP · TLS · REALITY + Vision\n"
-                 "WebSocket · XHTTP · gRPC\n"
-                 "AmneziaWG · SOCKS5 · HTTP(S) CONNECT\n\n"
-                 "兼容性\n"
-                 "iOS 5-16 · armv7 + arm64 + arm64e\n\n"
-                 "安全与诊断\n"
-                 "带令牌认证的控制 socket · 防止订阅 SSRF · 日志隐藏密钥 · 真实传输检查。\n"
-                 "合并日志：/var/log/senko-system.log\n\n"
-                 "TLS 模式：%@\n\n"
-                 "测试者：@inraxx, @s3dativee, @rafal_official, @RealPetuh, @QuaIcomm, @belo4kaFLUNI, @Wolfer_QUIC, @fluffynifty, @not_a_modder, @Lineysom, @Lime_iOS6, @fr0n1k, @ogeprint, @CookieValerka, @ra1n_developer",
-                systemTLS
-                    ? @"系统 TLS，不注入兼容性 hook"
-                    : tlsfix
-                    ? @"检测到外部 tlsfix，保持 senkotlsfix hook 关闭"
-                    : @"senkotlsfix，用于 MobileSubstrate 下 Safari TLS 1.3"];
-    }
-    if (SenkoLanguageIsRussian()) {
-        return [NSString stringWithFormat:
-                @"VPN для всего устройства\n"
-                 "Приложения и системный трафик идут через выбранный профиль. "
-                 "Для маршрутизации нужен root, и джейлбрейк его уже даёт.\n\n"
-                 "Транспорты\n"
-                 "TCP · TLS · REALITY + Vision\n"
-                 "WebSocket · XHTTP · gRPC\n"
-                 "AmneziaWG · SOCKS5 · HTTP(S) CONNECT\n\n"
-                 "Совместимость\n"
-                 "iOS 5-16 · armv7 + arm64 + arm64e\n\n"
-                 "Безопасность и диагностика\n"
-                 "Control socket с токеном · защита подписок от SSRF · скрытие секретов "
-                 "в логах · настоящая проверка транспорта.\n"
-                 "Общий журнал: /var/log/senko-system.log\n\n"
-                 "Режим TLS: %@\n\n"
-                 "Тестировали: @inraxx, @s3dativee, @rafal_official, @RealPetuh, @QuaIcomm, @belo4kaFLUNI, @Wolfer_QUIC, @fluffynifty, @not_a_modder, @Lineysom, @Lime_iOS6, @fr0n1k, @ogeprint, @CookieValerka, @ra1n_developer",
-                systemTLS
-                    ? @"системный TLS, compatibility hook не внедряется"
-                    : tlsfix
-                    ? @"внешний tlsfix найден, хуки senkotlsfix отключены"
-                    : @"senkotlsfix для TLS 1.3 в Safari при установленном MobileSubstrate"];
-    }
-    return [NSString stringWithFormat:
-            @"Full-device VPN\n"
-             "Apps and system traffic use the selected profile. Routing needs root, "
-             "and a jailbreak already provides it.\n\n"
-             "Transports\n"
-             "TCP · TLS · REALITY + Vision\n"
-             "WebSocket · XHTTP · gRPC\n"
-             "AmneziaWG · SOCKS5 · HTTP(S) CONNECT\n\n"
-             "Compatibility\n"
-             "iOS 5-16 · armv7 + arm64 + arm64e\n\n"
-             "Security and diagnostics\n"
-             "Token-authenticated control socket · subscription SSRF protection · "
-             "secret redaction · real transport checks.\n"
-             "Combined log: /var/log/senko-system.log\n\n"
-             "TLS mode: %@\n\n"
-             "Testers: @inraxx, @s3dativee, @rafal_official, @RealPetuh, @QuaIcomm, @belo4kaFLUNI, @Wolfer_QUIC, @fluffynifty, @not_a_modder, @Lineysom, @Lime_iOS6, @fr0n1k, @ogeprint, @CookieValerka, @ra1n_developer",
-            systemTLS
-                ? @"system TLS, the compatibility hook is not injected"
-                : tlsfix
-                ? @"external tlsfix present, senkotlsfix hooks stay off"
-                : @"senkotlsfix, Safari TLS 1.3 when MobileSubstrate is installed"];
+    if (systemTLS)
+        return SenkoLocalizedText(@"system TLS, the compatibility hook is not injected");
+    if (ExternalTlsfixInstalled())
+        return SenkoLocalizedText(@"external tlsfix present, senkotlsfix hooks stay off");
+    return SenkoLocalizedText(@"senkotlsfix, Safari TLS 1.3 when MobileSubstrate is installed");
 }
 
 /* the daemon writes the id it sends as x-hwid to a file the ui can read too.

@@ -33,26 +33,21 @@ typedef struct {
     CGFloat _baseH;
 }
 
-static UIImage *gBoySpritePhone;
-static UIImage *gBoySpritePad;
-
 static BOOL BoyIsPad(void) {
     return [[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad;
 }
 
-UIImage *SenkoBoykisserSprite(CGFloat size) {
-    BOOL pad = (size >= 140.0f) || BoyIsPad();
-    UIImage **slot = pad ? &gBoySpritePad : &gBoySpritePhone;
-    if (*slot) return *slot;
+/* one scaled copy per sprite and idiom, so a flake never decodes the png */
+static UIImage *BoySprite(NSString *name, BOOL pad) {
+    static NSMutableDictionary *cache;
+    if (![name length]) return nil;
+    NSString *key = [name stringByAppendingString:pad ? @"~pad" : @"~phone"];
+    UIImage *hit = [cache objectForKey:key];
+    if (hit) return hit;
 
-    UIImage *src = [UIImage imageNamed:@"boykisser.png"];
-    if (!src)
-        src = [UIImage imageNamed:@"boykisser"];
-    if (!src) {
-        NSString *path = [[NSBundle mainBundle] pathForResource:@"boykisser" ofType:@"png"];
-        if (path) src = [UIImage imageWithContentsOfFile:path];
-    }
-    if (!src) return nil;
+    NSString *path = [[NSBundle mainBundle] pathForResource:name ofType:@"png"];
+    UIImage *src = path ? [UIImage imageWithContentsOfFile:path] : nil;
+    if (!src || src.size.width < 1.0f || src.size.height < 1.0f) return nil;
 
 /* larger source images prevent blur when iPad scales the particles */
     CGFloat maxSide = pad ? 180.0f : 112.0f;
@@ -63,9 +58,12 @@ UIImage *SenkoBoykisserSprite(CGFloat size) {
     CGContextSetShadowWithColor(ctx, CGSizeMake(0, 1.5f), pad ? 3.0f : 2.0f,
         [UIColor colorWithRed:0.55 green:0.12 blue:0.35 alpha:0.35].CGColor);
     [src drawInRect:CGRectMake(5, 5, src.size.width * scale, src.size.height * scale)];
-    *slot = [UIGraphicsGetImageFromCurrentImageContext() retain];
+    UIImage *out = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
-    return *slot;
+    if (!out) return nil;
+    if (!cache) cache = [[NSMutableDictionary alloc] init];
+    [cache setObject:out forKey:key];
+    return out;
 }
 
 static CGFloat boy_randf(CGFloat a, CGFloat b) {
@@ -111,6 +109,10 @@ static CGFloat boy_randf(CGFloat a, CGFloat b) {
 }
 
 - (id)initWithFrame:(CGRect)frame {
+    return [self initWithFrame:frame spriteName:@"boykisser"];
+}
+
+- (id)initWithFrame:(CGRect)frame spriteName:(NSString *)name {
     if ((self = [super initWithFrame:frame])) {
         self.userInteractionEnabled = NO;
         self.backgroundColor = [UIColor clearColor];
@@ -122,7 +124,7 @@ static CGFloat boy_randf(CGFloat a, CGFloat b) {
         _baseH = _isPad ? 110.0f : 70.0f; /* display pt at scale 1 */
         _paused = NO;
         _lastTs = 0;
-        _sprite = [SenkoBoykisserSprite(_isPad ? 160.0f : 64.0f) retain];
+        _sprite = [BoySprite(name, _isPad) retain];
         memset(_flakes, 0, sizeof _flakes);
         for (int i = 0; i < _count; ++i) {
             CALayer *L = [CALayer layer];

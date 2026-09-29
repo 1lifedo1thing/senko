@@ -65,7 +65,8 @@ NSString *SenkoMaskSecret(NSString *value);
 BOOL SenkoFPSOverlayEnabled(void);
 void SenkoFPSOverlaySetEnabled(BOOL enabled);
 
-NSString *SenkoAboutAppReport(void);
+/* how this device gets TLS 1.3, in the ui language */
+NSString *SenkoAboutTLSMode(void);
 /* one place for the shop address, so the about screen can print it, copy it and
    open it without three copies of the same string drifting apart */
 NSString *SenkoSponsorURL(void);

@@ -34,7 +34,27 @@ static void SenkoBuildTranslations(void) {
     gEnglishToChinese = [[NSMutableDictionary alloc] init];
 
     SenkoAddTranslation(@"About", @"О приложении");
-    SenkoAddTranslation(@"Emoji artwork: Twemoji by Twitter, Inc. and contributors (CC BY 4.0).", @"Эмодзи: Twemoji от Twitter, Inc. и участников проекта (CC BY 4.0).");
+    SenkoAddTranslation(@"Amnezia/VLESS Client", @"Клиент Amnezia/VLESS");
+    SenkoAddTranslation(@"Model", @"Модель");
+    SenkoAddTranslation(@"iOS version", @"Версия iOS");
+    SenkoAddTranslation(@"Architecture", @"Архитектура");
+    SenkoAddTranslation(@"TLS mode", @"Режим TLS");
+    SenkoAddTranslation(@"How it works", @"Как это работает");
+    SenkoAddTranslation(@"Apps and system traffic use the selected profile. Routing needs root, and a jailbreak already provides it.", @"Приложения и системный трафик идут через выбранный профиль. Для маршрутизации нужен root, и джейлбрейк его уже даёт.");
+    SenkoAddTranslation(@"Transports", @"Транспорты");
+    SenkoAddTranslation(@"Compatibility", @"Совместимость");
+    SenkoAddTranslation(@"Token-authenticated control socket · subscription SSRF protection · secret redaction · real transport checks.", @"Control socket с токеном · защита подписок от SSRF · скрытие секретов в логах · настоящая проверка транспорта.");
+    SenkoAddTranslation(@"Links", @"Ссылки");
+    SenkoAddTranslation(@"Sponsor", @"Спонсор");
+    SenkoAddTranslation(@"Credits", @"Благодарности");
+    SenkoAddTranslation(@"Special thanks", @"Особая благодарность");
+    SenkoAddTranslation(@"Sponsors", @"Спонсоры");
+    SenkoAddTranslation(@"Testers", @"Тестировали");
+    SenkoAddTranslation(@"Emoji artwork", @"Эмодзи");
+    SenkoAddTranslation(@"Twemoji by Twitter, Inc. and contributors (CC BY 4.0)", @"Twemoji от Twitter, Inc. и участников проекта (CC BY 4.0)");
+    SenkoAddTranslation(@"system TLS, the compatibility hook is not injected", @"системный TLS, compatibility hook не внедряется");
+    SenkoAddTranslation(@"external tlsfix present, senkotlsfix hooks stay off", @"внешний tlsfix найден, хуки senkotlsfix отключены");
+    SenkoAddTranslation(@"senkotlsfix, Safari TLS 1.3 when MobileSubstrate is installed", @"senkotlsfix для TLS 1.3 в Safari при установленном MobileSubstrate");
     SenkoAddTranslation(@"PROTOCOL", @"ПРОТОКОЛ");
     SenkoAddTranslation(@"PASSWORD", @"ПАРОЛЬ");
     SenkoAddTranslation(@"CIPHER", @"ШИФР");
@@ -712,7 +732,27 @@ static void SenkoBuildTranslations(void) {
 /* common screen text: Chinese is kept here instead of relying on system
    strings, because the app runs on iOS 5 where no localization bundle exists */
     SenkoAddChineseTranslation(@"About", @"关于");
-    SenkoAddChineseTranslation(@"Emoji artwork: Twemoji by Twitter, Inc. and contributors (CC BY 4.0).", @"表情图案：Twitter, Inc. 及贡献者的 Twemoji（CC BY 4.0）。");
+    SenkoAddChineseTranslation(@"Amnezia/VLESS Client", @"Amnezia/VLESS 客户端");
+    SenkoAddChineseTranslation(@"Model", @"型号");
+    SenkoAddChineseTranslation(@"iOS version", @"iOS 版本");
+    SenkoAddChineseTranslation(@"Architecture", @"架构");
+    SenkoAddChineseTranslation(@"TLS mode", @"TLS 模式");
+    SenkoAddChineseTranslation(@"How it works", @"工作方式");
+    SenkoAddChineseTranslation(@"Apps and system traffic use the selected profile. Routing needs root, and a jailbreak already provides it.", @"应用和系统流量使用选中的配置。路由需要 root，越狱已经提供了权限。");
+    SenkoAddChineseTranslation(@"Transports", @"传输协议");
+    SenkoAddChineseTranslation(@"Compatibility", @"兼容性");
+    SenkoAddChineseTranslation(@"Token-authenticated control socket · subscription SSRF protection · secret redaction · real transport checks.", @"带令牌认证的控制 socket · 防止订阅 SSRF · 日志隐藏密钥 · 真实传输检查。");
+    SenkoAddChineseTranslation(@"Links", @"链接");
+    SenkoAddChineseTranslation(@"Sponsor", @"赞助商");
+    SenkoAddChineseTranslation(@"Credits", @"致谢");
+    SenkoAddChineseTranslation(@"Special thanks", @"特别感谢");
+    SenkoAddChineseTranslation(@"Sponsors", @"赞助者");
+    SenkoAddChineseTranslation(@"Testers", @"测试者");
+    SenkoAddChineseTranslation(@"Emoji artwork", @"表情图案");
+    SenkoAddChineseTranslation(@"Twemoji by Twitter, Inc. and contributors (CC BY 4.0)", @"Twitter, Inc. 及贡献者的 Twemoji（CC BY 4.0）");
+    SenkoAddChineseTranslation(@"system TLS, the compatibility hook is not injected", @"系统 TLS，不注入兼容性 hook");
+    SenkoAddChineseTranslation(@"external tlsfix present, senkotlsfix hooks stay off", @"检测到外部 tlsfix，保持 senkotlsfix hook 关闭");
+    SenkoAddChineseTranslation(@"senkotlsfix, Safari TLS 1.3 when MobileSubstrate is installed", @"senkotlsfix，用于 MobileSubstrate 下 Safari TLS 1.3");
     SenkoAddChineseTranslation(@"Settings", @"设置");
     SenkoAddChineseTranslation(@"Language", @"语言");
     SenkoAddChineseTranslation(@"English", @"English");
@@ -871,8 +911,6 @@ static void SenkoBuildTranslations(void) {
     SenkoAddChineseTranslation(@"Unknown error", @"未知错误");
     SenkoAddChineseTranslation(@"The report is on the clipboard.", @"报告已复制到剪贴板。");
     SenkoAddChineseTranslation(@"Copied to the clipboard.", @"已复制到剪贴板。");
-    SenkoAddChineseTranslation(@"Sponsors: @s3dativee, @shizotoaster, @not_a_modder", @"赞助者：@s3dativee、@shizotoaster、@not_a_modder");
-    SenkoAddChineseTranslation(@"Special thanks: @CookieValerka, @inraxx, @not_a_modder, @s3dativee, @Lineysom, @shizotoaster", @"特别感谢：@CookieValerka、@inraxx、@not_a_modder、@s3dativee、@Lineysom、@shizotoaster");
     SenkoAddChineseTranslation(@"Download", @"下载");
     SenkoAddChineseTranslation(@"Upload", @"上传");
     SenkoAddChineseTranslation(@"Statistics", @"统计");

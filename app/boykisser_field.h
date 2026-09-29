@@ -3,16 +3,14 @@
 
 #import <UIKit/UIKit.h>
 
-/* flake overlay only for boykisser */
+/* falling sprites: boykisser.png for that theme, any bundle png elsewhere */
 @interface SenkoBoykisserField : UIView
+- (id)initWithFrame:(CGRect)frame spriteName:(NSString *)name;
 - (void)start;
 - (void)stop;
 /* pause off-screen to save cpu */
 - (void)setPaused:(BOOL)paused;
 - (BOOL)isRunning;
 @end
-
-/* cached sprite; avoid redecode per flake */
-UIImage *SenkoBoykisserSprite(CGFloat size);
 
 #endif

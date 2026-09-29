@@ -1,25 +1,267 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #include <objc/message.h>
+#include <sys/sysctl.h>
 #import "ui_theme.h"
 #import "app_common.h"
 #import "crash_report.h"
+#import "boykisser_field.h"
+
+static NSString * const kAboutTitle = @"t";
+static NSString * const kAboutValue = @"v";
+static NSString * const kAboutGlyph = @"g";
+static NSString * const kAboutImage = @"i";
+static NSString * const kAboutAction = @"a";
+
+static NSString * const kAboutThanks =
+    @"@CookieValerka, @inraxx, @not_a_modder, @s3dativee, @Lineysom, @shizotoaster";
+static NSString * const kAboutSponsors = @"@s3dativee, @shizotoaster, @not_a_modder";
+static NSString * const kAboutTesters =
+    @"@inraxx, @s3dativee, @rafal_official, @RealPetuh, @QuaIcomm, @belo4kaFLUNI, "
+    @"@Wolfer_QUIC, @fluffynifty, @not_a_modder, @Lineysom, @Lime_iOS6, @fr0n1k, "
+    @"@ogeprint, @CookieValerka, @ra1n_developer";
+
+/* cap the width so ipad landscape rows do not stretch across the screen */
+static CGFloat AboutSideMargin(CGFloat width) {
+    CGFloat m = floorf((width - 700.0f) * 0.5f);
+    return m > 12.0f ? m : 12.0f;
+}
+
+/* ios 5 and 6 inset grouped rows themselves; from ios 7 they run edge to edge */
+static BOOL AboutRowsInsetBySystem(void) {
+    return ![UITableView instancesRespondToSelector:@selector(setSeparatorInset:)];
+}
+
+static CGFloat AboutRowInset(UITableView *tv) {
+    if (!AboutRowsInsetBySystem()) return AboutSideMargin(tv.bounds.size.width);
+    return [[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad
+        ? 45.0f : 10.0f;
+}
+
+static NSString *AboutModel(void) {
+    char machine[64];
+    size_t len = sizeof machine;
+    if (sysctlbyname("hw.machine", machine, &len, NULL, 0) != 0 || len == 0 ||
+        len > sizeof machine)
+        return [[UIDevice currentDevice] model];
+    machine[sizeof machine - 1] = '\0';
+    NSString *code = [NSString stringWithUTF8String:machine];
+    return [code length] ? code : [[UIDevice currentDevice] model];
+}
+
+static NSString *AboutSlice(void) {
+#if defined(__arm64__) || defined(__aarch64__)
+    return @"arm64";
+#else
+    return @"armv7";
+#endif
+}
+
+static NSString *AboutSponsorPromo(void) {
+    if (SenkoLanguageIsChinese()) return @"优惠码 SENKO 可享 15% 折扣";
+    if (SenkoLanguageIsRussian()) return @"промокод SENKO даёт скидку 15%";
+    return @"promo code SENKO takes 15% off";
+}
+
+static UIFont *AboutTitleFont(void) { return SenkoFontBody(16.0f, NO); }
+static UIFont *AboutValueFont(void) { return SenkoFontBody(14.0f, NO); }
+
+static void AboutStylePlate(UIView *plate) {
+    BOOL light = SenkoThemeIsLight();
+    plate.layer.cornerRadius = SenkoThemeCardRadius();
+    if (SenkoThemeIsIos26()) {
+        plate.backgroundColor = [UIColor colorWithWhite:1 alpha:light ? 0.34f : 0.10f];
+        plate.layer.borderWidth = 0.5f;
+        plate.layer.borderColor = [UIColor colorWithWhite:1 alpha:light ? 0.55f : 0.22f].CGColor;
+    } else {
+        plate.backgroundColor = kCellHi;
+        plate.layer.borderWidth = 0.0f;
+    }
+}
+
+@interface SenkoAboutCell : UITableViewCell {
+@public
+    UIImageView *icon;
+    UILabel     *titleLbl;
+    UILabel     *valueLbl;
+}
+@end
+
+@implementation SenkoAboutCell
+
+- (id)initWithReuseIdentifier:(NSString *)rid {
+    if ((self = [super initWithStyle:UITableViewCellStyleDefault reuseIdentifier:rid])) {
+        icon = [[UIImageView alloc] initWithFrame:CGRectZero];
+        icon.contentMode = UIViewContentModeScaleAspectFit;
+        [self.contentView addSubview:icon];
+        titleLbl = [[UILabel alloc] initWithFrame:CGRectZero];
+        titleLbl.backgroundColor = [UIColor clearColor];
+        titleLbl.lineBreakMode = NSLineBreakByTruncatingTail;
+        [self.contentView addSubview:titleLbl];
+        valueLbl = [[UILabel alloc] initWithFrame:CGRectZero];
+        valueLbl.backgroundColor = [UIColor clearColor];
+        valueLbl.numberOfLines = 0;
+        valueLbl.lineBreakMode = NSLineBreakByWordWrapping;
+        [self.contentView addSubview:valueLbl];
+    }
+    return self;
+}
+
+- (void)dealloc {
+    [icon release];
+    [titleLbl release];
+    [valueLbl release];
+    [super dealloc];
+}
+
+/* ios 7 and later draw grouped rows edge to edge; the cards need the margin */
+- (void)setFrame:(CGRect)frame {
+    if (!AboutRowsInsetBySystem() && frame.origin.x < 1.0f) {
+        CGFloat m = AboutSideMargin(frame.size.width);
+        frame = CGRectInset(frame, m, 0.0f);
+    }
+    [super setFrame:frame];
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGRect b = self.contentView.bounds;
+    CGFloat x = 16.0f;
+    if (icon.image) {
+        icon.frame = CGRectMake(16.0f, 14.0f, 24.0f, 24.0f);
+        x = 52.0f;
+    } else {
+        icon.frame = CGRectZero;
+    }
+    CGFloat w = b.size.width - x - 12.0f;
+    if (w < 40.0f) w = 40.0f;
+    titleLbl.frame = CGRectMake(x, 12.0f, w, 20.0f);
+    CGFloat valueH = b.size.height - 36.0f - 10.0f;
+    valueLbl.frame = CGRectMake(x, 34.0f, w, valueH > 0.0f ? valueH : 0.0f);
+}
+
+@end
+
+@interface SenkoAboutHero : UIView {
+@public
+    UIImageView *icon;
+    UILabel     *name;
+    UILabel     *tagline;
+    UIView      *versionTile;
+    UIView      *systemTile;
+    UILabel     *versionCaption;
+    UILabel     *versionValue;
+    UILabel     *systemCaption;
+    UILabel     *systemValue;
+}
+- (void)applyTheme;
+@end
+
+enum { kAboutHeroHeight = 262 };
+
+static UILabel *AboutHeroLabel(UIView *host, UIFont *font) {
+    UILabel *l = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
+    l.backgroundColor = [UIColor clearColor];
+    l.font = font;
+    l.textAlignment = NSTextAlignmentCenter;
+    l.lineBreakMode = NSLineBreakByTruncatingTail;
+    l.adjustsFontSizeToFitWidth = YES;
+    [host addSubview:l];
+    return l;
+}
+
+@implementation SenkoAboutHero
+
+- (id)initWithFrame:(CGRect)frame {
+    if ((self = [super initWithFrame:frame])) {
+        self.backgroundColor = [UIColor clearColor];
+        NSString *path = [[NSBundle mainBundle] pathForResource:@"Icon-60@3x" ofType:@"png"];
+        icon = [[UIImageView alloc] initWithImage:
+                path ? [UIImage imageWithContentsOfFile:path] : nil];
+        icon.contentMode = UIViewContentModeScaleAspectFill;
+        icon.layer.masksToBounds = YES;
+        icon.layer.cornerRadius = 20.0f;
+        [self addSubview:icon];
+        name = [AboutHeroLabel(self, SenkoFontDisplay(30.0f)) retain];
+        name.text = @"Senko";
+        tagline = [AboutHeroLabel(self, SenkoFontBody(14.0f, NO)) retain];
+
+        versionTile = [[UIView alloc] initWithFrame:CGRectZero];
+        systemTile = [[UIView alloc] initWithFrame:CGRectZero];
+        [self addSubview:versionTile];
+        [self addSubview:systemTile];
+        versionCaption = [AboutHeroLabel(versionTile, SenkoFontBody(12.0f, NO)) retain];
+        versionValue = [AboutHeroLabel(versionTile, SenkoFontBody(17.0f, YES)) retain];
+        systemCaption = [AboutHeroLabel(systemTile, SenkoFontBody(12.0f, NO)) retain];
+        systemValue = [AboutHeroLabel(systemTile, SenkoFontBody(17.0f, YES)) retain];
+        versionValue.text = [SENKO_VERSION hasPrefix:@"v"]
+            ? [SENKO_VERSION substringFromIndex:1] : SENKO_VERSION;
+        systemCaption.text = @"iOS";
+        systemValue.text = [NSString stringWithFormat:@"%@ · %@",
+                            [[UIDevice currentDevice] systemVersion], AboutSlice()];
+    }
+    return self;
+}
+
+- (void)dealloc {
+    [icon release];
+    [name release];
+    [tagline release];
+    [versionTile release];
+    [systemTile release];
+    [versionCaption release];
+    [versionValue release];
+    [systemCaption release];
+    [systemValue release];
+    [super dealloc];
+}
+
+- (void)applyTheme {
+    name.textColor = kInk;
+    tagline.textColor = kInkMuted;
+    versionCaption.textColor = kInkMuted;
+    systemCaption.textColor = kInkMuted;
+    versionValue.textColor = kInk;
+    systemValue.textColor = kInk;
+    AboutStylePlate(versionTile);
+    AboutStylePlate(systemTile);
+    tagline.text = SenkoLocalizedText(@"Amnezia/VLESS Client");
+    versionCaption.text = SenkoLocalizedText(@"Version");
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGFloat w = self.bounds.size.width;
+    CGFloat side = AboutSideMargin(w);
+    if (AboutRowsInsetBySystem())
+        side = [[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad
+            ? 45.0f : 10.0f;
+    icon.frame = CGRectMake(floorf((w - 88.0f) * 0.5f), 22.0f, 88.0f, 88.0f);
+    name.frame = CGRectMake(side, 118.0f, w - side * 2.0f, 38.0f);
+    tagline.frame = CGRectMake(side, 156.0f, w - side * 2.0f, 18.0f);
+    CGFloat gap = 10.0f;
+    CGFloat tileW = floorf((w - side * 2.0f - gap) * 0.5f);
+    versionTile.frame = CGRectMake(side, 188.0f, tileW, 66.0f);
+    systemTile.frame = CGRectMake(w - side - tileW, 188.0f, tileW, 66.0f);
+    for (UIView *tile in [NSArray arrayWithObjects:versionTile, systemTile, nil]) {
+        UILabel *caption = tile == versionTile ? versionCaption : systemCaption;
+        UILabel *value = tile == versionTile ? versionValue : systemValue;
+        caption.frame = CGRectMake(8.0f, 11.0f, tileW - 16.0f, 16.0f);
+        value.frame = CGRectMake(8.0f, 29.0f, tileW - 16.0f, 24.0f);
+    }
+}
+
+@end
+
+@interface AboutVC () <UITableViewDataSource, UITableViewDelegate>
+@end
 
 @implementation AboutVC {
-
-    UIScrollView *_scroll;
-    UIView *_card;
-    UIView *_info;
-    UILabel *_bodyLbl;
-    UIButton *_sponsorButton;
-    UILabel  *_sponsorLink;
-    UIButton *_sponsorCopy;
-    UILabel  *_thanksLbl;
-    UIButton *_githubButton;
-    UIButton *_telegramButton;
-    CAGradientLayer *_cardGrad;
-    CAGradientLayer *_infoGrad;
-
+    UITableView *_tv;
+    SenkoAboutHero *_hero;
+    SenkoBoykisserField *_field;
+    NSArray *_sections;
+    BOOL _copied;
 }
 
 - (void)viewDidLoad {
@@ -27,152 +269,289 @@
     self.title = SenkoLocalizedText(@"About");
     if ([self respondsToSelector:@selector(setEdgesForExtendedLayout:)])
         ((void (*)(id, SEL, NSUInteger))objc_msgSend)(self, @selector(setEdgesForExtendedLayout:), 0);
+    if ([self respondsToSelector:@selector(setAutomaticallyAdjustsScrollViewInsets:)])
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(self, @selector(setAutomaticallyAdjustsScrollViewInsets:), NO);
     SenkoApplyScreenChrome(self.view);
 
-    _scroll = [[UIScrollView alloc] initWithFrame:SenkoViewBounds(self.view)];
-    _scroll.backgroundColor = [UIColor clearColor];
-    _scroll.alwaysBounceVertical = YES;
-    _scroll.showsHorizontalScrollIndicator = NO;
-    [self.view addSubview:_scroll];
+    CGRect b = SenkoViewBounds(self.view);
+/* the plates are opaque, so the sprites show only between and above them */
+    _field = [[SenkoBoykisserField alloc] initWithFrame:b spriteName:@"senko-fall"];
+    _field.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [self.view addSubview:_field];
 
-    _card = [[UIView alloc] initWithFrame:CGRectZero];
-    _card.layer.cornerRadius = SenkoThemeCardRadius();
-    _card.clipsToBounds = YES;
-    _card.opaque = NO;
-    _cardGrad = [CAGradientLayer layer];
-    _cardGrad.cornerRadius = SenkoThemeCardRadius();
-    [_card.layer insertSublayer:_cardGrad atIndex:0];
-    [_scroll addSubview:_card];
+    _tv = [[UITableView alloc] initWithFrame:b style:UITableViewStyleGrouped];
+    SenkoScrollViewUseManualInsets(_tv);
+    _tv.dataSource = self;
+    _tv.delegate = self;
+    _tv.separatorStyle = UITableViewCellSeparatorStyleNone;
+    _tv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    SenkoClearTableBackground(_tv);
+    [self.view addSubview:_tv];
 
-    UIImageView *avatar = [[[UIImageView alloc] initWithImage:[UIImage imageNamed:@"sqmrak.jpg"]] autorelease];
-    avatar.tag = 1;
-    avatar.layer.cornerRadius = 10;
-    avatar.layer.masksToBounds = YES;
-    [_card addSubview:avatar];
-
-    UILabel *name = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
-    name.tag = 2;
-    name.numberOfLines = 4;
-    name.backgroundColor = [UIColor clearColor];
-    name.font = [UIFont boldSystemFontOfSize:14];
-    name.lineBreakMode = NSLineBreakByClipping;
-    SenkoStyleInkLabel(name);
-    name.text = [NSString stringWithFormat:@"Senko-%@\nby sqmrak\niOS 5-16", SENKO_VERSION];
-/* five taps on the version line open the developer section in settings. a
-   gesture recognizer is used rather than a button so the label keeps its
-   layout, and UITapGestureRecognizer exists from ios 3.2 */
-    name.userInteractionEnabled = YES;
-    UITapGestureRecognizer *unlock =
+    _hero = [[SenkoAboutHero alloc] initWithFrame:
+             CGRectMake(0, 0, b.size.width, kAboutHeroHeight)];
+/* five taps on the version open the developer section, like android's build number */
+    _hero->versionTile.userInteractionEnabled = YES;
+    [_hero->versionTile addGestureRecognizer:
         [[[UITapGestureRecognizer alloc] initWithTarget:self
-                                                 action:@selector(versionTapped)] autorelease];
-    [name addGestureRecognizer:unlock];
-    [_card addSubview:name];
+                                                 action:@selector(versionTapped)] autorelease]];
+    [_hero applyTheme];
+    _tv.tableHeaderView = _hero;
 
-    _githubButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
-    [_githubButton setTitle:@"GitHub" forState:UIControlStateNormal];
-    [_githubButton addTarget:self action:@selector(githubPressed)
-            forControlEvents:UIControlEventTouchUpInside];
-    [_card addSubview:_githubButton];
+    [self rebuildRows];
 
-    _telegramButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
-    [_telegramButton setTitle:@"Telegram" forState:UIControlStateNormal];
-    [_telegramButton addTarget:self action:@selector(telegramPressed)
-              forControlEvents:UIControlEventTouchUpInside];
-    [_card addSubview:_telegramButton];
-/* the flat tinted pill read as a label with a tap target. StyleGlossyCapsule
-   is the same body/gloss/shadow (and, on ios26, frosted glass) treatment the
-   connect and check controls use, applied in layoutAbout once the buttons
-   have a real frame to build their gradient layers from */
-    for (UIButton *link in [NSArray arrayWithObjects:_githubButton, _telegramButton, nil])
-        link.titleLabel.lineBreakMode = NSLineBreakByClipping;
-
-    _info = [[UIView alloc] initWithFrame:CGRectZero];
-    _info.layer.cornerRadius = SenkoThemeCardRadius();
-    _info.clipsToBounds = YES;
-    _info.opaque = NO;
-    _infoGrad = [CAGradientLayer layer];
-    _infoGrad.cornerRadius = SenkoThemeCardRadius();
-    [_info.layer insertSublayer:_infoGrad atIndex:0];
-    [_scroll addSubview:_info];
-
-    _bodyLbl = [[UILabel alloc] initWithFrame:CGRectZero];
-    _bodyLbl.numberOfLines = 0;
-    _bodyLbl.backgroundColor = [UIColor clearColor];
-    _bodyLbl.font = [UIFont systemFontOfSize:13];
-    _bodyLbl.lineBreakMode = NSLineBreakByWordWrapping;
-    SenkoStyleInkLabel(_bodyLbl);
-    _bodyLbl.text = SenkoAboutAppReport();
-    [_info addSubview:_bodyLbl];
-
-    _sponsorButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
-    _sponsorButton.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
-    _sponsorButton.titleLabel.font = [UIFont boldSystemFontOfSize:13];
-    _sponsorButton.titleLabel.lineBreakMode = NSLineBreakByWordWrapping;
-    _sponsorButton.titleLabel.numberOfLines = 2;
-    [_sponsorButton addTarget:self action:@selector(sponsorPressed)
-             forControlEvents:UIControlEventTouchUpInside];
-    [_info addSubview:_sponsorButton];
-
-/* old safari cannot open the shop, and the address was only reachable by
-   guessing that the line was tappable at all. it is printed in full so it can
-   be typed on another device, and one button puts it on the clipboard */
-    _sponsorLink = [[UILabel alloc] initWithFrame:CGRectZero];
-    _sponsorLink.backgroundColor = [UIColor clearColor];
-    _sponsorLink.font = [UIFont systemFontOfSize:11];
-    _sponsorLink.numberOfLines = 2;
-    _sponsorLink.lineBreakMode = NSLineBreakByCharWrapping;
-    _sponsorLink.text = SenkoSponsorURL();
-    SenkoStyleMutedLabel(_sponsorLink);
-    [_info addSubview:_sponsorLink];
-
-    _sponsorCopy = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
-    _sponsorCopy.titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
-    [_sponsorCopy addTarget:self action:@selector(sponsorCopyPressed)
-           forControlEvents:UIControlEventTouchUpInside];
-    [_info addSubview:_sponsorCopy];
-    [self updateSponsorButton];
-
-/* a fixed warm orange rather than the theme accent, so the credit reads the
-   same regardless of which palette is active */
-    _thanksLbl = [[UILabel alloc] initWithFrame:CGRectZero];
-    _thanksLbl.backgroundColor = [UIColor clearColor];
-    _thanksLbl.font = [UIFont systemFontOfSize:12];
-    _thanksLbl.numberOfLines = 0;
-    _thanksLbl.lineBreakMode = NSLineBreakByWordWrapping;
-    _thanksLbl.textColor = [UIColor colorWithRed:1.00 green:0.58 blue:0.14 alpha:1.0];
-    _thanksLbl.text = SenkoLocalizedText(@"Special thanks: @CookieValerka, @inraxx, "
-        @"@not_a_modder, @s3dativee, @Lineysom, @shizotoaster");
-    [_info addSubview:_thanksLbl];
-
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(languageDidChange:)
-                                                 name:SenkoLanguageDidChangeNotification
-                                               object:nil];
-
-    [self layoutAbout];
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    [nc addObserver:self selector:@selector(languageDidChange:)
+               name:SenkoLanguageDidChangeNotification object:nil];
+    [nc addObserver:self selector:@selector(themeDidChange:)
+               name:SenkoThemeDidChangeNotification object:nil];
 }
 
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [NSObject cancelPreviousPerformRequestsWithTarget:self];
-    [_scroll release];
-    [_card release];
-    [_info release];
-    [_bodyLbl release];
-    [_sponsorButton release];
-    [_sponsorLink release];
-    [_sponsorCopy release];
-    [_thanksLbl release];
-    [_githubButton release];
-    [_telegramButton release];
+    _tv.dataSource = nil;
+    _tv.delegate = nil;
+    [_tv release];
+    [_hero release];
+/* the display link retains the field; stop it before the release */
+    [_field stop];
+    [_field release];
+    [_sections release];
     [super dealloc];
+}
+
+- (NSDictionary *)row:(NSString *)title value:(NSString *)value
+                glyph:(NSString *)glyph action:(SEL)action {
+    NSMutableDictionary *row = [NSMutableDictionary dictionaryWithCapacity:4];
+    [row setObject:SenkoLocalizedText(title) forKey:kAboutTitle];
+    [row setObject:value ? value : @"" forKey:kAboutValue];
+    if (glyph) [row setObject:glyph forKey:kAboutGlyph];
+    if (action) [row setObject:NSStringFromSelector(action) forKey:kAboutAction];
+    return row;
+}
+
+- (void)rebuildRows {
+    NSDictionary *developer = [self row:@"Developer" value:@"sqmrak" glyph:nil action:NULL];
+    NSString *avatar = [[NSBundle mainBundle] pathForResource:@"sqmrak" ofType:@"jpg"];
+    UIImage *face = avatar ? [UIImage imageWithContentsOfFile:avatar] : nil;
+    if (face) {
+        NSMutableDictionary *withFace = [[developer mutableCopy] autorelease];
+        [withFace setObject:face forKey:kAboutImage];
+        developer = withFace;
+    }
+    NSDictionary *copy = [self row:_copied ? @"Copied" : @"Copy link"
+                             value:nil glyph:nil action:@selector(sponsorCopyPressed)];
+    NSMutableDictionary *copyRow = [[copy mutableCopy] autorelease];
+    [copyRow setObject:SenkoIconCopy(24.0f, kInk) forKey:kAboutImage];
+
+    NSDictionary *sponsor = [self row:@"Sponsor" value:SenkoSponsorURL()
+                                glyph:@"glyph-rocket.png" action:@selector(sponsorPressed)];
+    NSMutableDictionary *sponsorRow = [[sponsor mutableCopy] autorelease];
+    [sponsorRow setObject:@"2xvpn.shop" forKey:kAboutTitle];
+    [sponsorRow setObject:[NSString stringWithFormat:@"%@\n%@",
+                           AboutSponsorPromo(), SenkoSponsorURL()]
+                   forKey:kAboutValue];
+
+    NSArray *sections = [NSArray arrayWithObjects:
+        [NSDictionary dictionaryWithObjectsAndKeys:
+            SenkoLocalizedText(@"Device"), kAboutTitle,
+            [NSArray arrayWithObjects:
+                [self row:@"Model" value:AboutModel() glyph:@"glyph-info.png" action:NULL],
+                [self row:@"iOS version" value:[[UIDevice currentDevice] systemVersion]
+                    glyph:@"glyph-gear.png" action:NULL],
+                [self row:@"Architecture" value:AboutSlice() glyph:@"glyph-hash.png" action:NULL],
+                [self row:@"TLS mode" value:SenkoAboutTLSMode() glyph:@"glyph-shield.png" action:NULL],
+                nil], kAboutValue, nil],
+        [NSDictionary dictionaryWithObjectsAndKeys:
+            @"Senko", kAboutTitle,
+            [NSArray arrayWithObjects:
+                [self row:@"How it works"
+                    value:SenkoLocalizedText(@"Apps and system traffic use the selected profile. "
+                                             @"Routing needs root, and a jailbreak already provides it.")
+                    glyph:@"glyph-globe.png" action:NULL],
+                [self row:@"Transports"
+                    value:@"TCP · TLS · REALITY + Vision\nWebSocket · XHTTP · gRPC\n"
+                          @"AmneziaWG · SOCKS5 · HTTP(S) CONNECT"
+                    glyph:@"glyph-split.png" action:NULL],
+                [self row:@"Compatibility" value:@"iOS 5-16 · armv7 + arm64 + arm64e"
+                    glyph:@"glyph-repeat.png" action:NULL],
+                [self row:@"Security"
+                    value:SenkoLocalizedText(@"Token-authenticated control socket · subscription SSRF "
+                                             @"protection · secret redaction · real transport checks.")
+                    glyph:@"glyph-shield.png" action:NULL],
+                [self row:@"System log" value:@"/var/log/senko-system.log"
+                    glyph:@"glyph-logs.png" action:NULL],
+                nil], kAboutValue, nil],
+        [NSDictionary dictionaryWithObjectsAndKeys:
+            SenkoLocalizedText(@"Links"), kAboutTitle,
+            [NSArray arrayWithObjects:
+                [self row:@"GitHub" value:@"github.com/sqmrak/Senko"
+                    glyph:@"glyph-code.png" action:@selector(githubPressed)],
+                [self row:@"Telegram" value:@"t.me/sqmrakdev"
+                    glyph:@"glyph-globe.png" action:@selector(telegramPressed)],
+                nil], kAboutValue, nil],
+        [NSDictionary dictionaryWithObjectsAndKeys:
+            SenkoLocalizedText(@"Sponsor"), kAboutTitle,
+            [NSArray arrayWithObjects:sponsorRow, copyRow, nil], kAboutValue, nil],
+        [NSDictionary dictionaryWithObjectsAndKeys:
+            SenkoLocalizedText(@"Credits"), kAboutTitle,
+            [NSArray arrayWithObjects:
+                developer,
+                [self row:@"Special thanks" value:kAboutThanks glyph:@"glyph-bolt.png" action:NULL],
+                [self row:@"Sponsors" value:kAboutSponsors glyph:@"glyph-rocket.png" action:NULL],
+                [self row:@"Testers" value:kAboutTesters glyph:@"glyph-search.png" action:NULL],
+                [self row:@"Emoji artwork"
+                    value:SenkoLocalizedText(@"Twemoji by Twitter, Inc. and contributors (CC BY 4.0)")
+                    glyph:@"glyph-palette.png" action:NULL],
+                nil], kAboutValue, nil],
+        nil];
+    [_sections release];
+    _sections = [sections retain];
+    [_tv reloadData];
+}
+
+- (NSDictionary *)rowAtIndexPath:(NSIndexPath *)ip {
+    NSArray *rows = [[_sections objectAtIndex:ip.section] objectForKey:kAboutValue];
+    return [rows objectAtIndex:ip.row];
 }
 
 - (void)languageDidChange:(NSNotification *)n {
     (void)n;
-    _bodyLbl.text = SenkoAboutAppReport();
-    [self updateSponsorButton];
-    [self layoutAbout];
+    self.title = SenkoLocalizedText(@"About");
+    [_hero applyTheme];
+    [self rebuildRows];
+}
+
+- (void)themeDidChange:(NSNotification *)n {
+    (void)n;
+    SenkoApplyScreenChrome(self.view);
+    SenkoClearTableBackground(_tv);
+    [_hero applyTheme];
+    [self rebuildRows];
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    SenkoCrashScreen("about");
+    [super viewWillAppear:animated];
+    SenkoApplyScreenChrome(self.view);
+    [_field start];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    [_field stop];
+}
+
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    CGRect b = SenkoViewBounds(self.view);
+    _tv.frame = b;
+    _field.frame = b;
+    UIEdgeInsets safe = SenkoSafeAreaInsets(self.view);
+    _tv.contentInset = UIEdgeInsetsMake(0.0f, 0.0f, safe.bottom + 16.0f, 0.0f);
+    _tv.scrollIndicatorInsets = _tv.contentInset;
+/* uitableview only rereads the header height when the view is set again */
+    if (fabsf((float)(_hero.frame.size.width - b.size.width)) > 0.5f) {
+        _hero.frame = CGRectMake(0, 0, b.size.width, kAboutHeroHeight);
+        _tv.tableHeaderView = _hero;
+        [_tv reloadData];
+    }
+}
+
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv {
+    (void)tv;
+    return (NSInteger)[_sections count];
+}
+
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s {
+    (void)tv;
+    return (NSInteger)[[[_sections objectAtIndex:s] objectForKey:kAboutValue] count];
+}
+
+- (CGFloat)tableView:(UITableView *)tv heightForRowAtIndexPath:(NSIndexPath *)ip {
+    NSDictionary *row = [self rowAtIndexPath:ip];
+    NSString *value = [row objectForKey:kAboutValue];
+    if (![value length]) return 52.0f;
+    BOOL leading = [row objectForKey:kAboutGlyph] || [row objectForKey:kAboutImage];
+    CGFloat w = tv.bounds.size.width - AboutRowInset(tv) * 2.0f -
+                (leading ? 52.0f : 16.0f) - 12.0f -
+                ([row objectForKey:kAboutAction] ? 34.0f : 0.0f);
+    if (w < 40.0f) w = 40.0f;
+    CGFloat h = SenkoTextSize(value, AboutValueFont(), w).height;
+    if (h > 400.0f) h = 400.0f;
+    return MAX(56.0f, ceilf(h) + 36.0f + 12.0f);
+}
+
+- (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)s {
+    (void)tv; (void)s;
+    return 36.0f;
+}
+
+- (CGFloat)tableView:(UITableView *)tv heightForFooterInSection:(NSInteger)s {
+    (void)tv; (void)s;
+    return 4.0f;
+}
+
+/* ios 14 header views reset their text colour, so the label is our own */
+- (UIView *)tableView:(UITableView *)tv viewForHeaderInSection:(NSInteger)s {
+    CGFloat w = tv.bounds.size.width;
+    UIView *wrap = [[[UIView alloc] initWithFrame:CGRectMake(0, 0, w, 36.0f)] autorelease];
+    wrap.backgroundColor = [UIColor clearColor];
+    CGFloat x = AboutRowInset(tv) + 16.0f;
+    UILabel *label = [[[UILabel alloc] initWithFrame:
+                       CGRectMake(x, 12.0f, w - x * 2.0f, 20.0f)] autorelease];
+    label.backgroundColor = [UIColor clearColor];
+    label.font = SenkoFontBody(13.0f, YES);
+    label.textColor = kInkMuted;
+    label.text = [[_sections objectAtIndex:s] objectForKey:kAboutTitle];
+    [wrap addSubview:label];
+    return wrap;
+}
+
+- (UIView *)tableView:(UITableView *)tv viewForFooterInSection:(NSInteger)s {
+    (void)tv; (void)s;
+    return [[[UIView alloc] initWithFrame:CGRectZero] autorelease];
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
+    static NSString *cid = @"about";
+    SenkoAboutCell *cell = (SenkoAboutCell *)[tv dequeueReusableCellWithIdentifier:cid];
+    if (!cell) cell = [[[SenkoAboutCell alloc] initWithReuseIdentifier:cid] autorelease];
+    NSDictionary *row = [self rowAtIndexPath:ip];
+    BOOL tappable = [row objectForKey:kAboutAction] != nil;
+    cell.selectionStyle = UITableViewCellSelectionStyleNone;
+    cell.accessoryType = tappable ? UITableViewCellAccessoryDisclosureIndicator
+                                  : UITableViewCellAccessoryNone;
+    if (tappable) SenkoStyleSelectableCell(cell);
+    SenkoStyleGroupCell(cell, ip, [self tableView:tv numberOfRowsInSection:ip.section]);
+
+    cell->titleLbl.font = AboutTitleFont();
+    cell->titleLbl.textColor = kInk;
+    cell->titleLbl.text = [row objectForKey:kAboutTitle];
+    cell->valueLbl.font = AboutValueFont();
+    cell->valueLbl.textColor = kInkMuted;
+    cell->valueLbl.text = [row objectForKey:kAboutValue];
+
+    UIImage *image = [row objectForKey:kAboutImage];
+    NSString *glyph = [row objectForKey:kAboutGlyph];
+    cell->icon.image = image ? image : glyph ? TintedIconNamed(glyph, 22.0f, kInk) : nil;
+    BOOL face = image && !glyph && ![[row objectForKey:kAboutAction] length];
+    cell->icon.layer.cornerRadius = face ? 12.0f : 0.0f;
+    cell->icon.layer.masksToBounds = face;
+    [cell setNeedsLayout];
+    return cell;
+}
+
+- (void)tableView:(UITableView *)tv willDisplayCell:(UITableViewCell *)cell
+ forRowAtIndexPath:(NSIndexPath *)ip {
+    SenkoStyleGroupCell(cell, ip, [self tableView:tv numberOfRowsInSection:ip.section]);
+}
+
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];
+    NSString *action = [[self rowAtIndexPath:ip] objectForKey:kAboutAction];
+    if ([action length]) [self performSelector:NSSelectorFromString(action)];
 }
 
 - (void)dismissHint:(UIAlertView *)hint {
@@ -201,26 +580,15 @@
     }
     SenkoSetDevMenuEnabled(YES);
     UIAlertView *done = [[[UIAlertView alloc]
-        initWithTitle:SenkoLocalizedText(@"Developer section")
-              message:SenkoLocalizedText(@"It is now in settings, under the app section. Five taps on its heading hide it again.")
+        initWithTitle:SenkoLocalizedText(@"Developer settings")
+              message:SenkoLocalizedText(@"Developer settings are now visible in Settings. Tap the section heading five times to hide them again.")
              delegate:nil
     cancelButtonTitle:@"OK"
     otherButtonTitles:nil] autorelease];
     [done show];
 }
 
-- (void)updateSponsorButton {
-    NSString *title = SenkoLanguageIsChinese()
-        ? @"赞助商：2xvpn.shop，优惠码 SENKO 可享 15% 折扣"
-        : SenkoLanguageIsRussian()
-        ? @"Спонсор: 2xvpn.shop, промокод SENKO даёт скидку 15%"
-        : @"Sponsor: 2xvpn.shop, promo code SENKO takes 15% off";
-    [_sponsorButton setTitle:title forState:UIControlStateNormal];
-    [_sponsorButton setTitleColor:kAccentBlue forState:UIControlStateNormal];
-    [_sponsorCopy setTitle:SenkoLocalizedText(@"Copy link") forState:UIControlStateNormal];
-    _sponsorLink.text = SenkoSponsorURL();
-}
-
+/* old safari cannot open the shop; the address is shown in full and copyable */
 - (void)sponsorPressed {
     NSURL *url = [NSURL URLWithString:SenkoSponsorURL()];
     if (url) [[UIApplication sharedApplication] openURL:url];
@@ -228,11 +596,17 @@
 
 - (void)sponsorCopyPressed {
     [[UIPasteboard generalPasteboard] setString:SenkoSponsorURL()];
-    [_sponsorCopy setTitle:SenkoLocalizedText(@"Copied") forState:UIControlStateNormal];
+    _copied = YES;
+    [self rebuildRows];
     [NSObject cancelPreviousPerformRequestsWithTarget:self
-                                             selector:@selector(updateSponsorButton)
+                                             selector:@selector(clearCopied)
                                                object:nil];
-    [self performSelector:@selector(updateSponsorButton) withObject:nil afterDelay:1.6];
+    [self performSelector:@selector(clearCopied) withObject:nil afterDelay:1.6];
+}
+
+- (void)clearCopied {
+    _copied = NO;
+    [self rebuildRows];
 }
 
 - (void)githubPressed {
@@ -245,126 +619,4 @@
     if (url) [[UIApplication sharedApplication] openURL:url];
 }
 
-- (void)layoutAbout {
-    CGRect b = SenkoViewBounds(self.view);
-    if (b.size.width < 2.0f || b.size.height < 2.0f) return;
-
-    UIView *bg = [self.view viewWithTag:9111];
-    if (bg) bg.frame = CGRectMake(0, 0, b.size.width, b.size.height);
-
-    _scroll.frame = CGRectMake(0, 0, b.size.width, b.size.height);
-
-/* limiting only tablet width keeps phone landscape text from truncating */
-    CGFloat contentW = b.size.width;
-    if (contentW > 700.0f) contentW = 700.0f;
-    CGFloat contentX = floorf((b.size.width - contentW) * 0.5f);
-    CGFloat side = 12.0f;
-    CGFloat cardW = contentW - side * 2.0f;
-    if (cardW < 120.0f) cardW = 120.0f;
-
-    CGFloat heroH = 126.0f;
-    _card.frame = CGRectMake(contentX + side, 16, cardW, heroH);
-    _cardGrad.frame = CGRectMake(0, 0, cardW, heroH);
-
-    UIImageView *avatar = (UIImageView *)[_card viewWithTag:1];
-    UILabel *name = (UILabel *)[_card viewWithTag:2];
-    avatar.frame = CGRectMake(12, 12, 68, 68);
-    avatar.layer.cornerRadius = 18.0f;
-    name.frame = CGRectMake(92, 12, MAX(40.0f, cardW - 104.0f), 76);
-    CGFloat linkGap = 8.0f;
-    CGFloat linkW = floorf((cardW - 24.0f - linkGap) * 0.5f);
-    _githubButton.frame = CGRectMake(12, 90, linkW, 24);
-    _telegramButton.frame = CGRectMake(12 + linkW + linkGap, 90, linkW, 24);
-    StyleGlossyCapsule(_githubButton, kAccentBlue, kAccentBlueLo);
-    StyleGlossyCapsule(_telegramButton, kAccentBlue, kAccentBlueLo);
-
-    CGFloat textPad = 14.0f;
-    CGFloat textW = cardW - textPad * 2.0f;
-    if (textW < 80.0f) textW = 80.0f;
-    NSString *txt = _bodyLbl.text ? _bodyLbl.text : @"";
-    CGSize bodySz = SenkoTextSize(txt, _bodyLbl.font, textW);
-    if (bodySz.height < 40.0f) bodySz.height = 40.0f;
-    if (bodySz.height > 2000.0f) bodySz.height = 2000.0f;
-
-    CGFloat sponsorH = 34.0f;
-    CGFloat linkH = 30.0f;
-    CGFloat copyH = 28.0f;
-    NSString *thanksTxt = _thanksLbl.text ? _thanksLbl.text : @"";
-    CGSize thanksSz = SenkoTextSize(thanksTxt, _thanksLbl.font, textW);
-    if (thanksSz.height < 14.0f) thanksSz.height = 14.0f;
-    CGFloat thanksGap = 10.0f;
-    CGFloat infoH = bodySz.height + sponsorH + linkH + copyH +
-                    thanksGap + thanksSz.height + 40.0f;
-    CGFloat infoY = CGRectGetMaxY(_card.frame) + 12.0f;
-    _info.frame = CGRectMake(contentX + side, infoY, cardW, infoH);
-    _infoGrad.frame = CGRectMake(0, 0, cardW, infoH);
-    _bodyLbl.frame = CGRectMake(textPad, 12, textW, bodySz.height + 2);
-    _sponsorButton.frame = CGRectMake(textPad,
-                                      14.0f + bodySz.height,
-                                      textW,
-                                      sponsorH);
-/* the button used to sit beside the address and clip its own russian title to
-   "Копиро...ссылку"; the address gets the full width and the button its own row */
-    _sponsorLink.frame = CGRectMake(textPad,
-                                    14.0f + bodySz.height + sponsorH,
-                                    textW, linkH);
-    _sponsorCopy.frame = CGRectMake(textPad,
-                                    14.0f + bodySz.height + sponsorH + linkH + 4.0f,
-                                    textW, copyH);
-    StyleGlossyCapsule(_sponsorCopy, kAccentBlue, kAccentBlueLo);
-    _thanksLbl.frame = CGRectMake(textPad,
-                                  14.0f + bodySz.height + sponsorH + linkH + 4.0f + copyH + thanksGap,
-                                  textW, thanksSz.height);
-
-    BOOL light = SenkoThemeIsLight();
-    if (SenkoThemeIsIos26()) {
-        UIColor *hi = light
-            ? [UIColor colorWithWhite:1 alpha:0.40]
-            : [UIColor colorWithWhite:1 alpha:0.14];
-        UIColor *lo = light
-            ? [UIColor colorWithWhite:1 alpha:0.18]
-            : [UIColor colorWithWhite:1 alpha:0.06];
-        _cardGrad.colors = [NSArray arrayWithObjects:(id)hi.CGColor, (id)lo.CGColor, nil];
-        _infoGrad.colors = [NSArray arrayWithObjects:(id)hi.CGColor, (id)lo.CGColor, nil];
-        _card.layer.borderWidth = 0.5f;
-        _info.layer.borderWidth = 0.5f;
-        _card.layer.borderColor = light
-            ? [UIColor colorWithWhite:1 alpha:0.55].CGColor
-            : [UIColor colorWithWhite:1 alpha:0.22].CGColor;
-        _info.layer.borderColor = _card.layer.borderColor;
-        _card.backgroundColor = [UIColor clearColor];
-        _info.backgroundColor = [UIColor clearColor];
-    } else {
-        _cardGrad.colors = [NSArray arrayWithObjects:(id)kCellHi.CGColor, (id)kCellLo.CGColor, nil];
-        _infoGrad.colors = [NSArray arrayWithObjects:(id)kCellHi.CGColor, (id)kCellLo.CGColor, nil];
-        _card.layer.borderWidth = 0;
-        _info.layer.borderWidth = 0;
-    }
-
-    _scroll.contentSize = CGSizeMake(b.size.width, infoY + infoH + 24.0f);
-    _scroll.contentOffset = CGPointMake(0, _scroll.contentOffset.y);
-}
-
-- (void)viewWillAppear:(BOOL)animated {
-    SenkoCrashScreen("about");
-    [super viewWillAppear:animated];
-    SenkoApplyScreenChrome(self.view);
-    [self layoutAbout];
-}
-
-- (void)viewDidLayoutSubviews {
-    [super viewDidLayoutSubviews];
-    [self layoutAbout];
-}
-
-- (void)willAnimateRotationToInterfaceOrientation:(UIInterfaceOrientation)io
-                                         duration:(NSTimeInterval)dur {
-    (void)io; (void)dur;
-    [self layoutAbout];
-}
-
-- (void)didRotateFromInterfaceOrientation:(UIInterfaceOrientation)io {
-    (void)io;
-    [self layoutAbout];
-}
 @end
