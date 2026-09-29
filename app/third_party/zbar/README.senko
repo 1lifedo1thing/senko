@@ -7,3 +7,15 @@ license: LGPL-2.1-or-later, see COPYING
 Senko builds only the QR reader. Camera capture and UIKit integration remain
 in qr_scan.m. This copy excludes video, window, image-file and every non-QR
 barcode backend.
+
+Local patch: zbar/img_scanner.c movedelta() steps the pixel pointer with a
+signed offset. Upstream adds a negative dx to an uintptr_t product, so every
+backward scan step moved the pointer by an overflowed unsigned offset, which
+UBSan reports and an optimizer may miscompile.
+
+Local patch: zbar/scanner.c interpolates the zero crossing with a
+multiplication instead of shifting a negative value left.
+
+Local patch: zbar/qrcode/util.h QR_MINI and QR_MAXI compare instead of
+subtracting. The branchless form computed b - a, which overflows int when the
+line fit seeds its bounds with INT_MIN and INT_MAX.
