@@ -3,6 +3,7 @@
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
 #import <dispatch/dispatch.h>
+#import "../daemon/core/control.h"
 
 static NSString * const SenkoNativeProviderID = @"com.senko.app.tunnel";
 
@@ -17,6 +18,19 @@ static void SenkoNativeFinish(void (^block)(NSError *), NSError *error) {
     if (!block) return;
     if ([NSThread isMainThread]) block(error);
     else dispatch_async(dispatch_get_main_queue(), ^{ block(error); });
+}
+
+static void SenkoNativeTrafficFinish(void (^block)(BOOL, uint64_t, uint64_t),
+                                     BOOL known, uint64_t up, uint64_t down) {
+    if (!block) return;
+    if ([NSThread isMainThread]) block(known, up, down);
+    else {
+        void (^saved)(BOOL, uint64_t, uint64_t) = [block copy];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            saved(known, up, down);
+            [saved release];
+        });
+    }
 }
 
 static NSError *SenkoNativeError(NSString *message) {
@@ -56,6 +70,32 @@ static id SenkoNativeFindManager(NSArray *managers) {
         if ([identifier isEqual:SenkoNativeProviderID]) return manager;
     }
     return nil;
+}
+
+static void SenkoNativeReadTraffic(id manager,
+                                   void (^completion)(BOOL, uint64_t, uint64_t)) {
+    id connection = manager ? ((id (*)(id, SEL))objc_msgSend)(
+        manager, @selector(connection)) : nil;
+    SEL send = @selector(sendProviderMessage:returnError:responseHandler:);
+    if (!connection || ![connection respondsToSelector:send]) {
+        SenkoNativeTrafficFinish(completion, NO, 0, 0);
+        return;
+    }
+    NSData *request = [@"stats" dataUsingEncoding:NSASCIIStringEncoding];
+    void (^done)(BOOL, uint64_t, uint64_t) = [completion copy];
+    NSError *error = nil;
+    BOOL sent = ((BOOL (*)(id, SEL, NSData *, NSError **, void (^)(NSData *)))objc_msgSend)(
+        connection, send, request, &error, ^(NSData *response) {
+            uint64_t up = 0, down = 0;
+            BOOL known = [response isKindOfClass:[NSData class]] &&
+                ctl_parse_stat([response bytes], [response length], &up, &down) == CTL_OK;
+            SenkoNativeTrafficFinish(done, known, up, down);
+            [done release];
+        });
+    if (!sent) {
+        SenkoNativeTrafficFinish(done, NO, 0, 0);
+        [done release];
+    }
 }
 
 @implementation SenkoNativeVPN
@@ -206,6 +246,28 @@ static id SenkoNativeFindManager(NSArray *managers) {
             (void)unused;
             completion(status, connectedDate);
         }, nil);
+    });
+}
+
+- (void)traffic:(void (^)(BOOL, uint64_t, uint64_t))completion {
+    if (!completion) return;
+    if (![SenkoNativeVPN available]) {
+        SenkoNativeTrafficFinish(completion, NO, 0, 0);
+        return;
+    }
+    if (_manager) {
+        SenkoNativeReadTraffic(_manager, completion);
+        return;
+    }
+    SenkoNativeManagers(^(NSArray *managers, NSError *loadError) {
+        id manager = loadError ? nil : SenkoNativeFindManager(managers);
+        if (!manager) {
+            SenkoNativeTrafficFinish(completion, NO, 0, 0);
+            return;
+        }
+        [_manager release];
+        _manager = [manager retain];
+        SenkoNativeReadTraffic(_manager, completion);
     });
 }
 

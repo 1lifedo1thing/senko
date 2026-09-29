@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#include <stdint.h>
 
 /* the app talks to NetworkExtension through runtime lookup so the armv7/iOS 5
    build never links or sends a selector that did not exist there */
@@ -16,4 +17,6 @@
    suspended and answers the same question the daemon's own clock answers
    on the jailbroken build */
 - (void)status:(void (^)(NSInteger status, NSDate *connectedDate))completion;
+/* counters come from the packet tunnel extension, not senkod */
+- (void)traffic:(void (^)(BOOL known, uint64_t up, uint64_t down))completion;
 @end
