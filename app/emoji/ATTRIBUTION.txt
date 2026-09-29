@@ -1,0 +1,6 @@
+Twemoji 17.0.3 emoji artwork
+Copyright 2019 Twitter, Inc. and other contributors
+https://github.com/jdecked/twemoji/tree/v17.0.3/assets/72x72
+Licensed under Creative Commons Attribution 4.0 International
+https://creativecommons.org/licenses/by/4.0/
+The full license is in LICENSE-GRAPHICS in this directory.
