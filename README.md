@@ -7,7 +7,7 @@
 <p align="center"><b>vless, hysteria2 and amneziawg for the whole device, ios 5 to 16, one deb</b></p>
 
 > [!NOTE]
-> some devices need a jailbreak to route all traffic, others work without one.
+> all devices need a jailbreak.
 
 ## devices
 
