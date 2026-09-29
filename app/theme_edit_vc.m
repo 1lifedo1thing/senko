@@ -73,7 +73,7 @@ static NSString * const kChannelNames[4] = { @"R", @"G", @"B", @"A" };
         ((void (*)(id, SEL, NSUInteger))objc_msgSend)(self, @selector(setEdgesForExtendedLayout:), 0);
     if ([self respondsToSelector:@selector(setAutomaticallyAdjustsScrollViewInsets:)])
         ((void (*)(id, SEL, BOOL))objc_msgSend)(self, @selector(setAutomaticallyAdjustsScrollViewInsets:), NO);
-    self.view.backgroundColor = kBG;
+    SenkoApplyScreenChrome(self.view);
 
     CGFloat top = 20.0f;
     CGFloat width = self.view.bounds.size.width;
@@ -314,7 +314,7 @@ enum { SecName = 0, SecStyle, SecVariant, SecColors, SecActions, SecCount };
     self.title = SenkoCustomDraftName(_draft);
     if ([self respondsToSelector:@selector(setEdgesForExtendedLayout:)])
         ((void (*)(id, SEL, NSUInteger))objc_msgSend)(self, @selector(setEdgesForExtendedLayout:), 0);
-    self.view.backgroundColor = kBG;
+    SenkoApplyScreenChrome(self.view);
 
     _tv = [[UITableView alloc] initWithFrame:self.view.bounds
                                        style:UITableViewStyleGrouped];
@@ -325,7 +325,7 @@ enum { SecName = 0, SecStyle, SecVariant, SecColors, SecActions, SecCount };
     _tv.contentInset = UIEdgeInsetsMake(8.0f, 0.0f, 16.0f, 0.0f);
     _tv.scrollIndicatorInsets = _tv.contentInset;
     _tv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    _tv.backgroundColor = kBG;
+    SenkoClearTableBackground(_tv);
     if ([_tv respondsToSelector:@selector(setBackgroundView:)])
         _tv.backgroundView = nil;
     [self.view addSubview:_tv];
@@ -344,8 +344,8 @@ enum { SecName = 0, SecStyle, SecVariant, SecColors, SecActions, SecCount };
 
 - (void)themeDidChange:(NSNotification *)n {
     (void)n;
-    self.view.backgroundColor = kBG;
-    _tv.backgroundColor = kBG;
+    SenkoApplyScreenChrome(self.view);
+    SenkoClearTableBackground(_tv);
     if (self.navigationController)
         StyleNavBarClassic(self.navigationController);
     [_tv reloadData];

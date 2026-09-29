@@ -14,7 +14,6 @@
 #import "bubble_field.h"
 #import "themes_vc.h"
 #import "server_cell.h"
-#import "home_layout.h"
 #import "update_install.h"
 #import "meow.h"
 #import "app_common.h"
@@ -57,7 +56,7 @@
     } else if (![self.title length]) {
         self.title = @"Import file";
     }
-    self.view.backgroundColor = kBG;
+    SenkoApplyScreenChrome(self.view);
     AddVGradient(self.view, kBG, kBGBot);
     if (!self.navigationController || [self.navigationController.viewControllers objectAtIndex:0] == self) {
         self.navigationItem.leftBarButtonItem =

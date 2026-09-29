@@ -8,8 +8,6 @@ SDK     ?= $(if $(SENKO_SDK_V7),$(SENKO_SDK_V7),$(error set SDK=/path/to/iphoneo
 LDID    ?= $(TC)/ldid
 CRT     ?=
 EXTRA_CFLAGS ?=
-STOCK_NATIVE ?= 0
-OSSL ?=
 ENTITLEMENTS ?= entitlements.plist
 
 # set the target triple and arch for another slice
@@ -21,33 +19,23 @@ ARCH    ?= -arch armv7 -miphoneos-version-min=5.0
 CFLAGS  := -fno-objc-arc -fblocks -Wall -Wextra -O2 $(EXTRA_CFLAGS) $(ARCH) -isysroot $(SDK) \
            -I. -Itheme -Ithird_party/zbar/include -Ithird_party/zbar/zbar \
            -Ithird_party/zbar/zbar/decoder -Ithird_party/zbar/zbar/qrcode
-ifeq ($(STOCK_NATIVE),1)
-CFLAGS += -DSENKO_STOCK_NATIVE=1
-CFLAGS += -I$(OSSL)/include
-NATIVE_CONFIG_SRC := native_config.m ../daemon/core/config.c ../daemon/core/profiles.c \
-	../daemon/core/rules.c ../daemon/core/happ.c ../daemon/core/happ_crypt5.c \
-	../daemon/core/blake2b256.c ../daemon/go_config.c
-NATIVE_CONFIG_LIBS := -I$(OSSL)/include -L$(OSSL)/lib \
-	$(OSSL)/lib/libssl.a $(OSSL)/lib/libcrypto.a
-else
-NATIVE_CONFIG_SRC :=
-NATIVE_CONFIG_LIBS :=
-endif
 # qr scanning uses raw frames
 # keep av/media weak for old ios
 LDFLAGS := $(ARCH) -isysroot $(SDK) \
            -framework UIKit -framework Foundation \
-           -framework CFNetwork \
+           -framework CFNetwork -framework CoreText \
            -framework CoreGraphics -framework QuartzCore \
            -framework AudioToolbox \
            -weak_framework AVFoundation \
            -weak_framework CoreMedia -weak_framework CoreVideo \
-           -lz -liconv $(NATIVE_CONFIG_LIBS) \
+           -lz -liconv \
            $(if $(CRT),-nostartfiles $(CRT),)
 
 ZBAR    := third_party/zbar
 FLAG_SRC := $(wildcard icons/flags/*.png)
 ICON_SRC := icons/server-placeholder.png
+GLYPH_SRC := $(wildcard icons/glyphs/*.png)
+EMOJI_SRC := $(wildcard emoji/*.png) emoji/LICENSE-GRAPHICS emoji/ATTRIBUTION.txt
 
 # keep one theme file per family
 THEME_SRC := \
@@ -67,6 +55,7 @@ APP_SRC := \
 	app_main.m \
 	crash_report.m \
 	localization.m \
+	emoji_text.m \
 	main_vc.m \
 	main_vc_decor.m \
 	main_vc_list.m \
@@ -88,12 +77,11 @@ APP_SRC := \
 	ui_chrome_bar.m \
 	control_client.m \
 	native_vpn.m \
-	$(NATIVE_CONFIG_SRC) \
 	qr_scan.m \
 	server_cell.m \
-	home_layout.m \
-	main_layout.m \
-	ui_chrome_dome.m \
+	home_view.m \
+	server_picker.m \
+	stats_vc.m \
 	server_sheet.m \
 	update_install.m \
 	boykisser_field.m \
@@ -145,7 +133,7 @@ $(OBJDIR)/zbar_%.o: $(ZBAR)/%.c
 	$(CC) $(ARCH) -isysroot $(SDK) -O2 -w -DSENKO_ZBAR_IOS -I$(ZBAR)/include -I$(ZBAR)/zbar \
 		-I$(ZBAR)/zbar/decoder -I$(ZBAR)/zbar/qrcode -c $< -o $@
 
-$(BIN): $(APP_SRC) $(ZBAR_OBJ) $(FLAG_SRC) $(ICON_SRC) control_client.h qr_scan.h Info.plist app_common.h ui_theme.h theme/theme_def.h crash_report.h
+$(BIN): $(APP_SRC) $(ZBAR_OBJ) $(FLAG_SRC) $(ICON_SRC) $(GLYPH_SRC) $(EMOJI_SRC) control_client.h qr_scan.h Info.plist app_common.h ui_theme.h theme/theme_def.h crash_report.h
 	@mkdir -p $(dir $(BIN))
 	$(CC) $(CFLAGS) $(APP_SRC) $(ZBAR_OBJ) -o $(BIN) $(LDFLAGS)
 	@if [ "$(BIN)" = "$(APP)/senko" ]; then \
@@ -154,7 +142,7 @@ $(BIN): $(APP_SRC) $(ZBAR_OBJ) $(FLAG_SRC) $(ICON_SRC) control_client.h qr_scan.
 		cp Info.plist $(APP)/; \
 		cp icons/Icon.png icons/Icon@2x.png icons/Icon-72.png icons/Icon-72@2x.png \
 		   icons/Icon-60@2x.png icons/Icon-60@3x.png icons/Icon-76.png icons/Icon-76@2x.png \
-		   icons/Icon-83.5@2x.png icons/sqmrak.jpg icons/about-bg.png icons/boykisser.png icons/meow.caf icons/meow.wav icons/ouch.wav icons/miside-bg.jpg icons/frutiger-bg.jpg icons/server-placeholder.png \
+		   icons/Icon-83.5@2x.png icons/sqmrak.jpg icons/boykisser.png icons/meow.caf icons/meow.wav icons/ouch.wav icons/miside-bg.jpg icons/frutiger-bg.jpg icons/server-placeholder.png \
 		   icons/ios26-bg-light.jpg icons/ios26-bg-dark.jpg \
 		   icons/Default.png icons/Default@2x.png icons/Default-568h@2x.png \
 		   icons/Default-667h@2x.png icons/Default-736h@3x.png \
@@ -163,6 +151,8 @@ $(BIN): $(APP_SRC) $(ZBAR_OBJ) $(FLAG_SRC) $(ICON_SRC) control_client.h qr_scan.
 		   icons/Default-926h@3x.png \
 		   icons/Default-Portrait.png icons/Default-Portrait@2x.png $(APP)/ 2>/dev/null || true; \
 		cp icons/flags/*.png $(APP)/ 2>/dev/null || true; \
+		cp icons/glyphs/*.png $(APP)/; \
+		cp -R emoji $(APP)/; \
 	fi
 	@echo "built $(BIN); deps:"; $(TC)/otool -L $(BIN) | tail -n +2
 

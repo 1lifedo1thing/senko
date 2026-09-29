@@ -34,17 +34,22 @@ static NSString *DiagTitle(NSString *key) {
             @"iOS major",               @"ios.major",
             @"iOS read from",          @"ios.source",
             @"Backend",                @"backend",
-            @"Go core usable",         @"backend.go_supported",
+            @"Senko-core usable",         @"backend.senko_core_supported",
             @"Backend forced to",       @"backend.pinned",
             @"Last backend error",      @"backend.last_error",
-            @"Firewall",                @"firewall",
-            @"pf variant",             @"firewall.pf_mode",
-            @"pf variant forced to",    @"firewall.pf_pinned",
-            @"pf rejected",            @"firewall.last_reject",
-            @"Bypass table",            @"firewall.bypass_table",
-            @"Bypass evicted",         @"firewall.bypass_evicted",
-            @"Redirect port",           @"port.redirect",
-            @"DNS port",                @"port.dns",
+            @"Tunnel routes",           @"utun.routes",
+            @"Tunnel DNS",              @"utun.dns",
+            @"Tunnel counters",         @"utun.counters",
+            @"TCP flows",               @"utun.tcp",
+            @"TCP traffic",             @"utun.tcp.bytes",
+            @"Last TCP error",          @"utun.tcp.last_error",
+            @"UDP datagrams",           @"utun.udp",
+            @"Last UDP error",          @"utun.udp.last_error",
+            @"Packets",                 @"utun.packets",
+            @"Dropped packets",         @"utun.dropped",
+            @"DNS queries",             @"dns.queries",
+            @"Rule verdicts",           @"rules.flows",
+            @"Direct addresses",        @"rules.direct_addresses",
             @"SOCKS port",              @"port.socks",
             @"SOCKS bound to",          @"socks.bind",
             @"Live connections",        @"conns",
@@ -61,8 +66,11 @@ static NSString *DiagTitle(NSString *key) {
             @"Device id file",          @"path.hwid",
             @"System log",              @"path.log",
             @"Substrate directory",     @"path.substrate",
-            @"senkoawgd",               @"proc.senkoawgd",
-            @"senko-kick",              @"proc.senko_kick",
+            @"AmneziaWG",               @"awg.state",
+            @"AmneziaWG profile",       @"awg.profile",
+            @"AmneziaWG route",         @"awg.route",
+            @"AmneziaWG DNS",           @"awg.dns",
+            @"AmneziaWG link",          @"awg.link",
             @"senkotlsfix",            @"substrate.tlsfix",
             @"senkostatus",           @"substrate.status",
             @"Free memory",            @"device.memory_free",
@@ -82,12 +90,11 @@ static NSString *DiagGroup(NSString *key) {
     if ([key hasPrefix:@"state"] || [key isEqualToString:@"redial"] ||
         [key hasPrefix:@"egress"] || [key isEqualToString:@"conns"] ||
         [key isEqualToString:@"catalog"] ||
-        [key hasPrefix:@"dns.cache"] || [key hasPrefix:@"firewall.bypass"] ||
-        [key hasPrefix:@"rules.top"])
+        [key hasPrefix:@"dns.cache"] || [key hasPrefix:@"dns.queries"] ||
+        [key hasPrefix:@"utun."] || [key hasPrefix:@"rules."])
         return @"LIVE";
     if ([key hasPrefix:@"server"]) return @"SERVER";
     if ([key isEqualToString:@"backend.pinned"] ||
-        [key isEqualToString:@"firewall.pf_pinned"] ||
         [key hasPrefix:@"sub."] || [key isEqualToString:@"trace"] ||
         [key isEqualToString:@"socks.bind"])
         return @"FORCED";
@@ -107,7 +114,7 @@ static NSArray *DiagGroupOrder(void) {
 @implementation DevMenuVC
 
 - (NSString *)devTitle {
-    return SenkoLocalizedText(@"Developer");
+    return SenkoLocalizedText(@"Developer settings");
 }
 
 - (const char *)devScreenName {
@@ -130,13 +137,13 @@ static NSArray *DiagGroupOrder(void) {
     SenkoStyleSelectableCell(cell);
     if (ip.row == 0) {
         cell.textLabel.text = SenkoLocalizedText(@"State");
-        cell.detailTextLabel.text = SenkoLocalizedText(@"Backend, firewall, ports, DNS, rules");
+        cell.detailTextLabel.text = SenkoLocalizedText(@"Backend, tunnel, ports, DNS, rules");
     } else if (ip.row == 1) {
         cell.textLabel.text = SenkoLocalizedText(@"Checks");
-        cell.detailTextLabel.text = SenkoLocalizedText(@"Staged probes and the firewall ruleset");
+        cell.detailTextLabel.text = SenkoLocalizedText(@"Staged probes and the tunnel routes");
     } else if (ip.row == 2) {
         cell.textLabel.text = SenkoLocalizedText(@"Force");
-        cell.detailTextLabel.text = SenkoLocalizedText(@"Backend, pf variant, listeners, trace");
+        cell.detailTextLabel.text = SenkoLocalizedText(@"Backend, listeners, trace");
     } else if (ip.row == 3) {
         cell.textLabel.text = SenkoLocalizedText(@"Rescue");
         cell.detailTextLabel.text = SenkoLocalizedText(@"Crash log, safe mode, device id, bundle");

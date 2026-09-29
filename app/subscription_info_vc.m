@@ -73,9 +73,12 @@ static NSString *SenkoBytes(unsigned long long value) {
    where the sheet is large enough to show most of it */
 - (void)applyChrome {
     UITableView *tv = self.tableView;
-    if ([tv respondsToSelector:@selector(setBackgroundView:)])
-        tv.backgroundView = nil;
-    tv.backgroundColor = kBG;
+    SenkoClearTableBackground(tv);
+/* the controller's view is the table itself, so the screen gradient rides in
+   its background view, which stays put while the rows scroll */
+    UIView *backdrop = [[[UIView alloc] initWithFrame:tv.bounds] autorelease];
+    SenkoApplyScreenChrome(backdrop);
+    tv.backgroundView = backdrop;
     tv.separatorColor = SenkoThemeIsLight()
         ? [UIColor colorWithWhite:0 alpha:0.14f]
         : [UIColor colorWithWhite:1 alpha:0.16f];

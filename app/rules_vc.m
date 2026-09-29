@@ -71,13 +71,13 @@ static NSString *RuleTypeTitle(NSString *type) {
     if ([self respondsToSelector:@selector(setExtendedLayoutIncludesOpaqueBars:)])
         ((void (*)(id, SEL, BOOL))objc_msgSend)(self, @selector(setExtendedLayoutIncludesOpaqueBars:), NO);
 
-    self.view.backgroundColor = kBG;
+    SenkoApplyScreenChrome(self.view);
     _tv = [[UITableView alloc] initWithFrame:self.view.bounds
                                        style:UITableViewStyleGrouped];
     _tv.dataSource = self;
     _tv.delegate = self;
     _tv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    _tv.backgroundColor = kBG;
+    SenkoClearTableBackground(_tv);
     _tv.separatorStyle = UITableViewCellSeparatorStyleSingleLine;
     _tv.separatorColor = SenkoThemeIsLight()
         ? [UIColor colorWithWhite:0 alpha:0.18]
@@ -108,8 +108,8 @@ static NSString *RuleTypeTitle(NSString *type) {
 
 - (void)themeDidChange:(NSNotification *)n {
     (void)n;
-    self.view.backgroundColor = kBG;
-    _tv.backgroundColor = kBG;
+    SenkoApplyScreenChrome(self.view);
+    SenkoClearTableBackground(_tv);
     _tv.separatorColor = SenkoThemeIsLight()
         ? [UIColor colorWithWhite:0 alpha:0.18]
         : [UIColor colorWithWhite:1 alpha:0.14];

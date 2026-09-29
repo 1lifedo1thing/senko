@@ -6,8 +6,9 @@
 #import "control_client.h"
 
 #define SENKO_SOCK @"/var/tmp/senkod.sock"
-#define SENKO_VERSION @"v2.1.0-stable"
-#define SENKO_CLASSIC_HOME_KEY @"SenkoClassicHome"
+#define SENKO_VERSION @"v3.0.0-dev3"
+/* quick connect: the connect button dials whichever server answers fastest */
+#define SENKO_AUTO_SERVER_KEY @"SenkoAutoServer"
 #define SENKO_PINNED_SUB_URL_KEY @"SenkoPinnedSubscriptionURL"
 #define SENKO_AWG_PROFILE_KEY @"SenkoAWGProfilePath"
 #define SENKO_AWG_PROFILE_PATH @"/var/mobile/Library/Preferences/Senko/amneziawg.conf"
@@ -68,12 +69,12 @@ NSString *SenkoAboutAppReport(void);
 /* one place for the shop address, so the about screen can print it, copy it and
    open it without three copies of the same string drifting apart */
 NSString *SenkoSponsorURL(void);
-/* the home screen before the list was rebuilt: a dome connect button with the
-   check and status pills under it, instead of the status card. everything below
-   the hero area is the current build, so the list keeps its sections, its empty
-   state and the server sheet */
-BOOL SenkoClassicHomeEnabled(void);
-void SenkoSetClassicHomeEnabled(BOOL enabled);
+BOOL SenkoAutoServerEnabled(void);
+void SenkoSetAutoServerEnabled(BOOL enabled);
+
+/* 1.2 MB style sizes and 3.4 Mbit/s style rates in the ui language */
+NSString *SenkoFormatBytes(unsigned long long value);
+NSString *SenkoFormatRate(double bytesPerSecond);
 
 /* the device id the daemon actually sends, read from the file both processes
    share. nil until the daemon has written one */
@@ -83,6 +84,8 @@ BOOL SenkoLanguageIsRussian(void);
 BOOL SenkoLanguageIsChinese(void);
 void SenkoSetLanguage(SenkoLanguage language);
 NSString *SenkoLanguageName(void);
+/* "6 hours" in the current language, with the russian plural form */
+NSString *SenkoHoursText(int hours);
 NSString *SenkoLocalizedText(NSString *text);
 NSString *SenkoHumanReadableError(NSString *text);
 NSString *SenkoRedactSecrets(NSString *text);
@@ -132,6 +135,10 @@ void SenkoRelocalizeAllWindows(void);
 @end
 
 @interface LogsVC : UIViewController
+@end
+
+/* the tunnel session and subscription usage, read from the daemon on its own */
+@interface StatsVC : UIViewController <UITableViewDataSource, UITableViewDelegate>
 @end
 
 @interface SubscriptionInfoVC : UITableViewController

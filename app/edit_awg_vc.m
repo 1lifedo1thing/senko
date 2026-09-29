@@ -14,7 +14,6 @@
 #import "bubble_field.h"
 #import "themes_vc.h"
 #import "server_cell.h"
-#import "home_layout.h"
 #import "update_install.h"
 #import "meow.h"
 #import "app_common.h"
@@ -58,7 +57,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = SenkoLocalizedText(@"Edit details");
-    self.view.backgroundColor = kBG;
+    SenkoApplyScreenChrome(self.view);
     AddVGradient(self.view, kBG, kBGBot);
     self.navigationItem.leftBarButtonItem =
         [[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemCancel

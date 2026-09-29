@@ -34,6 +34,7 @@ static void SenkoBuildTranslations(void) {
     gEnglishToChinese = [[NSMutableDictionary alloc] init];
 
     SenkoAddTranslation(@"About", @"О приложении");
+    SenkoAddTranslation(@"Emoji artwork: Twemoji by Twitter, Inc. and contributors (CC BY 4.0).", @"Эмодзи: Twemoji от Twitter, Inc. и участников проекта (CC BY 4.0).");
     SenkoAddTranslation(@"PROTOCOL", @"ПРОТОКОЛ");
     SenkoAddTranslation(@"PASSWORD", @"ПАРОЛЬ");
     SenkoAddTranslation(@"CIPHER", @"ШИФР");
@@ -64,7 +65,6 @@ static void SenkoBuildTranslations(void) {
     SenkoAddTranslation(@"DAEMON", @"ДЕМОН");
     SenkoAddTranslation(@"GENERAL", @"ОБЩИЕ");
     SenkoAddTranslation(@"CONNECTION", @"ПОДКЛЮЧЕНИЕ");
-    SenkoAddTranslation(@"AUTOMATION", @"АВТОМАТИКА");
     SenkoAddTranslation(@"Connect at startup", @"Подключаться при старте");
     SenkoAddTranslation(@"Dial the selected server after a reboot",
                         @"Поднимать выбранный сервер после перезагрузки");
@@ -76,17 +76,15 @@ static void SenkoBuildTranslations(void) {
                         @"Только внутри своего раздела, сначала быстрые");
     SenkoAddTranslation(@"Update subscriptions", @"Обновлять подписки");
     SenkoAddTranslation(@"Off", @"Выкл");
-    SenkoAddTranslation(@"Every %d h", @"Каждые %d ч");
+    SenkoAddTranslation(@"Every %@", @"Каждые %@");
     SenkoAddTranslation(@"The daemon runs these on its own, with the app closed.",
                         @"Демон выполняет это сам, при закрытом приложении.");
     SenkoAddTranslation(@"The daemon is not answering, so these cannot be read or changed.",
                         @"Демон не отвечает, прочитать и изменить их нельзя.");
     SenkoAddTranslation(@"Daemon is unreachable", @"Демон не отвечает");
-    SenkoAddTranslation(@"ROUTING", @"МАРШРУТИЗАЦИЯ");
     SenkoAddTranslation(@"DEVELOPER", @"РАЗРАБОТЧИКУ");
-    SenkoAddTranslation(@"Developer section", @"Раздел разработчика");
-    SenkoAddTranslation(@"It is now in settings, under the app section. Five taps on its heading hide it again.",
-                        @"Он появился в настройках, под разделом приложения. Пять тапов по его заголовку убирают его обратно.");
+    SenkoAddTranslation(@"Developer settings", @"Настройки разработчика");
+    SenkoAddTranslation(@"Developer settings are now visible in Settings. Tap the section heading five times to hide them again.", @"Настройки разработчика теперь видны в настройках. Чтобы снова скрыть их, пять раз нажмите на заголовок раздела.");
     SenkoAddTranslation(@"Five taps on this heading hide the section again.",
                         @"Пять тапов по этому заголовку убирают раздел.");
     SenkoAddTranslation(@"%d more", @"ещё %d");
@@ -111,11 +109,27 @@ static void SenkoBuildTranslations(void) {
     SenkoAddTranslation(@"iOS major", @"Версия iOS");
     SenkoAddTranslation(@"iOS version read from", @"Версия iOS определена по");
     SenkoAddTranslation(@"Backend in use", @"Активный бэкенд");
-    SenkoAddTranslation(@"Go core eligible", @"Go-ядро подходит");
+    SenkoAddTranslation(@"Senko-core eligible", @"senko-core подходит");
     SenkoAddTranslation(@"Applied on the next connect.", @"Применится при следующем подключении.");
     SenkoAddTranslation(@"Auto", @"Авто");
-    SenkoAddTranslation(@"Backend, firewall, ports, DNS, rules", @"Бэкенд, файрвол, порты, DNS, правила");
-    SenkoAddTranslation(@"Backend, pf variant, listeners, trace", @"Бэкенд, вариант pf, слушатели, трассировка");
+    SenkoAddTranslation(@"Backend, tunnel, ports, DNS, rules", @"Бэкенд, туннель, порты, DNS, правила");
+    SenkoAddTranslation(@"Backend, listeners, trace", @"Бэкенд, слушатели, трассировка");
+    SenkoAddTranslation(@"utun tunnel", @"Туннель utun");
+    SenkoAddTranslation(@"Forget direct addresses", @"Забыть прямые адреса");
+    SenkoAddTranslation(@"Tunnel routes", @"Маршруты туннеля");
+    SenkoAddTranslation(@"Show tunnel routes", @"Показать маршруты туннеля");
+    SenkoAddTranslation(@"Tunnel DNS", @"DNS туннеля");
+    SenkoAddTranslation(@"Tunnel counters", @"Счётчики туннеля");
+    SenkoAddTranslation(@"TCP flows", @"TCP-потоки");
+    SenkoAddTranslation(@"TCP traffic", @"TCP-трафик");
+    SenkoAddTranslation(@"Last TCP error", @"Последняя ошибка TCP");
+    SenkoAddTranslation(@"UDP datagrams", @"UDP-датаграммы");
+    SenkoAddTranslation(@"Last UDP error", @"Последняя ошибка UDP");
+    SenkoAddTranslation(@"Packets", @"Пакеты");
+    SenkoAddTranslation(@"Dropped packets", @"Отброшенные пакеты");
+    SenkoAddTranslation(@"DNS queries", @"DNS-запросы");
+    SenkoAddTranslation(@"Rule verdicts", @"Решения правил");
+    SenkoAddTranslation(@"Direct addresses", @"Прямые адреса");
     SenkoAddTranslation(@"Catalog and rules are kept.", @"Каталог и правила остаются.");
     SenkoAddTranslation(@"Catalog is kept.", @"Каталог остаётся.");
     SenkoAddTranslation(@"Checks", @"Проверки");
@@ -142,15 +156,12 @@ static void SenkoBuildTranslations(void) {
     SenkoAddTranslation(@"no answer", @"нет ответа");
     SenkoAddTranslation(@"No servers in the catalog.", @"В каталоге нет серверов.");
     SenkoAddTranslation(@"Off from the next launch.", @"Выключен со следующего запуска.");
-    SenkoAddTranslation(@"pf variant", @"Вариант pf");
-    SenkoAddTranslation(@"Reset dynamic bypass", @"Сбросить динамический обход");
     SenkoAddTranslation(@"Reset settings", @"Сбросить настройки");
     SenkoAddTranslation(@"Run", @"Запустить");
     SenkoAddTranslation(@"Safe mode next launch", @"Safe mode при следующем запуске");
     SenkoAddTranslation(@"Session trace", @"Трассировка сессий");
-    SenkoAddTranslation(@"Show ruleset", @"Показать правила");
     SenkoAddTranslation(@"SOCKS on 0.0.0.0", @"SOCKS на 0.0.0.0");
-    SenkoAddTranslation(@"Staged probes and the firewall ruleset", @"Пробы по стадиям и правила файрвола");
+    SenkoAddTranslation(@"Staged probes and the tunnel routes", @"Пробы по стадиям и маршруты туннеля");
     SenkoAddTranslation(@"STAGES", @"СТАДИИ");
     SenkoAddTranslation(@"Stock theme, no glass, no decor. Your theme stays on disk.",
                         @"Стоковая тема, без стекла и декора. Ваша тема останется на диске.");
@@ -166,14 +177,12 @@ static void SenkoBuildTranslations(void) {
     SenkoAddTranslation(@"PROCESSES", @"ПРОЦЕССЫ");
     SenkoAddTranslation(@"PATHS", @"ПУТИ");
     SenkoAddTranslation(@"Backend forced to", @"Бэкенд форсирован на");
-    SenkoAddTranslation(@"pf variant forced to", @"Вариант pf форсирован на");
     SenkoAddTranslation(@"Free memory", @"Свободная память");
     SenkoAddTranslation(@"Senko resident", @"Senko занимает");
     SenkoAddTranslation(@"Device uptime", @"Устройство работает");
     SenkoAddTranslation(@"Device", @"Устройство");
     SenkoAddTranslation(@"Battery", @"Батарея");
-    SenkoAddTranslation(@"Go core usable", @"Go-ядро подходит");
-    SenkoAddTranslation(@"pf rejected", @"pf отверг");
+    SenkoAddTranslation(@"Senko-core usable", @"senko-core подходит");
     SenkoAddTranslation(@"Bypass evicted", @"Вытеснено из обхода");
     SenkoAddTranslation(@"iOS read from", @"Версия iOS из");
     SenkoAddTranslation(@"Top rule", @"Топ правило");
@@ -186,7 +195,6 @@ static void SenkoBuildTranslations(void) {
                         @"Что выбралось, проверки, переключатели и аварийный раздел");
     SenkoAddTranslation(@"Rescue", @"Аварийный раздел");
     SenkoAddTranslation(@"Backend pinned to", @"Бэкенд закреплён на");
-    SenkoAddTranslation(@"pf syntax pinned to", @"Вариант pf закреплён на");
     SenkoAddTranslation(@"Bypass evictions", @"Вытеснено из таблицы обхода");
     SenkoAddTranslation(@"SOCKS bound to", @"SOCKS слушает");
     SenkoAddTranslation(@"Blocked answers", @"Ответ на заблокированное");
@@ -200,7 +208,6 @@ static void SenkoBuildTranslations(void) {
     SenkoAddTranslation(@"Device id file", @"Файл id устройства");
     SenkoAddTranslation(@"System log", @"Системный лог");
     SenkoAddTranslation(@"Substrate directory", @"Каталог Substrate");
-    SenkoAddTranslation(@"senko-kick", @"senko-kick");
     SenkoAddTranslation(@"CHECK", @"ПРОВЕРКА");
     SenkoAddTranslation(@"Server", @"Сервер");
     SenkoAddTranslation(@"Mode", @"Режим");
@@ -212,14 +219,11 @@ static void SenkoBuildTranslations(void) {
     SenkoAddTranslation(@"Running...", @"Идёт проверка...");
     SenkoAddTranslation(@"Result", @"Результат");
     SenkoAddTranslation(@"passed in %d ms", @"прошла за %d мс");
-    SenkoAddTranslation(@"Generated firewall ruleset", @"Сгенерированные правила файрвола");
-    SenkoAddTranslation(@"Firewall ruleset", @"Правила файрвола");
     SenkoAddTranslation(@"LISTENERS AND DNS", @"СЛУШАТЕЛИ И DNS");
     SenkoAddTranslation(@"SUBSCRIPTIONS", @"ПОДПИСКИ");
     SenkoAddTranslation(@"DIAGNOSTICS", @"ДИАГНОСТИКА");
     SenkoAddTranslation(@"Backend", @"Бэкенд");
-    SenkoAddTranslation(@"Go core", @"Go-ядро");
-    SenkoAddTranslation(@"C core", @"C-ядро");
+    SenkoAddTranslation(@"Senko-core", @"senko-core");
     SenkoAddTranslation(@"Connect hook only", @"Только connect-хук");
     SenkoAddTranslation(@"Zero address", @"Нулевой адрес");
     SenkoAddTranslation(@"Flush the DNS cache", @"Сбросить кэш DNS");
@@ -241,14 +245,14 @@ static void SenkoBuildTranslations(void) {
     SenkoAddTranslation(@"the daemon did not answer", @"демон не ответил");
     SenkoAddTranslation(@"unknown check type", @"неизвестный тип проверки");
     SenkoAddTranslation(@"Last backend error", @"Последняя ошибка бэкенда");
-    SenkoAddTranslation(@"Firewall", @"Файрвол");
-    SenkoAddTranslation(@"Accepted pf syntax", @"Принятый синтаксис pf");
-    SenkoAddTranslation(@"Last pf rejection", @"Последний отказ pf");
     SenkoAddTranslation(@"Bypass table", @"Таблица обхода");
     SenkoAddTranslation(@"Redirect port", @"Порт перенаправления");
     SenkoAddTranslation(@"DNS port", @"Порт DNS");
     SenkoAddTranslation(@"Live connections", @"Живых соединений");
-    SenkoAddTranslation(@"senkoawgd", @"senkoawgd");
+    SenkoAddTranslation(@"AmneziaWG profile", @"Профиль AmneziaWG");
+    SenkoAddTranslation(@"AmneziaWG route", @"Маршрут AmneziaWG");
+    SenkoAddTranslation(@"AmneziaWG DNS", @"DNS AmneziaWG");
+    SenkoAddTranslation(@"AmneziaWG link", @"Канал AmneziaWG");
     SenkoAddTranslation(@"TLS compatibility hook", @"Хук совместимости TLS");
     SenkoAddTranslation(@"Status bar hook", @"Хук строки состояния");
     SenkoAddTranslation(@"Routing rules", @"Правила маршрутизации");
@@ -351,27 +355,20 @@ static void SenkoBuildTranslations(void) {
     SenkoAddTranslation(@"Paste from clipboard", @"Вставить из буфера");
     SenkoAddTranslation(@"Paste", @"Вставить");
     SenkoAddTranslation(@"Safe mode", @"Безопасный режим");
-    SenkoAddTranslation(@"senko-kick could not be waited for",
-                        @"не удалось дождаться senko-kick");
-    SenkoAddTranslation(@"senko-kick is not setuid root: reinstall the package",
-                        @"у senko-kick нет бита setuid root: переустановите пакет");
     SenkoAddTranslation(@"senkod is missing: reinstall the package",
                         @"senkod отсутствует: переустановите пакет");
-    SenkoAddTranslation(@"another daemon start is still running",
-                        @"другой запуск демона ещё выполняется");
-    SenkoAddTranslation(@"senkod did not open its control socket",
-                        @"senkod не открыл управляющий сокет");
-    SenkoAddTranslation(@"This address only hands back a link to itself: the provider has not published a subscription feed behind it. Ask them for the real subscription link.",
-                        @"По этому адресу отдаётся ссылка на него же: провайдер не опубликовал за ним подписку. Попросите у него настоящую ссылку на подписку.");
+    SenkoAddTranslation(@"the senkod launch daemon is missing: reinstall the package",
+                        @"нет задания launchd для senkod: переустановите пакет");
+    SenkoAddTranslation(@"senkod is not running and its log is empty",
+                        @"senkod не запущен, его лог пуст");
+    SenkoAddTranslation(@"This device received a link back to the same address instead of a subscription feed. Check device access and ask the provider for the feed URL.",
+                        @"Устройство получило ссылку на тот же адрес вместо списка серверов. Проверьте доступ устройства к подписке и запросите у провайдера ссылку на список.");
     SenkoAddTranslation(@"The Happ crypt5 bundle on this page could not be opened. It is either damaged or sealed with a key this build does not carry.",
                         @"Бандл Happ crypt5 на этой странице не открылся: он либо повреждён, либо запечатан ключом, которого нет в этой сборке.");
     SenkoAddTranslation(@"This address opens a web page instead of a subscription feed. Copy the subscription link the page offers, not the page address.",
                         @"По этому адресу открывается веб-страница, а не подписка. Скопируйте ссылку на подписку, которую предлагает страница, а не адрес самой страницы.");
     SenkoAddTranslation(@"Copy link", @"Копировать ссылку");
     SenkoAddTranslation(@"Copied", @"Скопировано");
-    SenkoAddTranslation(@"Classic home screen", @"Классический экран");
-    SenkoAddTranslation(@"The dome button instead of the status card",
-                        @"Купольная кнопка вместо карточки состояния");
     SenkoAddTranslation(@"Senko failed to start %d times and is running with "
                          "the stock theme. The report is in Logs.",
                         @"Senko не смог запуститься %d раза и работает со "
@@ -417,7 +414,7 @@ static void SenkoBuildTranslations(void) {
     SenkoAddTranslation(@"Refresh the subscription to change it", @"Обновите подписку, чтобы изменить её");
     SenkoAddTranslation(@"Remove", @"Удалить");
     SenkoAddTranslation(@"Restarting senkod", @"Перезапуск senkod");
-    SenkoAddTranslation(@"The full-device tunnel could not start. Open System Logs to see whether utun, routes, or the bundled core failed.", @"Не удалось запустить туннель всего устройства. Откройте системные логи: там указано, что именно не сработало, utun, маршруты или встроенное ядро.");
+    SenkoAddTranslation(@"The tunnel could not start. Open System Logs to see whether utun, routes, or the bundled core failed.", @"Не удалось запустить туннель. Откройте системные логи: там указано, что именно не сработало, utun, маршруты или встроенное ядро.");
     SenkoAddTranslation(@"Running dpkg --install", @"Выполнение dpkg --install");
     SenkoAddTranslation(@"Russian", @"Русский");
     SenkoAddTranslation(@"Russian/English", @"Русский/Английский");
@@ -448,17 +445,6 @@ static void SenkoBuildTranslations(void) {
     SenkoAddTranslation(@"Version", @"Версия");
     SenkoAddTranslation(@"choose a .deb package", @"выберите пакет .deb");
     SenkoAddTranslation(@"daemon offline", @"демон недоступен");
-    SenkoAddTranslation(@"daemon still offline", @"демон всё ещё недоступен");
-    SenkoAddTranslation(@"daemon started", @"демон запущен");
-    SenkoAddTranslation(@"daemon start failed", @"не удалось запустить демон");
-    SenkoAddTranslation(@"senko-kick is not setuid root: reinstall the package",
-                        @"у senko-kick нет прав root: переустановите пакет");
-    SenkoAddTranslation(@"senkod is missing: reinstall the package",
-                        @"senkod отсутствует: переустановите пакет");
-    SenkoAddTranslation(@"another daemon start is still running",
-                        @"запуск демона уже выполняется");
-    SenkoAddTranslation(@"senkod did not open its control socket",
-                        @"senkod не открыл управляющий сокет");
     SenkoAddTranslation(@"disconnect to edit", @"отключитесь для редактирования");
     SenkoAddTranslation(@"disconnect to remove", @"отключитесь для удаления");
     SenkoAddTranslation(@"disconnect to reorder", @"отключитесь для изменения порядка");
@@ -468,7 +454,6 @@ static void SenkoBuildTranslations(void) {
     SenkoAddTranslation(@"fetching subscription...", @"получение подписки...");
     SenkoAddTranslation(@"file import failed", @"не удалось импортировать файл");
     SenkoAddTranslation(@"folder", @"папка");
-    SenkoAddTranslation(@"full-device", @"всё устройство");
     SenkoAddTranslation(@"group ping complete", @"проверка пинга группы завершена");
     SenkoAddTranslation(@"group profile check complete", @"проверка профилей группы завершена");
     SenkoAddTranslation(@"install a .deb", @"установить .deb");
@@ -535,7 +520,6 @@ static void SenkoBuildTranslations(void) {
     SenkoAddTranslation(@"cannot open folder", @"не удалось открыть папку");
     SenkoAddTranslation(@"empty folder", @"папка пуста");
     SenkoAddTranslation(@"Senko does not support this protocol", @"Senko не поддерживает этот протокол");
-    SenkoAddTranslation(@"awg / udp / full-device", @"awg / udp / всё устройство");
     SenkoAddTranslation(@"Send HWID in Cookie", @"Отправлять HWID в cookie");
     SenkoAddTranslation(@"Title and URL", @"Название и URL");
     SenkoAddTranslation(@"This theme will lag on iOS 6/7. Liquid glass is laggy on older device.", @"Эта тема будет тормозить на iOS 6/7. Liquid glass медленный на старых устройствах");
@@ -566,8 +550,9 @@ static void SenkoBuildTranslations(void) {
     SenkoAddTranslation(@"The tunnel could not be opened. Check the server settings, key, and selected transport.", @"Не удалось открыть туннель. Проверьте параметры сервера, ключ и выбранный транспорт.");
     SenkoAddTranslation(@"The local proxy could not start. Restart Senko and check that another copy is not running.", @"Не удалось запустить локальный прокси. Перезапустите Senko и проверьте, что другая копия не запущена.");
     SenkoAddTranslation(@"The server name could not be resolved. Check the internet connection and server address.", @"Не удалось найти сервер по имени. Проверьте интернет-соединение и адрес сервера.");
-    SenkoAddTranslation(@"The system firewall could not apply Senko routing rules. Open System Logs and check the last pfctl message.", @"Системный firewall не смог применить правила Senko. Откройте «Системные логи» и посмотрите последнее сообщение pfctl.");
-    SenkoAddTranslation(@"The firewall rules were accepted, but device traffic was not redirected. This jailbreak does not expose a working full-device routing path.", @"Правила firewall приняты, но трафик устройства не перенаправляется. Этот jailbreak не предоставляет рабочий маршрут для всего устройства.");
+    SenkoAddTranslation(@"The connect hook could not start. Check that senkotlsfix is installed, or pick another backend.", @"Connect-хук не запустился. Проверьте, что senkotlsfix установлен, или выберите другой бэкенд.");
+    SenkoAddTranslation(@"The tunnel could not start. Open System Logs to see whether utun, routes, or the server failed.", @"Туннель не запустился. Откройте «Системные логи»: там видно, что отказало — utun, маршруты или сервер.");
+    SenkoAddTranslation(@"The tunnel stopped right after it started. Open System Logs for the reason.", @"Туннель остановился сразу после запуска. Причина — в «Системных логах».");
     SenkoAddTranslation(@"This server uses a protocol or security mode that Senko does not support.", @"Этот сервер использует протокол или режим защиты, который Senko не поддерживает.");
     SenkoAddTranslation(@"The server link has an invalid UUID. Import the link again from its source.", @"В ссылке сервера неверный UUID. Импортируйте ссылку заново из источника.");
     SenkoAddTranslation(@"The connection attempt timed out. Check the network and try another server.", @"Время ожидания подключения истекло. Проверьте сеть и попробуйте другой сервер.");
@@ -688,20 +673,56 @@ static void SenkoBuildTranslations(void) {
     SenkoAddTranslation(@"Unsupported theme format", @"Неподдерживаемый формат темы");
     SenkoAddTranslation(@"Theme file is incomplete", @"Файл темы неполный");
     SenkoAddTranslation(@"Custom theme limit reached", @"Достигнут предел числа своих тем");
+    SenkoAddTranslation(@"Download", @"Загрузка");
+    SenkoAddTranslation(@"Upload", @"Отдача");
+    SenkoAddTranslation(@"Statistics", @"Статистика");
+    SenkoAddTranslation(@"Choose a server", @"Выбор сервера");
+    SenkoAddTranslation(@"Search a country or a city", @"Поиск страны или города");
+    SenkoAddTranslation(@"Fastest server", @"Лучший сервер");
+    SenkoAddTranslation(@"Tap to connect", @"Нажми, чтобы подключиться");
+    SenkoAddTranslation(@"Looking for the fastest server", @"Ищу самый быстрый сервер");
+    SenkoAddTranslation(@"no server answered the check", @"ни один сервер не ответил на проверку");
+    SenkoAddTranslation(@"No servers", @"Нет серверов");
+    SenkoAddTranslation(@"Add a subscription or a server", @"Добавь подписку или сервер");
+    SenkoAddTranslation(@"Tap to open the list", @"Нажми, чтобы открыть список");
+    SenkoAddTranslation(@"%d ms", @"%d мс");
+    SenkoAddTranslation(@"Mbit/s", @"Мбит/с");
+    SenkoAddTranslation(@"Kbit/s", @"Кбит/с");
+    SenkoAddTranslation(@"bit/s", @"бит/с");
+    SenkoAddTranslation(@"Gbit/s", @"Гбит/с");
+    SenkoAddTranslation(@"Done reordering", @"Закончить перестановку");
+    SenkoAddTranslation(@"Reorder manual servers", @"Переставить свои серверы");
+    SenkoAddTranslation(@"Session", @"Сеанс");
+    SenkoAddTranslation(@"Subscriptions", @"Подписки");
+    SenkoAddTranslation(@"Status", @"Состояние");
+    SenkoAddTranslation(@"Uptime", @"Время работы");
+    SenkoAddTranslation(@"Download speed", @"Скорость загрузки");
+    SenkoAddTranslation(@"Upload speed", @"Скорость отдачи");
+    SenkoAddTranslation(@"%@ of %@", @"%@ из %@");
+    SenkoAddTranslation(@"Main", @"Основные");
+    SenkoAddTranslation(@"App", @"Приложение");
+    SenkoAddTranslation(@"Advanced", @"Дополнительно");
+    SenkoAddTranslation(@"Quick connect", @"Быстрое подключение");
+    SenkoAddTranslation(@"Theme", @"Тема");
+    SenkoAddTranslation(@"Backup", @"Резервная копия");
+    SenkoAddTranslation(@"DNS", @"DNS");
+    SenkoAddTranslation(@"Split tunneling", @"Раздельное туннелирование");
+    SenkoAddTranslation(@"Real delay", @"Реальная задержка");
 
 /* common screen text: Chinese is kept here instead of relying on system
    strings, because the app runs on iOS 5 where no localization bundle exists */
     SenkoAddChineseTranslation(@"About", @"关于");
+    SenkoAddChineseTranslation(@"Emoji artwork: Twemoji by Twitter, Inc. and contributors (CC BY 4.0).", @"表情图案：Twitter, Inc. 及贡献者的 Twemoji（CC BY 4.0）。");
     SenkoAddChineseTranslation(@"Settings", @"设置");
     SenkoAddChineseTranslation(@"Language", @"语言");
     SenkoAddChineseTranslation(@"English", @"English");
     SenkoAddChineseTranslation(@"Russian", @"Русский");
     SenkoAddChineseTranslation(@"Chinese", @"中文");
     SenkoAddChineseTranslation(@"GENERAL", @"常规");
-    SenkoAddChineseTranslation(@"AUTOMATION", @"自动化");
-    SenkoAddChineseTranslation(@"ROUTING", @"路由");
     SenkoAddChineseTranslation(@"APP", @"应用");
     SenkoAddChineseTranslation(@"DEVELOPER", @"开发者");
+    SenkoAddChineseTranslation(@"Developer settings", @"开发者设置");
+    SenkoAddChineseTranslation(@"Developer settings are now visible in Settings. Tap the section heading five times to hide them again.", @"开发者设置现已显示在设置中。点击该区域标题五次即可再次隐藏。");
     SenkoAddChineseTranslation(@"Server", @"服务器");
     SenkoAddChineseTranslation(@"SERVER", @"服务器");
     SenkoAddChineseTranslation(@"Add", @"添加");
@@ -757,7 +778,7 @@ static void SenkoBuildTranslations(void) {
     SenkoAddChineseTranslation(@"Try another server", @"尝试其他服务器");
     SenkoAddChineseTranslation(@"Only inside the same section, fastest first", @"仅在同一分组内，优先最快的服务器");
     SenkoAddChineseTranslation(@"Off", @"关闭");
-    SenkoAddChineseTranslation(@"Every %d h", @"每 %d 小时");
+    SenkoAddChineseTranslation(@"Every %@", @"每 %@");
     SenkoAddChineseTranslation(@"Reconnect attempts", @"重连次数");
     SenkoAddChineseTranslation(@"Until it works", @"直到成功");
     SenkoAddChineseTranslation(@"%d attempts", @"%d 次");
@@ -774,11 +795,17 @@ static void SenkoBuildTranslations(void) {
     SenkoAddChineseTranslation(@"Value", @"值");
     SenkoAddChineseTranslation(@"Theme", @"主题");
     SenkoAddChineseTranslation(@"Themes", @"主题");
+    SenkoAddChineseTranslation(@"Style", @"风格");
+    SenkoAddChineseTranslation(@"Custom", @"自定义");
     SenkoAddChineseTranslation(@"Appearance", @"外观");
+    SenkoAddChineseTranslation(@"Dark / Light applies to the selected style. Choice is stored on device.", @"深色和浅色模式应用于所选风格。设置保存在设备上。");
+    SenkoAddChineseTranslation(@"Senko-Miside is Dark only: pattern wallpaper and candy heart ON.", @"Senko-Miside 仅支持深色模式：图案壁纸和糖果心形按钮。");
+    SenkoAddChineseTranslation(@"Senko-Boykisser: pink paper or rose ink, with falling boykissers on the home screen.", @"Senko-Boykisser：粉色纸张或玫瑰色墨迹，主屏幕上有飘落的图案。");
+    SenkoAddChineseTranslation(@"Senko-Aero is Light only: sky wallpaper and floating gloss bubbles.", @"Senko-Aero 仅支持浅色模式：天空壁纸和漂浮的光泽气泡。");
+    SenkoAddChineseTranslation(@"Play a short ouch on every button tap.", @"每次点击按钮时播放短音效。");
+    SenkoAddChineseTranslation(@"Play a short meow on every button tap.", @"每次点击按钮时播放短猫叫声。");
     SenkoAddChineseTranslation(@"Dark", @"深色");
     SenkoAddChineseTranslation(@"Light", @"浅色");
-    SenkoAddChineseTranslation(@"Classic home screen", @"经典主屏幕");
-    SenkoAddChineseTranslation(@"The dome button instead of the status card", @"使用圆顶按钮代替状态卡片");
     SenkoAddChineseTranslation(@"System Logs", @"系统日志");
     SenkoAddChineseTranslation(@"senkod + awg combined", @"senkod + awg 合并日志");
     SenkoAddChineseTranslation(@"Export backup", @"导出备份");
@@ -838,14 +865,496 @@ static void SenkoBuildTranslations(void) {
     SenkoAddChineseTranslation(@"Stopping services", @"正在停止服务");
     SenkoAddChineseTranslation(@"Restarting senkod", @"正在重启 senkod");
     SenkoAddChineseTranslation(@"daemon offline", @"daemon 离线");
-    SenkoAddChineseTranslation(@"daemon started", @"daemon 已启动");
     SenkoAddChineseTranslation(@"Senko", @"Senko");
     SenkoAddChineseTranslation(@"No server in the catalog", @"目录中没有服务器");
     SenkoAddChineseTranslation(@"No servers in the catalog.", @"目录中没有服务器。");
     SenkoAddChineseTranslation(@"Unknown error", @"未知错误");
     SenkoAddChineseTranslation(@"The report is on the clipboard.", @"报告已复制到剪贴板。");
     SenkoAddChineseTranslation(@"Copied to the clipboard.", @"已复制到剪贴板。");
+    SenkoAddChineseTranslation(@"Sponsors: @s3dativee, @shizotoaster, @not_a_modder", @"赞助者：@s3dativee、@shizotoaster、@not_a_modder");
     SenkoAddChineseTranslation(@"Special thanks: @CookieValerka, @inraxx, @not_a_modder, @s3dativee, @Lineysom, @shizotoaster", @"特别感谢：@CookieValerka、@inraxx、@not_a_modder、@s3dativee、@Lineysom、@shizotoaster");
+    SenkoAddChineseTranslation(@"Download", @"下载");
+    SenkoAddChineseTranslation(@"Upload", @"上传");
+    SenkoAddChineseTranslation(@"Statistics", @"统计");
+    SenkoAddChineseTranslation(@"Choose a server", @"选择服务器");
+    SenkoAddChineseTranslation(@"Search a country or a city", @"搜索国家或城市");
+    SenkoAddChineseTranslation(@"Auto", @"自动");
+    SenkoAddChineseTranslation(@"All", @"全部");
+    SenkoAddChineseTranslation(@"Fastest server", @"最快的服务器");
+    SenkoAddChineseTranslation(@"Tap to connect", @"点击连接");
+    SenkoAddChineseTranslation(@"Looking for the fastest server", @"正在寻找最快的服务器");
+    SenkoAddChineseTranslation(@"no server answered the check", @"没有服务器响应检测");
+    SenkoAddChineseTranslation(@"AmneziaWG profile", @"AmneziaWG 配置");
+    SenkoAddChineseTranslation(@"No servers", @"没有服务器");
+    SenkoAddChineseTranslation(@"Add a subscription or a server", @"添加订阅或服务器");
+    SenkoAddChineseTranslation(@"Tap to open the list", @"点击打开列表");
+    SenkoAddChineseTranslation(@"%d ms", @"%d 毫秒");
+    SenkoAddChineseTranslation(@"Mbit/s", @"Mbit/s");
+    SenkoAddChineseTranslation(@"Kbit/s", @"Kbit/s");
+    SenkoAddChineseTranslation(@"Done reordering", @"完成排序");
+    SenkoAddChineseTranslation(@"Reorder manual servers", @"调整手动服务器顺序");
+    SenkoAddChineseTranslation(@"Session", @"会话");
+    SenkoAddChineseTranslation(@"Subscriptions", @"订阅");
+    SenkoAddChineseTranslation(@"Status", @"状态");
+    SenkoAddChineseTranslation(@"Uptime", @"运行时间");
+    SenkoAddChineseTranslation(@"Download speed", @"下载速度");
+    SenkoAddChineseTranslation(@"Upload speed", @"上传速度");
+    SenkoAddChineseTranslation(@"%@ of %@", @"%@ / %@");
+    SenkoAddChineseTranslation(@"expired", @"已过期");
+    SenkoAddChineseTranslation(@"Main", @"常规");
+    SenkoAddChineseTranslation(@"App", @"应用");
+    SenkoAddChineseTranslation(@"Advanced", @"高级");
+    SenkoAddChineseTranslation(@"Quick connect", @"快速连接");
+    SenkoAddChineseTranslation(@"Theme", @"主题");
+    SenkoAddChineseTranslation(@"Backup", @"备份");
+    SenkoAddChineseTranslation(@"DNS", @"DNS");
+    SenkoAddChineseTranslation(@"Split tunneling", @"分流");
+    SenkoAddChineseTranslation(@"Real delay", @"真实延迟");
+    SenkoAddChineseTranslation(@"Local DNS port", @"本地 DNS 端口");
+    SenkoAddChineseTranslation(@"SOCKS port", @"SOCKS 端口");
+    SenkoAddChineseTranslation(@"unreachable", @"无法访问");
+    SenkoAddChineseTranslation(@"%d more", @"还有 %d 项");
+    SenkoAddChineseTranslation(@"A port number between 1 and 65535", @"请输入 1 到 65535 之间的端口号");
+    SenkoAddChineseTranslation(@"Active tunnel", @"当前隧道");
+    SenkoAddChineseTranslation(@"Add dark variant", @"添加深色版本");
+    SenkoAddChineseTranslation(@"AmneziaWG: check ping", @"AmneziaWG：检查延迟");
+    SenkoAddChineseTranslation(@"AmneziaWG: edit details", @"AmneziaWG：编辑详情");
+    SenkoAddChineseTranslation(@"AmneziaWG: refresh", @"AmneziaWG：刷新");
+    SenkoAddChineseTranslation(@"AmneziaWG: remove profile", @"AmneziaWG：移除配置");
+    SenkoAddChineseTranslation(@"An IPv4 address, for example 1.1.1.1", @"请输入 IPv4 地址，例如 1.1.1.1");
+    SenkoAddChineseTranslation(@"Applied on the next connect.", @"下次连接时生效。");
+    SenkoAddChineseTranslation(@"Asking the daemon...", @"正在查询守护进程…");
+    SenkoAddChineseTranslation(@"Backend", @"后端");
+    SenkoAddChineseTranslation(@"Backend, listeners, trace", @"后端、监听器、跟踪");
+    SenkoAddChineseTranslation(@"Backend, tunnel, ports, DNS, rules", @"后端、隧道、端口、DNS、规则");
+    SenkoAddChineseTranslation(@"Backup export failed", @"导出备份失败");
+    SenkoAddChineseTranslation(@"Backup restore failed", @"恢复备份失败");
+    SenkoAddChineseTranslation(@"Blocked answers", @"已阻止的响应");
+    SenkoAddChineseTranslation(@"CHECK", @"检查");
+    SenkoAddChineseTranslation(@"CIPHER", @"加密方式");
+    SenkoAddChineseTranslation(@"Catalog and rules are kept.", @"服务器目录和规则已保留。");
+    SenkoAddChineseTranslation(@"Catalog is kept.", @"服务器目录已保留。");
+    SenkoAddChineseTranslation(@"Checks", @"检查");
+    SenkoAddChineseTranslation(@"Classic", @"经典");
+    SenkoAddChineseTranslation(@"Clear", @"清除");
+    SenkoAddChineseTranslation(@"Connect hook only", @"仅连接钩子");
+    SenkoAddChineseTranslation(@"Console", @"控制台");
+    SenkoAddChineseTranslation(@"Copied in full.", @"已完整复制。");
+    SenkoAddChineseTranslation(@"Copy current theme", @"复制当前主题");
+    SenkoAddChineseTranslation(@"Corners", @"圆角");
+    SenkoAddChineseTranslation(@"Could not create theme", @"无法创建主题");
+    SenkoAddChineseTranslation(@"Could not stage backup", @"无法暂存备份");
+    SenkoAddChineseTranslation(@"Crash and launch log", @"崩溃与启动日志");
+    SenkoAddChineseTranslation(@"Crash and launch report", @"崩溃与启动报告");
+    SenkoAddChineseTranslation(@"Crash log, safe mode, device id, bundle", @"崩溃日志、安全模式、设备 ID、诊断包");
+    SenkoAddChineseTranslation(@"DARK COLORS", @"深色配色");
+    SenkoAddChineseTranslation(@"DEVICE ID", @"设备 ID");
+    SenkoAddChineseTranslation(@"DIAGNOSTICS", @"诊断");
+    SenkoAddChineseTranslation(@"Daemon is unreachable", @"无法连接守护进程");
+    SenkoAddChineseTranslation(@"Delete all rules", @"删除所有规则");
+    SenkoAddChineseTranslation(@"Delete theme", @"删除主题");
+    SenkoAddChineseTranslation(@"Delete theme?", @"删除主题？");
+    SenkoAddChineseTranslation(@"Device ID (tap to copy)", @"设备 ID（点击复制）");
+    SenkoAddChineseTranslation(@"Device ID copied", @"设备 ID 已复制");
+    SenkoAddChineseTranslation(@"Device id", @"设备 ID");
+    SenkoAddChineseTranslation(@"Diagnostics bundle", @"诊断包");
+    SenkoAddChineseTranslation(@"Done.", @"已完成。");
+    SenkoAddChineseTranslation(@"Duplicates", @"重复项");
+    SenkoAddChineseTranslation(@"Edit details", @"编辑详情");
+    SenkoAddChineseTranslation(@"Edit server", @"编辑服务器");
+    SenkoAddChineseTranslation(@"Editing", @"正在编辑");
+    SenkoAddChineseTranslation(@"Empty manual list", @"清空手动列表");
+    SenkoAddChineseTranslation(@"Enter", @"输入");
+    SenkoAddChineseTranslation(@"Export debug bundle", @"导出调试包");
+    SenkoAddChineseTranslation(@"Export failed", @"导出失败");
+    SenkoAddChineseTranslation(@"Export to Documents", @"导出到 Documents");
+    SenkoAddChineseTranslation(@"FINGERPRINT", @"指纹");
+    SenkoAddChineseTranslation(@"FIREWALL", @"防火墙");
+    SenkoAddChineseTranslation(@"FLOW", @"流控");
+    SenkoAddChineseTranslation(@"FORCE", @"强制");
+    SenkoAddChineseTranslation(@"FPS overlay", @"FPS 浮窗");
+    SenkoAddChineseTranslation(@"Failed launches", @"启动失败次数");
+    SenkoAddChineseTranslation(@"Flat", @"扁平");
+    SenkoAddChineseTranslation(@"Flush", @"清空");
+    SenkoAddChineseTranslation(@"Flush DNS cache", @"清空 DNS 缓存");
+    SenkoAddChineseTranslation(@"For example 10.0.0.0/8", @"例如 10.0.0.0/8");
+    SenkoAddChineseTranslation(@"For example example.com", @"例如 example.com");
+    SenkoAddChineseTranslation(@"For example googlevideo", @"例如 googlevideo");
+    SenkoAddChineseTranslation(@"Force", @"强制");
+    SenkoAddChineseTranslation(@"Forget direct addresses", @"清除直连地址");
+    SenkoAddChineseTranslation(@"Glass", @"玻璃");
+    SenkoAddChineseTranslation(@"HWID requires a Cookie request header", @"HWID 需要 Cookie 请求头");
+    SenkoAddChineseTranslation(@"Header: value", @"请求头：值");
+    SenkoAddChineseTranslation(@"Ignore device gating", @"忽略设备限制");
+    SenkoAddChineseTranslation(@"Import", @"导入");
+    SenkoAddChineseTranslation(@"Import failed", @"导入失败");
+    SenkoAddChineseTranslation(@"Import from Documents", @"从 Documents 导入");
+    SenkoAddChineseTranslation(@"Import theme", @"导入主题");
+    SenkoAddChineseTranslation(@"Issue", @"问题");
+    SenkoAddChineseTranslation(@"LAUNCH", @"启动");
+    SenkoAddChineseTranslation(@"LIGHT COLORS", @"浅色配色");
+    SenkoAddChineseTranslation(@"LISTENERS AND DNS", @"监听器与 DNS");
+    SenkoAddChineseTranslation(@"Leave safe mode", @"退出安全模式");
+    SenkoAddChineseTranslation(@"Local proxy", @"本地代理");
+    SenkoAddChineseTranslation(@"Long names", @"长名称");
+    SenkoAddChineseTranslation(@"Long names, duplicates and an empty manual list", @"长名称、重复项和空的手动列表");
+    SenkoAddChineseTranslation(@"Look", @"外观");
+    SenkoAddChineseTranslation(@"Mode", @"模式");
+    SenkoAddChineseTranslation(@"Name", @"名称");
+    SenkoAddChineseTranslation(@"New device id", @"生成新设备 ID");
+    SenkoAddChineseTranslation(@"New theme", @"新建主题");
+    SenkoAddChineseTranslation(@"No app fault report", @"没有应用崩溃报告");
+    SenkoAddChineseTranslation(@"No rules: everything goes through the tunnel. Add one with the plus button.", @"没有规则：所有流量都经过隧道。点击加号添加规则。");
+    SenkoAddChineseTranslation(@"None", @"无");
+    SenkoAddChineseTranslation(@"Not a senko backup", @"不是 Senko 备份文件");
+    SenkoAddChineseTranslation(@"Off from the next launch.", @"下次启动时关闭。");
+    SenkoAddChineseTranslation(@"Only manually added servers are removed.", @"只会删除手动添加的服务器。");
+    SenkoAddChineseTranslation(@"PATH", @"路径");
+    SenkoAddChineseTranslation(@"PROTOCOL", @"协议");
+    SenkoAddChineseTranslation(@"Profile handshake", @"配置握手");
+    SenkoAddChineseTranslation(@"REMOVE", @"移除");
+    SenkoAddChineseTranslation(@"Reading the rules from the daemon...", @"正在从守护进程读取规则…");
+    SenkoAddChineseTranslation(@"Refreshing subscriptions", @"正在刷新订阅");
+    SenkoAddChineseTranslation(@"Replace", @"替换");
+    SenkoAddChineseTranslation(@"Rescue", @"恢复");
+    SenkoAddChineseTranslation(@"Reset", @"重置");
+    SenkoAddChineseTranslation(@"Reset settings", @"重置设置");
+    SenkoAddChineseTranslation(@"Restore configuration", @"恢复配置");
+    SenkoAddChineseTranslation(@"Result", @"结果");
+    SenkoAddChineseTranslation(@"Run", @"运行");
+    SenkoAddChineseTranslation(@"Running...", @"运行中…");
+    SenkoAddChineseTranslation(@"SOCKS on 0.0.0.0", @"在 0.0.0.0 上监听 SOCKS");
+    SenkoAddChineseTranslation(@"STAGES", @"阶段");
+    SenkoAddChineseTranslation(@"STYLE", @"风格");
+    SenkoAddChineseTranslation(@"SUBSCRIPTIONS", @"订阅");
+    SenkoAddChineseTranslation(@"Safe mode", @"安全模式");
+    SenkoAddChineseTranslation(@"Safe mode next launch", @"下次启动进入安全模式");
+    SenkoAddChineseTranslation(@"Saved to Documents/senko-backup.senko", @"已保存到 Documents/senko-backup.senko");
+    SenkoAddChineseTranslation(@"Send HWID in Cookie", @"在 Cookie 中发送 HWID");
+    SenkoAddChineseTranslation(@"Senko-core", @"Senko-core");
+    SenkoAddChineseTranslation(@"Session trace", @"会话跟踪");
+    SenkoAddChineseTranslation(@"Show tunnel routes", @"显示隧道路由");
+    SenkoAddChineseTranslation(@"Staged probes and the tunnel routes", @"分阶段检测和隧道路由");
+    SenkoAddChineseTranslation(@"Stock theme, no glass, no decor. Your theme stays on disk.", @"使用默认主题，不显示玻璃与装饰效果。原主题仍保存在设备上。");
+    SenkoAddChineseTranslation(@"TCP to the node", @"连接节点的 TCP");
+    SenkoAddChineseTranslation(@"Talk to the control socket without ssh", @"无需 SSH 即可访问控制套接字");
+    SenkoAddChineseTranslation(@"Test fixtures", @"测试数据");
+    SenkoAddChineseTranslation(@"The custom theme limit is reached.", @"自定义主题数量已达上限。");
+    SenkoAddChineseTranslation(@"The daemon is not answering, so these cannot be read or changed.", @"守护进程没有响应，因此无法读取或更改这些设置。");
+    SenkoAddChineseTranslation(@"The next launch runs in safe mode.", @"下次启动将进入安全模式。");
+    SenkoAddChineseTranslation(@"The old id is gone for good.", @"旧设备 ID 已永久删除。");
+    SenkoAddChineseTranslation(@"The subscription refused this device.", @"订阅拒绝此设备。");
+    SenkoAddChineseTranslation(@"Theme exported", @"主题已导出");
+    SenkoAddChineseTranslation(@"Theme imported", @"主题已导入");
+    SenkoAddChineseTranslation(@"Theme name", @"主题名称");
+    SenkoAddChineseTranslation(@"This URL sends the subscription without TLS. Import it only if you trust this network and provider.", @"此 URL 未使用 TLS 传输订阅。请仅在信任网络和服务商时导入。");
+    SenkoAddChineseTranslation(@"This build cannot dial this profile", @"此版本无法连接该配置");
+    SenkoAddChineseTranslation(@"Tunnel routes", @"隧道路由");
+    SenkoAddChineseTranslation(@"Unencrypted subscription", @"未加密的订阅");
+    SenkoAddChineseTranslation(@"VARIANT", @"版本");
+    SenkoAddChineseTranslation(@"Zero address", @"空地址");
+    SenkoAddChineseTranslation(@"all", @"全部");
+    SenkoAddChineseTranslation(@"checking", @"检查中");
+    SenkoAddChineseTranslation(@"copied", @"已复制");
+    SenkoAddChineseTranslation(@"hits", @"命中次数");
+    SenkoAddChineseTranslation(@"loading", @"加载中");
+    SenkoAddChineseTranslation(@"name and url required", @"请填写名称和 URL");
+    SenkoAddChineseTranslation(@"no answer", @"无响应");
+    SenkoAddChineseTranslation(@"not available yet", @"暂时不可用");
+    SenkoAddChineseTranslation(@"nothing recorded", @"没有记录");
+    SenkoAddChineseTranslation(@"passed in %d ms", @"耗时 %d 毫秒，通过");
+    SenkoAddChineseTranslation(@"the daemon did not answer", @"守护进程没有响应");
+    SenkoAddChineseTranslation(@"unavailable", @"不可用");
+    SenkoAddChineseTranslation(@"utun tunnel", @"utun 隧道");
+    SenkoAddChineseTranslation(@"(no log)", @"（无日志）");
+    SenkoAddChineseTranslation(@"A live profile cannot be edited", @"正在使用的配置无法编辑");
+    SenkoAddChineseTranslation(@"Accent", @"强调色");
+    SenkoAddChineseTranslation(@"Accent low", @"强调色底部");
+    SenkoAddChineseTranslation(@"Allow insecure", @"允许不安全连接");
+    SenkoAddChineseTranslation(@"Almost done", @"即将完成");
+    SenkoAddChineseTranslation(@"Amnezia VPN bundle detected. Export a native AmneziaWG .conf from Share", @"检测到 Amnezia VPN 配置包。请从“分享”导出原生 AmneziaWG .conf");
+    SenkoAddChineseTranslation(@"Amnezia VPN bundle detected. Import a native AmneziaWG .conf file", @"检测到 Amnezia VPN 配置包。请导入原生 AmneziaWG .conf 文件");
+    SenkoAddChineseTranslation(@"AmneziaWG", @"AmneziaWG");
+    SenkoAddChineseTranslation(@"AmneziaWG DNS", @"AmneziaWG DNS");
+    SenkoAddChineseTranslation(@"AmneziaWG link", @"AmneziaWG 链接");
+    SenkoAddChineseTranslation(@"AmneziaWG route", @"AmneziaWG 路由");
+    SenkoAddChineseTranslation(@"Apply anyway", @"仍然应用");
+    SenkoAddChineseTranslation(@"Backend forced to", @"强制后端");
+    SenkoAddChineseTranslation(@"Backend in use", @"当前后端");
+    SenkoAddChineseTranslation(@"Backend pinned to", @"固定后端");
+    SenkoAddChineseTranslation(@"Background", @"背景");
+    SenkoAddChineseTranslation(@"Background low", @"背景底部");
+    SenkoAddChineseTranslation(@"Battery", @"电池");
+    SenkoAddChineseTranslation(@"Block response", @"阻止响应");
+    SenkoAddChineseTranslation(@"Busiest rule", @"命中最多的规则");
+    SenkoAddChineseTranslation(@"Bypass evicted", @"已移除的绕过项");
+    SenkoAddChineseTranslation(@"Bypass evictions", @"绕过项移除次数");
+    SenkoAddChineseTranslation(@"Bypass table", @"绕过表");
+    SenkoAddChineseTranslation(@"CHOSEN", @"已选择");
+    SenkoAddChineseTranslation(@"CONNECTION", @"连接");
+    SenkoAddChineseTranslation(@"Camera access could not be requested", @"无法请求相机权限");
+    SenkoAddChineseTranslation(@"Camera access is disabled\nEnable it in Settings > Privacy > Camera", @"相机权限已关闭\n请在设置 > 隐私 > 相机中开启");
+    SenkoAddChineseTranslation(@"Catalog", @"服务器目录");
+    SenkoAddChineseTranslation(@"Cell", @"列表项");
+    SenkoAddChineseTranslation(@"Cell low", @"列表项底部");
+    SenkoAddChineseTranslation(@"Check", @"检查");
+    SenkoAddChineseTranslation(@"Checking TCP", @"正在检查 TCP");
+    SenkoAddChineseTranslation(@"Checking package", @"正在检查软件包");
+    SenkoAddChineseTranslation(@"Chrome", @"导航栏");
+    SenkoAddChineseTranslation(@"Chrome low", @"导航栏底部");
+    SenkoAddChineseTranslation(@"Config file", @"配置文件");
+    SenkoAddChineseTranslation(@"Connected for", @"连接时长");
+    SenkoAddChineseTranslation(@"Could not connect to the server. Check the address, network, and server availability.", @"无法连接服务器。请检查地址、网络和服务器状态。");
+    SenkoAddChineseTranslation(@"Could not read the file", @"无法读取文件");
+    SenkoAddChineseTranslation(@"Could not serialize theme", @"无法编码主题");
+    SenkoAddChineseTranslation(@"Could not write to Documents", @"无法写入 Documents");
+    SenkoAddChineseTranslation(@"Custom theme limit reached", @"自定义主题数量已达上限");
+    SenkoAddChineseTranslation(@"DAEMON", @"守护进程");
+    SenkoAddChineseTranslation(@"DEVICE", @"设备");
+    SenkoAddChineseTranslation(@"DNS cache", @"DNS 缓存");
+    SenkoAddChineseTranslation(@"DNS port", @"DNS 端口");
+    SenkoAddChineseTranslation(@"DNS queries", @"DNS 查询");
+    SenkoAddChineseTranslation(@"DNS settings apply the next time the tunnel comes up. The SOCKS port applies when the daemon restarts.", @"DNS 设置将在下次建立隧道时生效。SOCKS 端口将在守护进程重启后生效。");
+    SenkoAddChineseTranslation(@"Daemon pid", @"守护进程 PID");
+    SenkoAddChineseTranslation(@"Daemon uptime", @"守护进程运行时间");
+    SenkoAddChineseTranslation(@"Device", @"设备");
+    SenkoAddChineseTranslation(@"Device gating", @"设备限制");
+    SenkoAddChineseTranslation(@"Device id file", @"设备 ID 文件");
+    SenkoAddChineseTranslation(@"Device uptime", @"设备运行时间");
+    SenkoAddChineseTranslation(@"Direct addresses", @"直连地址");
+    SenkoAddChineseTranslation(@"Disconnect first", @"请先断开连接");
+    SenkoAddChineseTranslation(@"Dropped packets", @"丢弃的数据包");
+    SenkoAddChineseTranslation(@"Edit selected server", @"编辑选中的服务器");
+    SenkoAddChineseTranslation(@"Egress address", @"出口地址");
+    SenkoAddChineseTranslation(@"Egress interface", @"出口接口");
+    SenkoAddChineseTranslation(@"Encrypted subscription", @"加密订阅");
+    SenkoAddChineseTranslation(@"Every server in this content is already saved.", @"此内容中的所有服务器均已保存。");
+    SenkoAddChineseTranslation(@"Export configuration", @"导出配置");
+    SenkoAddChineseTranslation(@"FORCED", @"已强制");
+    SenkoAddChineseTranslation(@"Felt", @"列表背景");
+    SenkoAddChineseTranslation(@"Finishing", @"正在完成");
+    SenkoAddChineseTranslation(@"Five taps on this heading hide the section again.", @"点击此标题五次即可再次隐藏该区域。");
+    SenkoAddChineseTranslation(@"Flow", @"流控");
+    SenkoAddChineseTranslation(@"Flush the DNS cache", @"清空 DNS 缓存");
+    SenkoAddChineseTranslation(@"Free memory", @"可用内存");
+    SenkoAddChineseTranslation(@"Gbit/s", @"Gbit/s");
+    SenkoAddChineseTranslation(@"Jailbreak", @"越狱");
+    SenkoAddChineseTranslation(@"Jailbreak root", @"越狱根目录");
+    SenkoAddChineseTranslation(@"LIVE", @"实时");
+    SenkoAddChineseTranslation(@"Last TCP error", @"上次 TCP 错误");
+    SenkoAddChineseTranslation(@"Last UDP error", @"上次 UDP 错误");
+    SenkoAddChineseTranslation(@"Last backend error", @"上次后端错误");
+    SenkoAddChineseTranslation(@"Link", @"链接");
+    SenkoAddChineseTranslation(@"Live connections", @"当前连接数");
+    SenkoAddChineseTranslation(@"Manually added profiles only", @"仅手动添加的配置");
+    SenkoAddChineseTranslation(@"No camera available", @"没有可用的相机");
+    SenkoAddChineseTranslation(@"No configuration is selected. Pick a server first.", @"尚未选择配置。请先选择服务器。");
+    SenkoAddChineseTranslation(@"No server Senko can run was found in this content.", @"此内容中没有 Senko 可用的服务器。");
+    SenkoAddChineseTranslation(@"Not a Senko theme file", @"不是 Senko 主题文件");
+    SenkoAddChineseTranslation(@"OFF", @"关闭");
+    SenkoAddChineseTranslation(@"ON", @"开启");
+    SenkoAddChineseTranslation(@"Offline", @"离线");
+    SenkoAddChineseTranslation(@"Offline low", @"离线底部");
+    SenkoAddChineseTranslation(@"Online", @"在线");
+    SenkoAddChineseTranslation(@"Online low", @"在线底部");
+    SenkoAddChineseTranslation(@"PATHS", @"路径");
+    SenkoAddChineseTranslation(@"PROCESSES", @"进程");
+    SenkoAddChineseTranslation(@"Packets", @"数据包");
+    SenkoAddChineseTranslation(@"Ping All", @"检查全部延迟");
+    SenkoAddChineseTranslation(@"Preparing package", @"正在准备软件包");
+    SenkoAddChineseTranslation(@"QR code is empty or unreadable", @"二维码为空或无法读取");
+    SenkoAddChineseTranslation(@"QR code not detected\nfill the frame with the code\nand hold the phone still", @"未检测到二维码\n请将二维码放入画面中央\n并保持设备稳定");
+    SenkoAddChineseTranslation(@"Redial", @"重新拨号");
+    SenkoAddChineseTranslation(@"Redirect port", @"重定向端口");
+    SenkoAddChineseTranslation(@"Refresh the subscription to change it", @"刷新订阅以更新此值");
+    SenkoAddChineseTranslation(@"Request header", @"请求头");
+    SenkoAddChineseTranslation(@"Rule 2", @"规则 2");
+    SenkoAddChineseTranslation(@"Rule 3", @"规则 3");
+    SenkoAddChineseTranslation(@"Rule hits", @"规则命中次数");
+    SenkoAddChineseTranslation(@"Rule verdicts", @"规则结果");
+    SenkoAddChineseTranslation(@"Rules", @"规则");
+    SenkoAddChineseTranslation(@"Running dpkg --install", @"正在运行 dpkg --install");
+    SenkoAddChineseTranslation(@"Russian/English", @"俄语/英语");
+    SenkoAddChineseTranslation(@"SOCKS bound to", @"SOCKS 绑定地址");
+    SenkoAddChineseTranslation(@"SOCKS is localhost-only by default. socks_public=1 in config opens it to the LAN.", @"SOCKS 默认仅本机可用。在配置中设置 socks_public=1 可供局域网访问。");
+    SenkoAddChineseTranslation(@"Scan native config", @"扫描原生配置");
+    SenkoAddChineseTranslation(@"Second busiest rule", @"命中第二多的规则");
+    SenkoAddChineseTranslation(@"See /tmp/senko-update.log", @"查看 /tmp/senko-update.log");
+    SenkoAddChineseTranslation(@"Selected server", @"选中的服务器");
+    SenkoAddChineseTranslation(@"Senko does not support this protocol", @"Senko 不支持此协议");
+    SenkoAddChineseTranslation(@"Senko resident", @"Senko 常驻内存");
+    SenkoAddChineseTranslation(@"Senko-core eligible", @"可使用 Senko-core");
+    SenkoAddChineseTranslation(@"Senko-core usable", @"Senko-core 可用");
+    SenkoAddChineseTranslation(@"Shadowsocks", @"Shadowsocks");
+    SenkoAddChineseTranslation(@"Source", @"来源");
+    SenkoAddChineseTranslation(@"Starting install helper", @"正在启动安装助手");
+    SenkoAddChineseTranslation(@"Status bar hook", @"状态栏钩子");
+    SenkoAddChineseTranslation(@"Stopping senkod", @"正在停止 senkod");
+    SenkoAddChineseTranslation(@"Subscription profile", @"订阅配置");
+    SenkoAddChineseTranslation(@"Substrate directory", @"Substrate 目录");
+    SenkoAddChineseTranslation(@"System log", @"系统日志");
+    SenkoAddChineseTranslation(@"TCP flows", @"TCP 连接流");
+    SenkoAddChineseTranslation(@"TCP traffic", @"TCP 流量");
+    SenkoAddChineseTranslation(@"TLS compatibility hook", @"TLS 兼容钩子");
+    SenkoAddChineseTranslation(@"Tap Close when you are ready.", @"准备好后点击“关闭”。");
+    SenkoAddChineseTranslation(@"Text", @"文字");
+    SenkoAddChineseTranslation(@"Text muted", @"次要文字");
+    SenkoAddChineseTranslation(@"The Happ crypt5 bundle on this page could not be opened. It is either damaged or sealed with a key this build does not carry.", @"无法打开此页面的 Happ crypt5 配置包。文件可能损坏，或使用了当前版本没有的密钥。");
+    SenkoAddChineseTranslation(@"The Senko service is not responding. Restart it and try again.", @"Senko 服务没有响应。请重启后重试。");
+    SenkoAddChineseTranslation(@"The clipboard is empty.", @"剪贴板为空。");
+    SenkoAddChineseTranslation(@"The connect hook could not start. Check that senkotlsfix is installed, or pick another backend.", @"连接钩子无法启动。请检查是否已安装 senkotlsfix，或选择其他后端。");
+    SenkoAddChineseTranslation(@"The connection attempt timed out. Check the network and try another server.", @"连接超时。请检查网络并尝试其他服务器。");
+    SenkoAddChineseTranslation(@"The daemon runs these on its own, with the app closed.", @"即使应用关闭，守护进程也会自动执行这些操作。");
+    SenkoAddChineseTranslation(@"The file is empty or could not be read.", @"文件为空或无法读取。");
+    SenkoAddChineseTranslation(@"The local proxy could not start. Restart Senko and check that another copy is not running.", @"本地代理无法启动。请重启 Senko，并检查是否已有另一个实例正在运行。");
+    SenkoAddChineseTranslation(@"The server address is invalid, unsafe, or cannot be resolved.", @"服务器地址无效、不安全或无法解析。");
+    SenkoAddChineseTranslation(@"The server link has an invalid UUID. Import the link again from its source.", @"服务器链接中的 UUID 无效。请从来源重新导入链接。");
+    SenkoAddChineseTranslation(@"The server name could not be resolved. Check the internet connection and server address.", @"无法解析服务器域名。请检查网络连接和服务器地址。");
+    SenkoAddChineseTranslation(@"The server port is reachable, but the profile could not complete a real connection. Check its UUID or password, security, SNI, and transport settings.", @"服务器端口可访问，但配置无法完成实际连接。请检查 UUID 或密码、安全设置、SNI 和传输设置。");
+    SenkoAddChineseTranslation(@"The tunnel could not be opened. Check the server settings, key, and selected transport.", @"无法打开隧道。请检查服务器设置、密钥和传输方式。");
+    SenkoAddChineseTranslation(@"The tunnel could not start. Open System Logs to see whether utun, routes, or the bundled core failed.", @"隧道无法启动。请打开系统日志，查看 utun、路由或内置核心的错误。");
+    SenkoAddChineseTranslation(@"The tunnel could not start. Open System Logs to see whether utun, routes, or the server failed.", @"隧道无法启动。请打开系统日志，查看 utun、路由或服务器的错误。");
+    SenkoAddChineseTranslation(@"The tunnel stopped right after it started. Open System Logs for the reason.", @"隧道启动后立即停止。请在系统日志中查看原因。");
+    SenkoAddChineseTranslation(@"Theme file is incomplete", @"主题文件不完整");
+    SenkoAddChineseTranslation(@"Theme is not a custom theme", @"这不是自定义主题");
+    SenkoAddChineseTranslation(@"There was nothing to import.", @"没有可导入的内容。");
+    SenkoAddChineseTranslation(@"Third busiest rule", @"命中第三多的规则");
+    SenkoAddChineseTranslation(@"This address opens a web page instead of a subscription feed. Copy the subscription link the page offers, not the page address.", @"此地址打开的是网页，而非订阅内容。请复制网页提供的订阅链接，不要复制网页地址。");
+    SenkoAddChineseTranslation(@"This device received a link back to the same address instead of a subscription feed. Check device access and ask the provider for the feed URL.", @"此设备收到指向同一地址的链接，而不是订阅内容。请检查设备权限，并向服务商索取订阅地址。");
+    SenkoAddChineseTranslation(@"This profile cannot be checked while another profile is connected. Disconnect first.", @"连接其他配置时无法检查此配置。请先断开连接。");
+    SenkoAddChineseTranslation(@"This server uses a protocol or security mode that Senko does not support.", @"此服务器使用 Senko 不支持的协议或安全模式。");
+    SenkoAddChineseTranslation(@"This theme will lag on iOS 6/7. Liquid glass is laggy on older device.", @"此主题在 iOS 6/7 上可能运行缓慢。旧设备上的玻璃效果性能较低。");
+    SenkoAddChineseTranslation(@"Top rule", @"命中最多的规则");
+    SenkoAddChineseTranslation(@"Trojan", @"Trojan");
+    SenkoAddChineseTranslation(@"Tunnel DNS", @"隧道 DNS");
+    SenkoAddChineseTranslation(@"Tunnel counters", @"隧道计数器");
+    SenkoAddChineseTranslation(@"Tunnel state", @"隧道状态");
+    SenkoAddChineseTranslation(@"UDP datagrams", @"UDP 数据报");
+    SenkoAddChineseTranslation(@"UTILITIES", @"工具");
+    SenkoAddChineseTranslation(@"Unknown content type. This is not a server link, a subscription, or a profile Senko can read.", @"未知内容类型。这不是 Senko 可读取的服务器链接、订阅或配置。");
+    SenkoAddChineseTranslation(@"Unsupported theme format", @"不支持的主题格式");
+    SenkoAddChineseTranslation(@"Upstream DNS", @"上游 DNS");
+    SenkoAddChineseTranslation(@"Vision", @"Vision");
+    SenkoAddChineseTranslation(@"WAIT", @"请稍候");
+    SenkoAddChineseTranslation(@"Well", @"凹槽");
+    SenkoAddChineseTranslation(@"What was chosen", @"当前选择");
+    SenkoAddChineseTranslation(@"Write bundle", @"写入诊断包");
+    SenkoAddChineseTranslation(@"amneziawg config not found", @"未找到 AmneziaWG 配置");
+    SenkoAddChineseTranslation(@"amneziawg profile loaded", @"AmneziaWG 配置已加载");
+    SenkoAddChineseTranslation(@"amneziawg profile removed", @"AmneziaWG 配置已移除");
+    SenkoAddChineseTranslation(@"amneziawg profile saved", @"AmneziaWG 配置已保存");
+    SenkoAddChineseTranslation(@"amneziawg timeout", @"AmneziaWG 超时");
+    SenkoAddChineseTranslation(@"bars bottom", @"导航栏底部");
+    SenkoAddChineseTranslation(@"bars top", @"导航栏顶部");
+    SenkoAddChineseTranslation(@"bit/s", @"bit/s");
+    SenkoAddChineseTranslation(@"cannot open folder", @"无法打开文件夹");
+    SenkoAddChineseTranslation(@"checking amneziawg...", @"正在检查 AmneziaWG…");
+    SenkoAddChineseTranslation(@"checking daemon...", @"正在检查守护进程…");
+    SenkoAddChineseTranslation(@"checking group ping...", @"正在检查分组延迟…");
+    SenkoAddChineseTranslation(@"checking ping...", @"正在检查延迟…");
+    SenkoAddChineseTranslation(@"checking server...", @"正在检查服务器…");
+    SenkoAddChineseTranslation(@"choose a .deb package", @"请选择 .deb 软件包");
+    SenkoAddChineseTranslation(@"connected", @"已连接");
+    SenkoAddChineseTranslation(@"connected button bottom", @"连接按钮底部");
+    SenkoAddChineseTranslation(@"connected button top", @"连接按钮顶部");
+    SenkoAddChineseTranslation(@"connecting", @"连接中");
+    SenkoAddChineseTranslation(@"connecting...", @"连接中…");
+    SenkoAddChineseTranslation(@"connection failed", @"连接失败");
+    SenkoAddChineseTranslation(@"could not read amneziawg config", @"无法读取 AmneziaWG 配置");
+    SenkoAddChineseTranslation(@"could not save amneziawg config", @"无法保存 AmneziaWG 配置");
+    SenkoAddChineseTranslation(@"could not save native AmneziaWG config", @"无法保存原生 AmneziaWG 配置");
+    SenkoAddChineseTranslation(@"could not start amneziawg", @"无法启动 AmneziaWG");
+    SenkoAddChineseTranslation(@"could not stop amneziawg", @"无法停止 AmneziaWG");
+    SenkoAddChineseTranslation(@"could not stop senkod", @"无法停止 senkod");
+    SenkoAddChineseTranslation(@"daemon offline: cannot add", @"守护进程离线：无法添加");
+    SenkoAddChineseTranslation(@"daemon offline: cannot edit", @"守护进程离线：无法编辑");
+    SenkoAddChineseTranslation(@"daemon offline: cannot import", @"守护进程离线：无法导入");
+    SenkoAddChineseTranslation(@"daemon offline: cannot save header", @"守护进程离线：无法保存请求头");
+    SenkoAddChineseTranslation(@"disconnect to edit", @"请断开连接后编辑");
+    SenkoAddChineseTranslation(@"disconnect to remove", @"请断开连接后移除");
+    SenkoAddChineseTranslation(@"disconnect to reorder", @"请断开连接后调整顺序");
+    SenkoAddChineseTranslation(@"disconnect to switch", @"请断开连接后切换");
+    SenkoAddChineseTranslation(@"disconnect to switch backend", @"请断开连接后切换后端");
+    SenkoAddChineseTranslation(@"disconnected button bottom", @"断开按钮底部");
+    SenkoAddChineseTranslation(@"disconnected button top", @"断开按钮顶部");
+    SenkoAddChineseTranslation(@"empty folder", @"文件夹为空");
+    SenkoAddChineseTranslation(@"failed", @"失败");
+    SenkoAddChineseTranslation(@"fetch failed: daemon offline", @"获取失败：守护进程离线");
+    SenkoAddChineseTranslation(@"fetching subscription...", @"正在获取订阅…");
+    SenkoAddChineseTranslation(@"file import failed", @"文件导入失败");
+    SenkoAddChineseTranslation(@"folder", @"文件夹");
+    SenkoAddChineseTranslation(@"group ping complete", @"分组延迟检查完成");
+    SenkoAddChineseTranslation(@"group profile check complete", @"分组配置检查完成");
+    SenkoAddChineseTranslation(@"iOS major", @"iOS 主版本");
+    SenkoAddChineseTranslation(@"iOS read from", @"iOS 版本来源");
+    SenkoAddChineseTranslation(@"iOS version read from", @"iOS 版本读取来源");
+    SenkoAddChineseTranslation(@"idle", @"空闲");
+    SenkoAddChineseTranslation(@"install a .deb", @"安装 .deb 软件包");
+    SenkoAddChineseTranslation(@"install this package over the current version? settings and subscriptions stay in place", @"用此软件包覆盖当前版本？设置和订阅将保留");
+    SenkoAddChineseTranslation(@"invalid amneziawg config", @"AmneziaWG 配置无效");
+    SenkoAddChineseTranslation(@"invalid native AmneziaWG config", @"原生 AmneziaWG 配置无效");
+    SenkoAddChineseTranslation(@"links and glyphs", @"链接和图标");
+    SenkoAddChineseTranslation(@"list backdrop", @"列表背景");
+    SenkoAddChineseTranslation(@"list inset tint", @"列表内侧色调");
+    SenkoAddChineseTranslation(@"list reloaded", @"列表已刷新");
+    SenkoAddChineseTranslation(@"manual", @"手动");
+    SenkoAddChineseTranslation(@"manual profiles only", @"仅手动配置");
+    SenkoAddChineseTranslation(@"manual servers removed", @"手动服务器已移除");
+    SenkoAddChineseTranslation(@"native AmneziaWG config added", @"已添加原生 AmneziaWG 配置");
+    SenkoAddChineseTranslation(@"no readable folders", @"没有可读取的文件夹");
+    SenkoAddChineseTranslation(@"no servers in group", @"分组中没有服务器");
+    SenkoAddChineseTranslation(@"none", @"无");
+    SenkoAddChineseTranslation(@"paste a link here", @"在此粘贴链接");
+    SenkoAddChineseTranslation(@"paste a subscription URL", @"粘贴订阅 URL");
+    SenkoAddChineseTranslation(@"pick a server first", @"请先选择服务器");
+    SenkoAddChineseTranslation(@"ping check complete", @"延迟检查完成");
+    SenkoAddChineseTranslation(@"point the camera at a QR code\nserver link, subscription URL\nor a WireGuard / AmneziaWG .conf", @"将相机对准二维码\n服务器链接、订阅 URL\n或 WireGuard / AmneziaWG .conf");
+    SenkoAddChineseTranslation(@"pressed accent", @"按下时的强调色");
+    SenkoAddChineseTranslation(@"primary label", @"主要文字");
+    SenkoAddChineseTranslation(@"profile check complete", @"配置检查完成");
+    SenkoAddChineseTranslation(@"reading content...", @"正在读取内容…");
+    SenkoAddChineseTranslation(@"refreshing subscription...", @"正在刷新订阅…");
+    SenkoAddChineseTranslation(@"refreshing subscriptions...", @"正在刷新订阅…");
+    SenkoAddChineseTranslation(@"removing manual servers...", @"正在移除手动服务器…");
+    SenkoAddChineseTranslation(@"removing subscription...", @"正在移除订阅…");
+    SenkoAddChineseTranslation(@"row bottom", @"列表项底部");
+    SenkoAddChineseTranslation(@"row top", @"列表项顶部");
+    SenkoAddChineseTranslation(@"saving subscription...", @"正在保存订阅…");
+    SenkoAddChineseTranslation(@"secondary label", @"次要文字");
+    SenkoAddChineseTranslation(@"section moved", @"分组已移动");
+    SenkoAddChineseTranslation(@"senkod is missing: reinstall the package", @"缺少 senkod：请重新安装软件包");
+    SenkoAddChineseTranslation(@"senkod is not running and its log is empty", @"senkod 未运行，日志为空");
+    SenkoAddChineseTranslation(@"server moved", @"服务器已移动");
+    SenkoAddChineseTranslation(@"server ping", @"服务器延迟");
+    SenkoAddChineseTranslation(@"server ping timeout", @"服务器延迟检查超时");
+    SenkoAddChineseTranslation(@"starting amneziawg...", @"正在启动 AmneziaWG…");
+    SenkoAddChineseTranslation(@"subscription added", @"订阅已添加");
+    SenkoAddChineseTranslation(@"subscription not found", @"未找到订阅");
+    SenkoAddChineseTranslation(@"subscription pinned", @"订阅已置顶");
+    SenkoAddChineseTranslation(@"subscription removed", @"订阅已移除");
+    SenkoAddChineseTranslation(@"subscription saved", @"订阅已保存");
+    SenkoAddChineseTranslation(@"subscription updated", @"订阅已更新");
+    SenkoAddChineseTranslation(@"subscription url has spaces", @"订阅 URL 包含空格");
+    SenkoAddChineseTranslation(@"subscriptions refreshed", @"订阅已刷新");
+    SenkoAddChineseTranslation(@"switch timeout", @"切换超时");
+    SenkoAddChineseTranslation(@"the senkod launch daemon is missing: reinstall the package", @"缺少 senkod 启动服务：请重新安装软件包");
+    SenkoAddChineseTranslation(@"timeout", @"超时");
+    SenkoAddChineseTranslation(@"unknown check type", @"未知检查类型");
+    SenkoAddChineseTranslation(@"unknown error", @"未知错误");
+    SenkoAddChineseTranslation(@"validated import", @"已验证导入内容");
+    SenkoAddChineseTranslation(@"validating native config...", @"正在验证原生配置…");
+    SenkoAddChineseTranslation(@"wallpaper bottom", @"壁纸底部");
+    SenkoAddChineseTranslation(@"wallpaper top", @"壁纸顶部");
+    SenkoAddChineseTranslation(@"Block wins over direct, direct wins over the tunnel, whatever the order. On iOS 12 and later the tunnel core reads the real domain from the connection; below that the rule is matched when the name is resolved, so an address shared by several sites follows the first name that asked for it.", @"规则顺序不会改变优先级：阻止优先于直连，直连优先于隧道。iOS 12 及以上版本会从连接中读取实际域名；旧版系统在解析域名时匹配规则，因此多个网站共用的地址会采用首次请求该地址的域名规则。");
+    SenkoAddChineseTranslation(@"Senko failed to start %d times and is running with the stock theme. The report is in Logs.", @"Senko 连续 %d 次启动失败，当前使用默认主题。报告位于日志页面。");
+    SenkoAddChineseTranslation(@"the legacy theme for the legacy community", @"为怀旧社区打造的经典主题");
+    SenkoAddChineseTranslation(@"flat and transparent", @"扁平而通透");
+    SenkoAddChineseTranslation(@"modern theme", @"现代主题");
+    SenkoAddChineseTranslation(@"liquid ass... nah, glass", @"流动玻璃风格");
+    SenkoAddChineseTranslation(@"meeeeeow :3", @"喵喵喵 :3");
+    SenkoAddChineseTranslation(@"hehehe mita hehehe miside", @"嘿嘿，米塔来了");
+    SenkoAddChineseTranslation(@"futuristic maximalism of the past", @"复古未来的绚丽风格");
+    SenkoAddChineseTranslation(@"made on this device", @"在此设备上创建");
 }
 
 BOOL SenkoLanguageIsRussian(void) {
@@ -891,18 +1400,18 @@ NSString *SenkoHumanReadableError(NSString *text) {
         message = @"The local proxy could not start. Restart Senko and check that another copy is not running.";
     else if ([raw isEqualToString:@"server: dns resolution failed"])
         message = @"The server name could not be resolved. Check the internet connection and server address.";
-    else if ([raw isEqualToString:@"routing: routing setup failed"])
-        message = @"The system firewall could not apply Senko routing rules. Open System Logs and check the last pfctl message.";
-    else if ([raw isEqualToString:@"routing: routing rules accepted but traffic was not redirected"])
-        message = @"The firewall rules were accepted, but device traffic was not redirected. This jailbreak does not expose a working full-device routing path.";
-    else if ([raw isEqualToString:@"tunnel: the go backend core could not start; open System Logs for the exact cause"])
-        message = @"The full-device tunnel could not start. Open System Logs to see whether utun, routes, or the bundled core failed.";
+    else if ([raw isEqualToString:@"routing: the connect hook could not start"])
+        message = @"The connect hook could not start. Check that senkotlsfix is installed, or pick another backend.";
+    else if ([raw isEqualToString:@"routing: the tunnel stopped before its check could run"])
+        message = @"The tunnel stopped right after it started. Open System Logs for the reason.";
+    else if ([raw isEqualToString:@"tunnel: senko-core could not start; open System Logs for the exact cause"])
+        message = @"The tunnel could not start. Open System Logs to see whether utun, routes, or the bundled core failed.";
     else if ([raw isEqualToString:@"server: unsupported protocol or security"])
         message = @"This server uses a protocol or security mode that Senko does not support.";
     else if ([raw isEqualToString:@"server: bad uuid in server link"])
         message = @"The server link has an invalid UUID. Import the link again from its source.";
     else if ([raw hasPrefix:@"this address only hands back its own link"])
-        message = @"This address only hands back a link to itself: the provider has not published a subscription feed behind it. Ask them for the real subscription link.";
+        message = @"This device received a link back to the same address instead of a subscription feed. Check device access and ask the provider for the feed URL.";
     else if ([raw hasPrefix:@"the happ crypt5 bundle on this page could not be opened"])
         message = @"The Happ crypt5 bundle on this page could not be opened. It is either damaged or sealed with a key this build does not carry.";
     else if ([raw hasPrefix:@"this address opens a web page"])
@@ -927,12 +1436,12 @@ NSString *SenkoHumanReadableError(NSString *text) {
         message = @"The server link has an invalid UUID. Import the link again from its source.";
     else if ([raw hasPrefix:@"socks:"])
         message = @"The tunnel could not be opened. Check the server settings, key, and selected transport.";
-    else if ([raw hasPrefix:@"routing:"] || [raw hasPrefix:@"error route"])
-        message = @"The system firewall could not apply Senko routing rules. Open System Logs and check the last pfctl message.";
+    else if ([raw hasPrefix:@"routing:"])
+        message = @"The connect hook could not start. Check that senkotlsfix is installed, or pick another backend.";
     else if ([raw hasPrefix:@"error endpoint udp"])
         message = @"Could not connect to the server. Check the address, network, and server availability.";
     else if ([raw hasPrefix:@"error utun"] || [raw hasPrefix:@"error route"])
-        message = @"The system firewall could not apply Senko routing rules. Open System Logs and check the last pfctl message.";
+        message = @"The tunnel could not start. Open System Logs to see whether utun, routes, or the server failed.";
     else if ([raw isEqualToString:@"unknown content type"])
         message = @"Unknown content type. This is not a server link, a subscription, or a profile Senko can read.";
     else if ([raw isEqualToString:@"no server senko can run in this file"])
@@ -971,6 +1480,14 @@ static NSString *SenkoRussianPlural(NSInteger number,
     return many;
 }
 
+NSString *SenkoHoursText(int hours) {
+    if (SenkoLanguageIsChinese()) return [NSString stringWithFormat:@"%d 小时", hours];
+    if (SenkoLanguageIsRussian())
+        return [NSString stringWithFormat:@"%d %@", hours,
+                SenkoRussianPlural(hours, @"час", @"часа", @"часов")];
+    return [NSString stringWithFormat:hours == 1 ? @"%d hour" : @"%d hours", hours];
+}
+
 static BOOL SenkoAllDigits(NSString *text) {
     if (![text length]) return NO;
     for (NSUInteger i = 0; i < [text length]; ++i) {
@@ -982,6 +1499,38 @@ static BOOL SenkoAllDigits(NSString *text) {
 
 /* bulk actions answer with "<verb> <n> server(s)[ tail]", and the bare count
    rule below would read the verb as the number */
+/* the skip summary senkod appends to an import: "skipped 3: vmess 2, tuic 1".
+   protocol names stay as they are; the reasons senko words itself are translated */
+static NSString *SenkoSkipTailRu(NSString *tail) {
+    static NSString * const kPairs[][2] = {
+        { @"skipped ", @"пропущено " },
+        { @" already saved", @" уже есть" },
+        { @"malformed link", @"битая ссылка" },
+        { @"tcp with an http header", @"tcp с http-заголовком" },
+        { @"httpupgrade transport", @"транспорт httpupgrade" },
+        { @"kcp transport", @"транспорт kcp" },
+        { @"quic transport", @"транспорт quic" },
+        { @"trojan over reality", @"trojan через reality" },
+        { @"vless encryption", @"шифрование vless" },
+        { @"invalid vless id", @"неверный id vless" },
+        { @"shadowsocks plugin", @"плагин shadowsocks" },
+        { @"shadowsocks userinfo that does not decode", @"нечитаемые данные shadowsocks" },
+        { @"shadowsocks cipher that is not a name", @"нечитаемый шифр shadowsocks" },
+        { @"happ link that does not open", @"нераскрываемая ссылка happ" },
+        { @"malformed profile entry", @"битая запись профиля" },
+        { @"hysteria v1", @"hysteria 1" },
+        { @"unsupported trojan transport", @"trojan через неподдерживаемый транспорт" },
+        { @"shadowsocks over another transport", @"shadowsocks не через tcp" },
+        { @"socks over tls", @"socks через tls" },
+        { @"link too long", @"слишком длинная ссылка" },
+        { @", other ", @", прочее " },
+    };
+    NSString *out = tail;
+    for (size_t i = 0; i < sizeof kPairs / sizeof kPairs[0]; ++i)
+        out = [out stringByReplacingOccurrencesOfString:kPairs[i][0] withString:kPairs[i][1]];
+    return out;
+}
+
 static NSString *SenkoServerCountReply(NSString *text) {
     static NSString * const kVerbs[] = { @"imported ", @"removed ", @"refreshed " };
     static NSString * const kRussian[] = { @"импортировано", @"удалено", @"обновлено" };
@@ -994,27 +1543,80 @@ static NSString *SenkoServerCountReply(NSString *text) {
         NSString *tail = [rest substringFromIndex:[scanner scanLocation]];
         if (![tail hasPrefix:@" server"]) return nil;
         tail = [tail stringByReplacingOccurrencesOfString:@" server(s)" withString:@""];
+        tail = [tail stringByReplacingOccurrencesOfString:@" from the first 512 KB"
+                                               withString:@" из первых 512 КБ"];
         tail = [tail stringByReplacingOccurrencesOfString:@" (list full)"
                                                withString:@" (список заполнен)"];
-        tail = [tail stringByReplacingOccurrencesOfString:@", skipped "
-                                               withString:@", пропущено "];
+        tail = SenkoSkipTailRu(tail);
         return [NSString stringWithFormat:@"%@ %d %@%@", kRussian[i], count,
                 SenkoRussianPlural(count, @"сервер", @"сервера", @"серверов"), tail];
     }
     return nil;
 }
 
+/* the reason senkod gives for a failed subscription fetch */
+static NSString *SenkoFetchReasonRu(NSString *why) {
+    NSString *host = nil;
+    if ([why hasPrefix:@"cannot resolve or connect to "])
+        return [@"не удалось найти или подключиться к " stringByAppendingString:
+                [why substringFromIndex:29]];
+    if ([why hasPrefix:@"tls or connection to "] && [why hasSuffix:@" failed"]) {
+        host = [why substringWithRange:NSMakeRange(21, [why length] - 21 - 7)];
+        return [NSString stringWithFormat:@"ошибка TLS или соединения с %@", host];
+    }
+    NSRange r = [why rangeOfString:@" answered HTTP "];
+    if (r.location != NSNotFound)
+        return [NSString stringWithFormat:@"%@ ответил HTTP %@",
+                [why substringToIndex:r.location], [why substringFromIndex:NSMaxRange(r)]];
+    if ([why hasSuffix:@" sent a response senko cannot read"])
+        return [NSString stringWithFormat:@"%@ прислал ответ, который senko не может прочитать",
+                [why substringToIndex:[why length] - 34]];
+    if ([why hasPrefix:@"the subscription from "] && [why hasSuffix:@" is too large"]) {
+        host = [why substringWithRange:NSMakeRange(22, [why length] - 22 - 13)];
+        return [NSString stringWithFormat:@"подписка с %@ слишком большая", host];
+    }
+    if ([why hasSuffix:@" redirected too often or to an unusable address"])
+        return [NSString stringWithFormat:@"%@ перенаправляет слишком много раз или на неподходящий адрес",
+                [why substringToIndex:[why length] - 47]];
+    if ([why isEqualToString:@"the subscription url is invalid"])
+        return @"неверная ссылка на подписку";
+    if ([why isEqualToString:@"no reason given"])
+        return @"причина неизвестна";
+    return why;
+}
+
 static NSString *SenkoLocalizedDynamic(NSString *text) {
     if (![text length]) return text;
 
-/* the daemon helper hint is appended after the reason, so the reason alone is
-   what the table holds */
-    NSString * const kickHint = @" (see /var/log/senko-kick.log)";
-    if ([text hasSuffix:kickHint]) {
-        NSString *head = [text substringToIndex:[text length] - [kickHint length]];
-        return [SenkoLocalizedText(head)
-                stringByAppendingString:@" (см. /var/log/senko-kick.log)"];
+    if ([text hasPrefix:@"fetch failed: "])
+        return [@"не удалось загрузить подписку: " stringByAppendingString:
+                SenkoFetchReasonRu([text substringFromIndex:14])];
+    if ([text hasPrefix:@"subscription added, refresh failed: "])
+        return [@"подписка добавлена, но не загрузилась: " stringByAppendingString:
+                SenkoFetchReasonRu([text substringFromIndex:36])];
+
+    if ([text hasPrefix:@"subscription added, no server senko can run in the first 512 KB ("])
+        return [@"подписка добавлена, но в первых 512 КБ нет серверов, которые senko может запустить ("
+                stringByAppendingString:SenkoSkipTailRu([text substringFromIndex:65])];
+    if ([text hasPrefix:@"subscription added, no server senko can run ("])
+        return [@"подписка добавлена, но в ней нет серверов, которые senko может запустить ("
+                stringByAppendingString:SenkoSkipTailRu([text substringFromIndex:45])];
+    if ([text hasPrefix:@"subscription added, "] && [text rangeOfString:@" server"].location != NSNotFound) {
+        NSString *count = SenkoServerCountReply([@"imported " stringByAppendingString:
+                                                 [text substringFromIndex:20]]);
+        if (count)
+            return [@"подписка добавлена, " stringByAppendingString:
+                    [count stringByReplacingOccurrencesOfString:@"импортировано " withString:@""]];
     }
+    if ([text hasPrefix:@"no server senko can run in the first 512 KB ("])
+        return [@"в первых 512 КБ подписки нет серверов, которые senko может запустить (" stringByAppendingString:
+                SenkoSkipTailRu([text substringFromIndex:45])];
+    if ([text hasPrefix:@"no server senko can run ("])
+        return [@"нет серверов, которые senko может запустить (" stringByAppendingString:
+                SenkoSkipTailRu([text substringFromIndex:25])];
+    if ([text hasPrefix:@"no server senko can run in this file ("])
+        return [@"в этом файле нет серверов, которые senko может запустить (" stringByAppendingString:
+                SenkoSkipTailRu([text substringFromIndex:38])];
 
     NSString *countReply = SenkoServerCountReply(text);
     if (countReply) return countReply;
@@ -1055,12 +1657,11 @@ static NSString *SenkoLocalizedDynamic(NSString *text) {
         return [NSString stringWithFormat:@"Готово: %@", [text substringFromIndex:6]];
     if ([text hasPrefix:@"Package: "])
         return [NSString stringWithFormat:@"Пакет: %@", [text substringFromIndex:9]];
+    if ([text hasPrefix:@"senkod is not running, last log line: "])
+        return [NSString stringWithFormat:@"senkod не запущен, последняя строка лога: %@",
+                [text substringFromIndex:38]];
     if ([text hasPrefix:@"Version "])
         return [NSString stringWithFormat:@"Версия %@", [text substringFromIndex:8]];
-    if ([text hasPrefix:@"cannot start senko-kick ("])
-        return [NSString stringWithFormat:@"не удалось запустить senko-kick %@", [text substringFromIndex:24]];
-    if ([text hasPrefix:@"daemon start failed ("])
-        return [NSString stringWithFormat:@"не удалось запустить демон %@", [text substringFromIndex:20]];
     if ([text rangeOfString:@"    Dark"].location != NSNotFound)
         return [text stringByReplacingOccurrencesOfString:@"    Dark" withString:@"    Тёмная"];
     if ([text rangeOfString:@"    Light"].location != NSNotFound)

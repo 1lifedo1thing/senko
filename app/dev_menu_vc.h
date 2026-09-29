@@ -3,8 +3,8 @@
 
 #import "dev_table_vc.h"
 
-/* which backend, firewall and pf variant this device actually ended up on. the
-   facts come from the daemon, which is the only side that knows */
+/* which backend this device actually ended up on and what its tunnel is doing.
+   the facts come from the daemon, which is the only side that knows */
 @interface DevMenuVC : DevTableVC
 @end
 

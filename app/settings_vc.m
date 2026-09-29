@@ -1,25 +1,14 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
-#import <CFNetwork/CFNetwork.h>
-#import <ifaddrs.h>
-#import <arpa/inet.h>
-#import <dlfcn.h>
-#import <unistd.h>
 #include <math.h>
 #include <objc/message.h>
 #include <string.h>
 #import "control_client.h"
-#import "qr_scan.h"
 #import "ui_theme.h"
-#import "boykisser_field.h"
-#import "bubble_field.h"
 #import "themes_vc.h"
 #import "rules_vc.h"
 #import "dev_menu_vc.h"
-#import "server_cell.h"
-#import "home_layout.h"
 #import "update_install.h"
-#import "meow.h"
 #import "app_common.h"
 #import "crash_report.h"
 
@@ -45,17 +34,7 @@ static BOOL SenkoLooksLikeBackup(NSData *data) {
     return NO;
 }
 
-static void SenkoSettingsStyleTable(UITableView *tv) {
-    if (!tv) return;
-    tv.backgroundColor = kBG;
-    /* the cell background draws a two-tone groove. leaving UIKit's separator
-       enabled puts a third line over it on iOS 6 */
-    tv.separatorStyle = UITableViewCellSeparatorStyleNone;
-    if ([tv respondsToSelector:@selector(setBackgroundView:)])
-        tv.backgroundView = nil;
-}
-
-static const CGFloat kSenkoSettingsRowHeight = 68.0f;
+static const CGFloat kSenkoSettingsRowHeight = 54.0f;
 
 static void SenkoSettingsStyleSwitch(UISwitch *sw) {
     if (!sw) return;
@@ -63,26 +42,89 @@ static void SenkoSettingsStyleSwitch(UISwitch *sw) {
         sw.onTintColor = kAccentBlue;
     if ([sw respondsToSelector:@selector(setTintColor:)])
         ((void (*)(id, SEL, id))objc_msgSend)(
-            sw, @selector(setTintColor:), [kInkMuted colorWithAlphaComponent:0.35f]);
+            sw, @selector(setTintColor:), [kInkMuted colorWithAlphaComponent:0.65f]);
+    if ([sw respondsToSelector:@selector(setThumbTintColor:)])
+        ((void (*)(id, SEL, id))objc_msgSend)(
+            sw, @selector(setThumbTintColor:), [UIColor whiteColor]);
 }
 
-static void SenkoSettingsApplyCellBackground(UITableView *tv,
-                                              UITableViewCell *cell,
-                                              NSIndexPath *ip,
-                                              NSInteger rowsInSection) {
-    (void)tv;
-    SenkoStyleGroupCell(cell, ip, rowsInSection);
+typedef enum {
+    SenkoRowAutoConnect = 0,
+    SenkoRowQuickConnect,
+    SenkoRowReconnect,
+    SenkoRowFailover,
+    SenkoRowAttempts,
+    SenkoRowSubRefresh,
+    SenkoRowTheme,
+    SenkoRowLanguage,
+    SenkoRowStats,
+    SenkoRowLogs,
+    SenkoRowBackup,
+    SenkoRowUpdate,
+    SenkoRowDNS,
+    SenkoRowDNSPort,
+    SenkoRowSocksPort,
+    SenkoRowRules,
+    SenkoRowAbout,
+    SenkoRowDeveloper
+} SenkoSettingsRow;
+
+static const SenkoSettingsRow kSenkoMainRows[] = {
+    SenkoRowAutoConnect, SenkoRowQuickConnect, SenkoRowReconnect,
+    SenkoRowFailover, SenkoRowAttempts, SenkoRowSubRefresh
+};
+static const SenkoSettingsRow kSenkoAppRows[] = {
+    SenkoRowTheme, SenkoRowLanguage, SenkoRowStats, SenkoRowLogs,
+    SenkoRowBackup, SenkoRowUpdate
+};
+static const SenkoSettingsRow kSenkoMoreRows[] = {
+    SenkoRowDNS, SenkoRowDNSPort, SenkoRowSocksPort, SenkoRowRules, SenkoRowAbout
+};
+static const SenkoSettingsRow kSenkoDevRows[] = { SenkoRowDeveloper };
+
+typedef struct {
+    const char *title;
+    const char *glyph;
+} SenkoSettingsRowInfo;
+
+static const SenkoSettingsRowInfo kSenkoRowInfo[] = {
+    [SenkoRowAutoConnect]  = { "Connect at startup",      "glyph-rocket.png" },
+    [SenkoRowQuickConnect] = { "Quick connect",           "glyph-bolt.png" },
+    [SenkoRowReconnect]    = { "Reconnect automatically", "glyph-reconnect.png" },
+    [SenkoRowFailover]     = { "Try another server",      "glyph-shuffle.png" },
+    [SenkoRowAttempts]     = { "Reconnect attempts",      "glyph-repeat.png" },
+    [SenkoRowSubRefresh]   = { "Update subscriptions",    "glyph-cloud.png" },
+    [SenkoRowTheme]        = { "Theme",                   "glyph-palette.png" },
+    [SenkoRowLanguage]     = { "Language",                "glyph-globe.png" },
+    [SenkoRowStats]        = { "Statistics",              "glyph-chart.png" },
+    [SenkoRowLogs]         = { "System Logs",             "glyph-logs.png" },
+    [SenkoRowBackup]       = { "Backup",                  "glyph-backup.png" },
+    [SenkoRowUpdate]       = { "Update Senko",            "glyph-download.png" },
+    [SenkoRowDNS]          = { "DNS",                     "glyph-shield.png" },
+    [SenkoRowDNSPort]      = { "Local DNS port",          "glyph-hash.png" },
+    [SenkoRowSocksPort]    = { "SOCKS port",              "glyph-port.png" },
+    [SenkoRowRules]        = { "Split tunneling",         "glyph-split.png" },
+    [SenkoRowAbout]        = { "About",                   "glyph-info.png" },
+    [SenkoRowDeveloper]    = { "Developer settings",      "glyph-code.png" }
+};
+
+static NSString *SenkoAttemptLimitName(NSString *attempts) {
+    int n = [attempts intValue];
+    if (n <= 0) return SenkoLocalizedText(@"Until it works");
+    return [NSString stringWithFormat:SenkoLocalizedText(@"%d attempts"), n];
 }
 
+static NSString *SenkoRefreshIntervalName(NSString *hours) {
+    int h = [hours intValue];
+    if (h <= 0) return SenkoLocalizedText(@"Off");
+    return [NSString stringWithFormat:SenkoLocalizedText(@"Every %@"), SenkoHoursText(h)];
+}
 
-static NSString *SenkoSortModeName(void) {
-    switch ((SenkoServerSort)[[NSUserDefaults standardUserDefaults]
-                              integerForKey:SENKO_SERVER_SORT_KEY]) {
-        case SenkoSortName: return SenkoLocalizedText(@"By name");
-        case SenkoSortPing: return SenkoLocalizedText(@"By latency");
-        case SenkoSortManual:
-        default: return SenkoLocalizedText(@"Stored order");
-    }
+/* the three text settings share one editor, keyed by the row that opened it */
+static NSString *SenkoTextSettingKey(SenkoSettingsRow row) {
+    if (row == SenkoRowDNS) return @"dns_upstream";
+    if (row == SenkoRowDNSPort) return @"dns_local_port";
+    return @"socks_port";
 }
 
 @implementation SettingsVC {
@@ -115,6 +157,15 @@ static NSString *SenkoSortModeName(void) {
     [super dealloc];
 }
 
+- (void)styleTable {
+    SenkoClearTableBackground(_tv);
+    /* the cell background draws a two-tone groove. leaving UIKit's separator
+       enabled puts a third line over it on iOS 6 */
+    _tv.separatorStyle = UITableViewCellSeparatorStyleNone;
+    if ([_tv respondsToSelector:@selector(setBackgroundView:)])
+        _tv.backgroundView = nil;
+}
+
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = SenkoLocalizedText(@"Settings");
@@ -142,7 +193,7 @@ static NSString *SenkoSortModeName(void) {
     _tv.rowHeight = kSenkoSettingsRowHeight;
     _tv.autoresizingMask = UIViewAutoresizingFlexibleWidth |
                            UIViewAutoresizingFlexibleHeight;
-    SenkoSettingsStyleTable(_tv);
+    [self styleTable];
     [self.view addSubview:_tv];
     if (self.navigationController)
         StyleNavBarClassic(self.navigationController);
@@ -175,7 +226,7 @@ static NSString *SenkoSortModeName(void) {
 - (void)themeDidChange:(NSNotification *)n {
     (void)n;
     SenkoApplyScreenChrome(self.view);
-    SenkoSettingsStyleTable(_tv);
+    [self styleTable];
     if (self.navigationController)
         StyleNavBarClassic(self.navigationController);
     [_tv reloadData];
@@ -183,6 +234,7 @@ static NSString *SenkoSortModeName(void) {
 
 - (void)languageDidChange:(NSNotification *)n {
     (void)n;
+    self.title = SenkoLocalizedText(@"Settings");
     [_tv reloadData];
 }
 
@@ -205,6 +257,7 @@ static NSString *SenkoSortModeName(void) {
     SenkoApplyScreenChrome(self.view);
     [self layoutSettings];
     [self reloadWhenSectionCountChanged];
+    [_tv reloadData];
     [self reloadDaemonSettings];
 }
 
@@ -220,7 +273,7 @@ static NSString *SenkoSortModeName(void) {
     UIEdgeInsets safe = SenkoSafeAreaInsets(self.view);
     _tv.contentInset = UIEdgeInsetsMake(8.0f, 0.0f, safe.bottom + 16.0f, 0.0f);
     _tv.scrollIndicatorInsets = _tv.contentInset;
-    _tv.backgroundColor = kBG;
+    SenkoClearTableBackground(_tv);
 }
 
 - (void)viewDidLayoutSubviews {
@@ -250,41 +303,40 @@ static NSString *SenkoSortModeName(void) {
     return SenkoDevMenuEnabled() ? 4 : 3;
 }
 
-/* stock/non-jailbreak builds have no senkod, so "System Logs" (senkod + awg
-   combined) has nothing behind it to read. the row is skipped on the app
-   side instead of pushing a screen that opens onto an unreachable daemon */
-static NSInteger SenkoAppSettingsRow(NSInteger displayRow) {
-#if SENKO_STOCK_NATIVE
-    return displayRow >= 2 ? displayRow + 1 : displayRow;
-#else
-    return displayRow;
-#endif
+- (const SenkoSettingsRow *)rowsInSection:(NSInteger)s count:(NSInteger *)count {
+    const SenkoSettingsRow *rows = kSenkoDevRows;
+    NSInteger n = 1;
+    if (s == 0) { rows = kSenkoMainRows; n = sizeof kSenkoMainRows / sizeof kSenkoMainRows[0]; }
+    else if (s == 1) { rows = kSenkoAppRows; n = sizeof kSenkoAppRows / sizeof kSenkoAppRows[0]; }
+    else if (s == 2) { rows = kSenkoMoreRows; n = sizeof kSenkoMoreRows / sizeof kSenkoMoreRows[0]; }
+    if (count) *count = n;
+    return rows;
+}
+
+- (SenkoSettingsRow)rowAtIndexPath:(NSIndexPath *)ip {
+    NSInteger n = 0;
+    const SenkoSettingsRow *rows = [self rowsInSection:ip.section count:&n];
+    if (ip.row < 0 || ip.row >= n) return SenkoRowAbout;
+    return rows[ip.row];
 }
 
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s {
-    if (s == 0) return 5;
-    if (s == 1) return 4;
-    if (s == 2) {
-#if SENKO_STOCK_NATIVE
-        return 8;
-#else
-        return 9;
-#endif
-    }
-    return 1;
+    (void)tv;
+    NSInteger n = 0;
+    [self rowsInSection:s count:&n];
+    return n;
 }
 
 - (NSString *)headerTextForSection:(NSInteger)s {
-    if (s == 0) return SenkoLocalizedText(@"AUTOMATION");
-    if (s == 1) return SenkoLocalizedText(@"ROUTING");
-    if (s == 2) return SenkoLocalizedText(@"APP");
-    if (s == 3) return SenkoLocalizedText(@"DEVELOPER");
-    return nil;
+    if (s == 0) return SenkoLocalizedText(@"Main");
+    if (s == 1) return SenkoLocalizedText(@"App");
+    if (s == 2) return SenkoLocalizedText(@"Advanced");
+    return SenkoLocalizedText(@"Developer settings");
 }
 
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)s {
     (void)tv; (void)s;
-    return 34.0f;
+    return 38.0f;
 }
 
 - (CGFloat)tableView:(UITableView *)tv heightForRowAtIndexPath:(NSIndexPath *)ip {
@@ -292,27 +344,21 @@ static NSInteger SenkoAppSettingsRow(NSInteger displayRow) {
     return kSenkoSettingsRowHeight;
 }
 
+/* the daemon rows go inert when it does not answer, and the screen says why
+   once instead of every row explaining itself */
 - (NSString *)footerTextForSection:(NSInteger)s {
-    if (s == 0 || s == 1) {
-        if (!_settings)
-            return SenkoLocalizedText(@"The daemon is not answering, so these cannot be read or changed.");
-        if (s == 0)
-            return SenkoLocalizedText(@"The daemon runs these on its own, with the app closed.");
-        return SenkoLocalizedText(@"DNS settings apply the next time the tunnel comes up. The SOCKS port applies when the daemon restarts.");
-    }
-    if (s == 3)
-        return SenkoLocalizedText(@"Five taps on this heading hide the section again.");
+    if (s == 0 && !_settings)
+        return SenkoLocalizedText(@"The daemon is not answering, so these cannot be read or changed.");
     return nil;
 }
 
 - (CGFloat)tableView:(UITableView *)tv heightForFooterInSection:(NSInteger)s {
     NSString *text = [self footerTextForSection:s];
+    if (![text length]) return 10.0f;
     CGFloat width = tv.bounds.size.width - 40.0f;
-/* a section with nothing to explain keeps only the gap before the next one */
-    if (!text.length) return 18.0f;
     if (width < 120.0f) width = 120.0f;
     CGSize size = SenkoTextSize(text, [UIFont systemFontOfSize:12.0f], width);
-    return MAX(50.0f, size.height + 24.0f);
+    return MAX(36.0f, size.height + 16.0f);
 }
 
 /* a plain label in an owned view is the only way these keep the theme ink:
@@ -322,16 +368,15 @@ static NSInteger SenkoAppSettingsRow(NSInteger displayRow) {
 - (UIView *)sectionTextViewWithText:(NSString *)text
                                font:(UIFont *)font
                              height:(CGFloat)height
-                              width:(CGFloat)width
-                           centered:(BOOL)centered {
+                              width:(CGFloat)width {
     if (![text length]) return nil;
     UIView *wrap = [[[UIView alloc] initWithFrame:
                      CGRectMake(0, 0, width, height)] autorelease];
     wrap.backgroundColor = [UIColor clearColor];
     wrap.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    CGFloat inset = 20.0f + _groupedInsetX;
+    CGFloat inset = 16.0f + _groupedInsetX;
     UILabel *label = [[[UILabel alloc] initWithFrame:
-                       CGRectMake(inset, 4.0f, width - inset * 2.0f, height - 8.0f)] autorelease];
+                       CGRectMake(inset, 4.0f, width - inset * 2.0f, height - 6.0f)] autorelease];
     label.autoresizingMask = UIViewAutoresizingFlexibleWidth |
                              UIViewAutoresizingFlexibleHeight;
     label.backgroundColor = [UIColor clearColor];
@@ -339,27 +384,22 @@ static NSInteger SenkoAppSettingsRow(NSInteger displayRow) {
     label.numberOfLines = 0;
     label.lineBreakMode = NSLineBreakByWordWrapping;
     label.text = text;
-    if (centered) {
-        label.textAlignment = NSTextAlignmentCenter;
-        SenkoStyleAccentLabel(label);
-    } else {
-        label.textAlignment = NSTextAlignmentLeft;
-        SenkoStyleMutedLabel(label);
-        label.alpha = 0.72f;
-    }
+    label.textAlignment = NSTextAlignmentLeft;
+    SenkoStyleMutedLabel(label);
     label.shadowColor = nil;
     label.shadowOffset = CGSizeZero;
     [wrap addSubview:label];
     return wrap;
 }
 
-/* headers name a group, while footers are body copy and follow the row inset */
 - (UIView *)tableView:(UITableView *)tv viewForHeaderInSection:(NSInteger)s {
     UIView *header = [self sectionTextViewWithText:[self headerTextForSection:s]
-                                              font:SenkoFontBody(12.0f, YES)
-                                            height:34.0f
-                                             width:tv.bounds.size.width
-                                          centered:NO];
+                                              font:SenkoFontBody(15.0f, YES)
+                                            height:38.0f
+                                             width:tv.bounds.size.width];
+    for (UIView *child in header.subviews)
+        if ([child isKindOfClass:[UILabel class]])
+            ((UILabel *)child).textAlignment = NSTextAlignmentCenter;
 /* the same five taps that opened the section close it, so a tester who turned
    it on by accident is not stuck with it */
     if (header && s == 3) {
@@ -378,17 +418,16 @@ static NSInteger SenkoAppSettingsRow(NSInteger displayRow) {
 }
 
 - (UIView *)tableView:(UITableView *)tv viewForFooterInSection:(NSInteger)s {
-    return [self sectionTextViewWithText:[self footerTextForSection:s]
-                                    font:[UIFont systemFontOfSize:12.0f]
-                                  height:[self tableView:tv heightForFooterInSection:s]
-                                   width:tv.bounds.size.width
-                                centered:NO];
+    UIView *footer = [self sectionTextViewWithText:[self footerTextForSection:s]
+                                              font:[UIFont systemFontOfSize:12.0f]
+                                            height:[self tableView:tv heightForFooterInSection:s]
+                                             width:tv.bounds.size.width];
+    return footer ? footer : [[[UIView alloc] initWithFrame:CGRectZero] autorelease];
 }
 
 - (void)tableView:(UITableView *)tv willDisplayCell:(UITableViewCell *)cell
  forRowAtIndexPath:(NSIndexPath *)ip {
-    SenkoSettingsApplyCellBackground(tv, cell, ip,
-                                     [self tableView:tv numberOfRowsInSection:ip.section]);
+    SenkoStyleGroupCell(cell, ip, [self tableView:tv numberOfRowsInSection:ip.section]);
 /* uikit has already narrowed and centered cell.frame by the time this runs,
    so this is the real margin rather than a guess at one */
     CGFloat insetX = cell.frame.origin.x;
@@ -404,11 +443,25 @@ static NSInteger SenkoAppSettingsRow(NSInteger displayRow) {
     }
 }
 
+- (UISwitch *)switchOn:(BOOL)on enabled:(BOOL)enabled action:(SEL)action {
+    UISwitch *toggle = [[[UISwitch alloc] initWithFrame:CGRectZero] autorelease];
+    toggle.on = on;
+    toggle.enabled = enabled;
+    SenkoSettingsStyleSwitch(toggle);
+    [toggle addTarget:self action:action forControlEvents:UIControlEventValueChanged];
+    return toggle;
+}
+
+/* the value a daemon row shows, or the word for a daemon that did not answer */
+- (NSString *)daemonValue:(NSString *)text {
+    return _settings ? text : SenkoLocalizedText(@"unreachable");
+}
+
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
     static NSString *cid = @"set";
     UITableViewCell *cell = [tv dequeueReusableCellWithIdentifier:cid];
     if (!cell)
-        cell = [[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle
+        cell = [[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1
                                        reuseIdentifier:cid] autorelease];
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
     cell.clipsToBounds = YES;
@@ -422,135 +475,71 @@ static NSInteger SenkoAppSettingsRow(NSInteger displayRow) {
     cell.detailTextLabel.textColor = kInkMuted;
     cell.detailTextLabel.shadowColor = nil;
     cell.detailTextLabel.shadowOffset = CGSizeZero;
-    cell.textLabel.font = SenkoFontBody(16.0f, YES);
-    cell.detailTextLabel.font = SenkoFontBody(13.0f, NO);
-    cell.textLabel.lineBreakMode = NSLineBreakByClipping;
+    cell.textLabel.font = SenkoFontBody(16.0f, NO);
+    cell.detailTextLabel.font = SenkoFontBody(15.0f, NO);
+    cell.textLabel.lineBreakMode = NSLineBreakByTruncatingTail;
     cell.textLabel.adjustsFontSizeToFitWidth = YES;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     cell.textLabel.minimumFontSize = 12.0f;
-    cell.detailTextLabel.numberOfLines = 2;
-    cell.detailTextLabel.lineBreakMode = NSLineBreakByWordWrapping;
-    SenkoSettingsApplyCellBackground(tv, cell, ip,
-                                     [self tableView:tv numberOfRowsInSection:ip.section]);
+#pragma clang diagnostic pop
+    SenkoStyleGroupCell(cell, ip, [self tableView:tv numberOfRowsInSection:ip.section]);
     cell.textLabel.backgroundColor = [UIColor clearColor];
     cell.detailTextLabel.backgroundColor = [UIColor clearColor];
 
-    if (ip.section == 0) {
-/* every row here reflects a daemon setting, so a daemon that did not answer
-   leaves them visible but inert rather than showing a state nothing holds */
-        UISwitch *toggle = nil;
-        if (ip.row == 0) {
-            cell.textLabel.text = SenkoLocalizedText(@"Connect at startup");
-            cell.detailTextLabel.text = SenkoLocalizedText(@"Dial the selected server after a reboot");
-            toggle = [[[UISwitch alloc] initWithFrame:CGRectZero] autorelease];
-            toggle.on = [self daemonFlag:@"auto_connect"];
-            [toggle addTarget:self action:@selector(autoConnectChanged:)
-             forControlEvents:UIControlEventValueChanged];
-        } else if (ip.row == 1) {
-            cell.textLabel.text = SenkoLocalizedText(@"Reconnect automatically");
-            cell.detailTextLabel.text = SenkoLocalizedText(@"After a drop or a change of network");
-            toggle = [[[UISwitch alloc] initWithFrame:CGRectZero] autorelease];
-            toggle.on = [self daemonFlag:@"auto_reconnect"];
-            [toggle addTarget:self action:@selector(autoReconnectChanged:)
-             forControlEvents:UIControlEventValueChanged];
-        } else if (ip.row == 2) {
-            cell.textLabel.text = SenkoLocalizedText(@"Try another server");
-            cell.detailTextLabel.text = SenkoLocalizedText(@"Only inside the same section, fastest first");
-            toggle = [[[UISwitch alloc] initWithFrame:CGRectZero] autorelease];
-            toggle.on = [self daemonFlag:@"failover"];
-            [toggle addTarget:self action:@selector(failoverChanged:)
-             forControlEvents:UIControlEventValueChanged];
-        } else if (ip.row == 3) {
-            cell.textLabel.text = SenkoLocalizedText(@"Update subscriptions");
-            cell.detailTextLabel.text = _settings
-                ? SenkoRefreshIntervalName([_settings objectForKey:@"sub_refresh_hours"])
-                : SenkoLocalizedText(@"unreachable");
-            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            if (_settings) SenkoStyleSelectableCell(cell);
-        } else {
-            cell.textLabel.text = SenkoLocalizedText(@"Reconnect attempts");
-            cell.detailTextLabel.text = _settings
-                ? SenkoAttemptLimitName([_settings objectForKey:@"reconnect_max_attempts"])
-                : SenkoLocalizedText(@"unreachable");
-            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            if (_settings) SenkoStyleSelectableCell(cell);
-        }
-        if (toggle) {
-            SenkoSettingsStyleSwitch(toggle);
-            toggle.enabled = _settings != nil;
-            cell.accessoryView = toggle;
-            cell.selectionStyle = UITableViewCellSelectionStyleNone;
-        }
-    } else if (ip.section == 1) {
-        if (ip.row == 0) {
-            cell.textLabel.text = SenkoLocalizedText(@"Routing rules");
-            cell.detailTextLabel.text = SenkoLocalizedText(@"Send a domain or a subnet direct, or block it");
-            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            SenkoStyleSelectableCell(cell);
-        } else {
-            cell.textLabel.text = SenkoSettingRowTitle(ip.row);
-            cell.detailTextLabel.text = _settings
-                ? [_settings objectForKey:SenkoSettingRowKey(ip.row)]
-                : SenkoLocalizedText(@"unreachable");
-            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            if (_settings) SenkoStyleSelectableCell(cell);
-        }
-    } else if (ip.section == 3) {
-        cell.textLabel.text = SenkoLocalizedText(@"Developer");
-        cell.detailTextLabel.text = SenkoLocalizedText(@"What was chosen, checks, overrides and rescue");
+    SenkoSettingsRow row = [self rowAtIndexPath:ip];
+    SenkoSettingsRowInfo info = kSenkoRowInfo[row];
+    cell.textLabel.text = SenkoLocalizedText([NSString stringWithUTF8String:info.title]);
+    cell.imageView.image = TintedIconNamed([NSString stringWithUTF8String:info.glyph],
+                                           22.0f, kInk);
+    BOOL daemon = _settings != nil;
+
+    switch (row) {
+        case SenkoRowAutoConnect:
+            cell.accessoryView = [self switchOn:[self daemonFlag:@"auto_connect"]
+                                        enabled:daemon action:@selector(autoConnectChanged:)];
+            return cell;
+        case SenkoRowQuickConnect:
+            cell.accessoryView = [self switchOn:SenkoAutoServerEnabled()
+                                        enabled:YES action:@selector(quickConnectChanged:)];
+            return cell;
+        case SenkoRowReconnect:
+            cell.accessoryView = [self switchOn:[self daemonFlag:@"auto_reconnect"]
+                                        enabled:daemon action:@selector(autoReconnectChanged:)];
+            return cell;
+        case SenkoRowFailover:
+            cell.accessoryView = [self switchOn:[self daemonFlag:@"failover"]
+                                        enabled:daemon action:@selector(failoverChanged:)];
+            return cell;
+        case SenkoRowAttempts:
+            cell.detailTextLabel.text = [self daemonValue:
+                SenkoAttemptLimitName([_settings objectForKey:@"reconnect_max_attempts"])];
+            break;
+        case SenkoRowSubRefresh:
+            cell.detailTextLabel.text = [self daemonValue:
+                SenkoRefreshIntervalName([_settings objectForKey:@"sub_refresh_hours"])];
+            break;
+        case SenkoRowTheme:
+            cell.detailTextLabel.text = SenkoThemeDisplayName(SenkoThemeCurrentId());
+            break;
+        case SenkoRowLanguage:
+            cell.detailTextLabel.text = SenkoLanguageName();
+            break;
+        case SenkoRowDNS:
+        case SenkoRowDNSPort:
+        case SenkoRowSocksPort:
+            cell.detailTextLabel.text = [self daemonValue:
+                [_settings objectForKey:SenkoTextSettingKey(row)]];
+            break;
+        default:
+            break;
+    }
+    BOOL inert = !daemon && (row == SenkoRowAttempts || row == SenkoRowSubRefresh ||
+                             row == SenkoRowDNS || row == SenkoRowDNSPort ||
+                             row == SenkoRowSocksPort);
+    if (!inert) {
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         SenkoStyleSelectableCell(cell);
-    } else {
-        NSInteger row = SenkoAppSettingsRow(ip.row);
-        if (row == 0) {
-            cell.textLabel.text = SenkoLocalizedText(@"Sort servers");
-            cell.detailTextLabel.text = SenkoSortModeName();
-            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            SenkoStyleSelectableCell(cell);
-        } else if (row == 1) {
-            cell.textLabel.text = SenkoLocalizedText(@"Themes");
-            cell.detailTextLabel.text = SenkoThemeStatusLine();
-            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            SenkoStyleSelectableCell(cell);
-        } else if (row == 2) {
-            cell.textLabel.text = SenkoLocalizedText(@"System Logs");
-            cell.detailTextLabel.text = SenkoLocalizedText(@"senkod + awg combined");
-            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            SenkoStyleSelectableCell(cell);
-        } else if (row == 3) {
-            cell.textLabel.text = SenkoLocalizedText(@"Export backup");
-            cell.detailTextLabel.text = SenkoLocalizedText(@"Save a config file to Documents");
-            SenkoStyleSelectableCell(cell);
-        } else if (row == 4) {
-            cell.textLabel.text = SenkoLocalizedText(@"Restore backup");
-            cell.detailTextLabel.text = SenkoLocalizedText(@"Validate, then replace configuration");
-            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            SenkoStyleSelectableCell(cell);
-        } else if (row == 5) {
-            cell.textLabel.text = SenkoLocalizedText(@"Update Senko");
-            cell.detailTextLabel.text = SenkoLocalizedText(@"Choose a Senko .deb package");
-            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            SenkoStyleSelectableCell(cell);
-        } else if (row == 6) {
-            cell.textLabel.text = SenkoLocalizedText(@"Language");
-            cell.detailTextLabel.text = SenkoLanguageName();
-            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            SenkoStyleSelectableCell(cell);
-        } else if (row == 7) {
-            cell.textLabel.text = SenkoLocalizedText(@"Classic home screen");
-            cell.detailTextLabel.text = SenkoLocalizedText(@"The dome button instead of the status card");
-            UISwitch *classic = [[[UISwitch alloc] initWithFrame:CGRectZero] autorelease];
-            classic.on = SenkoClassicHomeEnabled();
-            SenkoSettingsStyleSwitch(classic);
-            [classic addTarget:self action:@selector(classicHomeChanged:)
-              forControlEvents:UIControlEventValueChanged];
-            cell.accessoryView = classic;
-            cell.selectionStyle = UITableViewCellSelectionStyleNone;
-        } else {
-            cell.textLabel.text = SenkoLocalizedText(@"About");
-            cell.detailTextLabel.text = nil;
-            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            SenkoStyleSelectableCell(cell);
-        }
     }
     return cell;
 }
@@ -585,38 +574,18 @@ static NSInteger SenkoAppSettingsRow(NSInteger displayRow) {
     [self applySetting:@"auto_connect" value:sw.on ? @"1" : @"0"];
 }
 
+/* quick connect is the app's own choice of what the button dials, so it lives
+   in the app defaults the server list reads, not in the daemon */
+- (void)quickConnectChanged:(UISwitch *)sw {
+    SenkoSetAutoServerEnabled(sw.on);
+}
+
 - (void)autoReconnectChanged:(UISwitch *)sw {
     [self applySetting:@"auto_reconnect" value:sw.on ? @"1" : @"0"];
 }
 
 - (void)failoverChanged:(UISwitch *)sw {
     [self applySetting:@"failover" value:sw.on ? @"1" : @"0"];
-}
-
-/* the three text settings share one editor, so the row index is the only thing
-   that has to stay in step with the table */
-static NSString *SenkoSettingRowKey(NSInteger row) {
-    if (row == 1) return @"dns_upstream";
-    if (row == 2) return @"dns_local_port";
-    return @"socks_port";
-}
-
-static NSString *SenkoSettingRowTitle(NSInteger row) {
-    if (row == 1) return SenkoLocalizedText(@"Upstream DNS");
-    if (row == 2) return SenkoLocalizedText(@"Local DNS port");
-    return SenkoLocalizedText(@"SOCKS port");
-}
-
-static NSString *SenkoAttemptLimitName(NSString *attempts) {
-    int n = [attempts intValue];
-    if (n <= 0) return SenkoLocalizedText(@"Until it works");
-    return [NSString stringWithFormat:SenkoLocalizedText(@"%d attempts"), n];
-}
-
-static NSString *SenkoRefreshIntervalName(NSString *hours) {
-    int h = [hours intValue];
-    if (h <= 0) return SenkoLocalizedText(@"Off");
-    return [NSString stringWithFormat:SenkoLocalizedText(@"Every %d h"), h];
 }
 
 - (void)showAttemptMenu {
@@ -632,10 +601,10 @@ static NSString *SenkoRefreshIntervalName(NSString *hours) {
 
 /* a plain text alert is the only input control that behaves the same from ios 5
    to ios 15, and the daemon validates what comes out of it */
-- (void)showEditorForRow:(NSInteger)row {
-    NSString *key = SenkoSettingRowKey(row);
+- (void)showEditorForRow:(SenkoSettingsRow)row {
+    NSString *key = SenkoTextSettingKey(row);
     UIAlertView *editor = [[[UIAlertView alloc]
-        initWithTitle:SenkoSettingRowTitle(row)
+        initWithTitle:SenkoLocalizedText([NSString stringWithUTF8String:kSenkoRowInfo[row].title])
               message:[key isEqualToString:@"dns_upstream"]
                           ? SenkoLocalizedText(@"An IPv4 address, for example 1.1.1.1")
                           : SenkoLocalizedText(@"A port number between 1 and 65535")
@@ -663,17 +632,41 @@ static NSString *SenkoRefreshIntervalName(NSString *hours) {
               message:SenkoRefreshIntervalName([_settings objectForKey:@"sub_refresh_hours"])
              delegate:self
     cancelButtonTitle:SenkoLocalizedText(@"Cancel")
-    otherButtonTitles:SenkoLocalizedText(@"Off"), @"6 h", @"12 h", @"24 h", nil] autorelease];
+    otherButtonTitles:SenkoLocalizedText(@"Off"), SenkoHoursText(6), SenkoHoursText(12),
+                      SenkoHoursText(24), nil] autorelease];
     pick.tag = 4204;
     [pick show];
 }
 
-/* the home screen rebuilds itself from the preference, so the switch only has
-   to record it and tell the screen underneath to lay out again */
-- (void)classicHomeChanged:(UISwitch *)sw {
-    SenkoSetClassicHomeEnabled(sw.on);
-    [[NSNotificationCenter defaultCenter] postNotificationName:SenkoThemeDidChangeNotification
-                                                        object:nil];
+- (void)showBackupMenu {
+    UIAlertView *pick = [[[UIAlertView alloc]
+        initWithTitle:SenkoLocalizedText(@"Backup")
+              message:nil
+             delegate:self
+    cancelButtonTitle:SenkoLocalizedText(@"Cancel")
+    otherButtonTitles:SenkoLocalizedText(@"Export backup"),
+                      SenkoLocalizedText(@"Restore backup"), nil] autorelease];
+    pick.tag = 4207;
+    [pick show];
+}
+
+- (void)showLanguageMenu {
+    UIAlertView *language = [[[UIAlertView alloc]
+        initWithTitle:SenkoLocalizedText(@"Language")
+              message:SenkoLanguageName()
+             delegate:self
+    cancelButtonTitle:SenkoLocalizedText(@"Cancel")
+    otherButtonTitles:@"English", @"Русский", @"中文", nil] autorelease];
+    language.tag = 4202;
+    [language show];
+}
+
+- (void)exportBackup {
+    [_ctl exportBackup:^(NSString *reply) {
+        NSString *msg = [reply hasPrefix:@"OK "] ?
+            SenkoLocalizedText(@"Saved to Documents/senko-backup.senko") : reply;
+        [self showBackupMessage:msg ?: SenkoLocalizedText(@"Backup export failed")];
+    }];
 }
 
 - (void)openUpdateBrowser {
@@ -769,6 +762,12 @@ static NSString *SenkoRefreshIntervalName(NSString *hours) {
         else if (buttonIndex == 3) SenkoSetLanguage(SenkoLanguageChinese);
         return;
     }
+    if (alert.tag == 4207) {
+        if (buttonIndex == alert.cancelButtonIndex) return;
+        if (buttonIndex == alert.firstOtherButtonIndex) [self exportBackup];
+        else [self openBackupBrowser];
+        return;
+    }
     if (alert.tag == 4205) {
         if (buttonIndex == alert.cancelButtonIndex) return;
         static const char *const limits[] = { "0", "3", "5", "10" };
@@ -795,14 +794,6 @@ static NSString *SenkoRefreshIntervalName(NSString *hours) {
                      value:[NSString stringWithUTF8String:hours[pick]]];
         return;
     }
-    if (alert.tag == 4203) {
-        if (buttonIndex == alert.cancelButtonIndex) return;
-        NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-        [d setInteger:(NSInteger)(buttonIndex - 1) forKey:SENKO_SERVER_SORT_KEY];
-        [d synchronize];
-        [_tv reloadData];
-        return;
-    }
     if (alert.tag != 4201 || buttonIndex == alert.cancelButtonIndex) return;
     NSData *data = [NSData dataWithContentsOfFile:_pendingBackupPath];
     NSString *dir = @"/var/mobile/Library/Preferences/Senko";
@@ -821,76 +812,54 @@ static NSString *SenkoRefreshIntervalName(NSString *hours) {
     }];
 }
 
-- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
-    [tv deselectRowAtIndexPath:ip animated:YES];
-    if (ip.section == 0) {
-        if (!_settings) return;
-        if (ip.row == 3) [self showRefreshMenu];
-        else if (ip.row == 4) [self showAttemptMenu];
-        return;
-    }
-    if (ip.section == 1) {
-        if (ip.row == 0) {
-            RulesVC *vc = [[[RulesVC alloc] initWithControl:_ctl] autorelease];
-            [self.navigationController pushViewController:vc animated:YES];
-        } else if (_settings) {
-            [self showEditorForRow:ip.row];
-        }
-        return;
-    }
-    if (ip.section == 3) {
-        DevMenuVC *vc = [[[DevMenuVC alloc] initWithControl:_ctl] autorelease];
-        [self.navigationController pushViewController:vc animated:YES];
-        return;
-    }
-    if (ip.section == 2) {
-        NSInteger row = SenkoAppSettingsRow(ip.row);
-        if (row == 0) {
-            [self showSortMenu];
-        } else if (row == 1) {
-            ThemesVC *vc = [[[ThemesVC alloc] init] autorelease];
-            [self.navigationController pushViewController:vc animated:YES];
-        } else if (row == 2) {
-            LogsVC *vc = [[[LogsVC alloc] init] autorelease];
-            [self.navigationController pushViewController:vc animated:YES];
-        } else if (row == 3) {
-            [_ctl exportBackup:^(NSString *reply) {
-                NSString *msg = [reply hasPrefix:@"OK "] ?
-                    SenkoLocalizedText(@"Saved to Documents/senko-backup.senko") : reply;
-                [self showBackupMessage:msg ?: SenkoLocalizedText(@"Backup export failed")];
-            }];
-        } else if (row == 4) {
-            [self openBackupBrowser];
-        } else if (row == 5) {
-            [self openUpdateBrowser];
-        } else if (row == 6) {
-            UIAlertView *language = [[[UIAlertView alloc]
-                initWithTitle:SenkoLocalizedText(@"Language")
-                      message:SenkoLanguageName()
-                     delegate:self
-            cancelButtonTitle:SenkoLocalizedText(@"Cancel")
-            otherButtonTitles:@"English", @"Русский", @"中文", nil] autorelease];
-            language.tag = 4202;
-            [language show];
-        } else if (row == 8) {
-            AboutVC *vc = [[[AboutVC alloc] init] autorelease];
-            [self.navigationController pushViewController:vc animated:YES];
-        }
-    }
+- (void)pushController:(UIViewController *)vc {
+    [self.navigationController pushViewController:vc animated:YES];
 }
 
-/* the alert picker is the one control that exists unchanged from ios 5 to 15 */
-- (void)showSortMenu {
-    UIAlertView *sort = [[[UIAlertView alloc]
-        initWithTitle:SenkoLocalizedText(@"Sort servers")
-              message:SenkoSortModeName()
-             delegate:self
-    cancelButtonTitle:SenkoLocalizedText(@"Cancel")
-    otherButtonTitles:SenkoLocalizedText(@"Stored order"),
-                      SenkoLocalizedText(@"By name"),
-                      SenkoLocalizedText(@"By latency"), nil] autorelease];
-    sort.tag = 4203;
-    [sort show];
+- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];
+    switch ([self rowAtIndexPath:ip]) {
+        case SenkoRowAttempts:
+            if (_settings) [self showAttemptMenu];
+            break;
+        case SenkoRowSubRefresh:
+            if (_settings) [self showRefreshMenu];
+            break;
+        case SenkoRowDNS:
+        case SenkoRowDNSPort:
+        case SenkoRowSocksPort:
+            if (_settings) [self showEditorForRow:[self rowAtIndexPath:ip]];
+            break;
+        case SenkoRowTheme:
+            [self pushController:[[[ThemesVC alloc] init] autorelease]];
+            break;
+        case SenkoRowLanguage:
+            [self showLanguageMenu];
+            break;
+        case SenkoRowStats:
+            [self pushController:[[[StatsVC alloc] init] autorelease]];
+            break;
+        case SenkoRowLogs:
+            [self pushController:[[[LogsVC alloc] init] autorelease]];
+            break;
+        case SenkoRowBackup:
+            [self showBackupMenu];
+            break;
+        case SenkoRowUpdate:
+            [self openUpdateBrowser];
+            break;
+        case SenkoRowRules:
+            [self pushController:[[[RulesVC alloc] initWithControl:_ctl] autorelease]];
+            break;
+        case SenkoRowAbout:
+            [self pushController:[[[AboutVC alloc] init] autorelease]];
+            break;
+        case SenkoRowDeveloper:
+            [self pushController:[[[DevMenuVC alloc] initWithControl:_ctl] autorelease]];
+            break;
+        default:
+            break;
+    }
 }
 
 - (void)editServerVC:(EditServerVC *)vc saveLink:(NSString *)link index:(int)idx {

@@ -14,11 +14,11 @@
 #import "bubble_field.h"
 #import "themes_vc.h"
 #import "server_cell.h"
-#import "home_layout.h"
 #import "update_install.h"
 #import "meow.h"
 #import "app_common.h"
 #import "crash_report.h"
+#import "emoji_text.h"
 #include "../common/senko_paths.h"
 
 @interface UIViewController (SenkoRotation)
@@ -55,14 +55,10 @@ static BOOL SenkoTlsfixAlreadyLoaded(void) {
 }
 
 static BOOL SenkoLegacyTlsfixRequired(void) {
-#if SENKO_STOCK_NATIVE
-    return NO;
-#else
     NSArray *parts = [[[UIDevice currentDevice] systemVersion]
                       componentsSeparatedByString:@"."];
     NSInteger major = [parts count] ? [[parts objectAtIndex:0] integerValue] : 0;
     return major > 0 && major < 12;
-#endif
 }
 
 NSString *SenkoSponsorURL(void) {
@@ -288,14 +284,48 @@ NSString *SenkoSharedDeviceHWID(void) {
     return nil;
 }
 
-BOOL SenkoClassicHomeEnabled(void) {
-    return [[NSUserDefaults standardUserDefaults] boolForKey:SENKO_CLASSIC_HOME_KEY];
+BOOL SenkoAutoServerEnabled(void) {
+    return [[NSUserDefaults standardUserDefaults] boolForKey:SENKO_AUTO_SERVER_KEY];
 }
 
-void SenkoSetClassicHomeEnabled(BOOL enabled) {
+void SenkoSetAutoServerEnabled(BOOL enabled) {
     NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
-    [d setBool:enabled forKey:SENKO_CLASSIC_HOME_KEY];
+    [d setBool:enabled forKey:SENKO_AUTO_SERVER_KEY];
     [d synchronize];
+}
+
+NSString *SenkoFormatBytes(unsigned long long value) {
+    double amount = (double)value;
+    NSArray *units = SenkoLanguageIsRussian()
+        ? [NSArray arrayWithObjects:@"Б", @"КБ", @"МБ", @"ГБ", @"ТБ", nil]
+        : [NSArray arrayWithObjects:@"B", @"KB", @"MB", @"GB", @"TB", nil];
+    NSUInteger unit = 0;
+    while (amount >= 1024.0 && unit + 1 < [units count]) {
+        amount /= 1024.0;
+        unit++;
+    }
+    NSString *number = [NSString stringWithFormat:(amount >= 10.0 || unit == 0)
+        ? @"%.0f" : @"%.1f", amount];
+    if (SenkoLanguageIsRussian())
+        number = [number stringByReplacingOccurrencesOfString:@"." withString:@","];
+    return [NSString stringWithFormat:@"%@ %@", number, [units objectAtIndex:unit]];
+}
+
+/* link speeds are quoted in bits, so the tiles read like the carrier's plan.
+   the unit follows the amount: a fixed kbit/s rounded a quiet keepalive to 0 */
+NSString *SenkoFormatRate(double bytesPerSecond) {
+    static NSString *const units[] = { @"bit/s", @"Kbit/s", @"Mbit/s", @"Gbit/s" };
+    double amount = bytesPerSecond > 0.0 ? bytesPerSecond * 8.0 : 0.0;
+    size_t unit = 0;
+    while (amount >= 1000.0 && unit + 1 < sizeof units / sizeof units[0]) {
+        amount /= 1000.0;
+        unit++;
+    }
+    NSString *number = [NSString stringWithFormat:(unit == 0 || amount >= 10.0)
+        ? @"%.0f" : @"%.1f", amount];
+    if (SenkoLanguageIsRussian())
+        number = [number stringByReplacingOccurrencesOfString:@"." withString:@","];
+    return [NSString stringWithFormat:@"%@ %@", number, SenkoLocalizedText(units[unit])];
 }
 
 
@@ -307,6 +337,7 @@ void SenkoSetClassicHomeEnabled(BOOL enabled) {
 @property (nonatomic, retain) UIWindow *window;
 - (BOOL)handleSenkoURL:(NSURL *)url;
 - (void)handleLaunchURL:(NSURL *)url;
+- (void)loadLegacyTlsfix;
 - (void)senkoLaunchSettled;
 - (void)senkoOfferSafeModeReport;
 @end
@@ -348,12 +379,33 @@ void SenkoSetClassicHomeEnabled(BOOL enabled) {
     [self performSelector:@selector(senkoLaunchSettled)
                withObject:nil
                afterDelay:6.0];
+    /* ios 5 has no process-wide injection for senko, but loading the shim
+       before UIApplicationMain lets its fishhook scan block the launch watchdog */
+    [self performSelector:@selector(loadLegacyTlsfix)
+               withObject:nil
+               afterDelay:0.1];
     NSURL *launchURL = [opts objectForKey:UIApplicationLaunchOptionsURLKey];
     if (launchURL)
         [self performSelector:@selector(handleLaunchURL:)
                    withObject:launchURL
                    afterDelay:0.1];
     return YES;
+}
+
+- (void)loadLegacyTlsfix {
+    static BOOL attempted;
+    if (attempted) return;
+    attempted = YES;
+    if (!SenkoLegacyTlsfixRequired() || ExternalTlsfixInstalled() ||
+        SenkoTlsfixAlreadyLoaded())
+        return;
+
+    void *handle = dlopen(SENKO_USR_LIB "/senkotlsfix.dylib",
+                          RTLD_NOW | RTLD_GLOBAL);
+    if (handle) return;
+    const char *error = dlerror();
+    NSLog(@"Senko: cannot load senkotlsfix.dylib: %s",
+          error ? error : "unknown error");
 }
 
 - (BOOL)handleSenkoURL:(NSURL *)url {
@@ -426,13 +478,9 @@ void SenkoSetClassicHomeEnabled(BOOL enabled) {
 int main(int argc, char **argv) {
     NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
     SenkoCrashInstall();
-    SenkoCrashStage("tlsfix dlopen");
-    if (SenkoLegacyTlsfixRequired() && !ExternalTlsfixInstalled() &&
-        !SenkoTlsfixAlreadyLoaded())
-        (void)dlopen(SENKO_USR_LIB "/senkotlsfix.dylib", RTLD_NOW | RTLD_GLOBAL);
-    SenkoCrashStage("tlsfix ready");
     SenkoCrashStage("localization");
     SenkoLocalizationInstall();
+    SenkoEmojiTextInstall();
     SenkoCrashStage("palette");
     InitPalette();
     SenkoCrashStage("sfx hooks");

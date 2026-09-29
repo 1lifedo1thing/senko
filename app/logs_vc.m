@@ -15,7 +15,6 @@
 #import "bubble_field.h"
 #import "themes_vc.h"
 #import "server_cell.h"
-#import "home_layout.h"
 #import "update_install.h"
 #import "meow.h"
 #import "app_common.h"
@@ -240,7 +239,8 @@ static NSString *SenkoStatusSection(void) {
         for (NSString *line in [_allLogs componentsSeparatedByString:@"\n"]) {
             BOOL isApp = [line hasPrefix:@"[app]"];
             BOOL isAWG = !isApp &&
-                         ([line rangeOfString:@"senkoawgd:" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                         ([line rangeOfString:@"amneziawg" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                          [line rangeOfString:@"senkoawgd:" options:NSCaseInsensitiveSearch].location != NSNotFound ||
                           [line hasPrefix:@"[AWG]"] || [line hasPrefix:@"[awg]"]);
             if ((selected == 3 && isApp) || (selected == 2 && isAWG) ||
                 (selected == 1 && !isAWG && !isApp))

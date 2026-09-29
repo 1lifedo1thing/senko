@@ -8,7 +8,6 @@
 #import <objc/message.h>
 
 #define DEV_SHEET_BACKEND     4501
-#define DEV_SHEET_PF_MODE     4502
 #define DEV_SHEET_BLOCK       4503
 #define DEV_CONFIRM_FLUSH_DNS    4511
 #define DEV_CONFIRM_FLUSH_BYPASS 4512
@@ -21,25 +20,17 @@
 
 /* the daemon's own vocabulary. the ui never invents a value for these, because
    a word the settings parser does not know is refused with no way to tell why */
-static NSString *const kBackendValues[] = { @"auto", @"go", @"c", @"app_proxy" };
+static NSString *const kBackendValues[] = { @"auto", @"senko-core", @"app_proxy", @"utun" };
 #define DEV_BACKEND_COUNT 4
 
 static NSString *const kBlockValues[] = { @"zero", @"nxdomain", @"refused" };
 #define DEV_BLOCK_COUNT 3
 
-/* the eight pf syntax variants in the order routing.h declares them, so the
-   index shown here is the index the daemon accepts */
-static NSString *const kPFModeNames[] = {
-    @"route-to lo0", @"route-to lo0, no gateway", @"divert-to",
-    @"divert-to, legacy placement", @"rdr-to with state flags",
-    @"rdr-to with keep state", @"legacy rdr", @"compat rdr"
-};
-#define DEV_PF_MODE_COUNT 8
-
 static NSString *BackendTitle(NSString *value) {
-    if ([value isEqualToString:@"go"]) return SenkoLocalizedText(@"Go core");
-    if ([value isEqualToString:@"c"]) return SenkoLocalizedText(@"C core");
+    if ([value isEqualToString:@"senko-core"] || [value isEqualToString:@"go"])
+        return SenkoLocalizedText(@"Senko-core");
     if ([value isEqualToString:@"app_proxy"]) return SenkoLocalizedText(@"Connect hook only");
+    if ([value isEqualToString:@"utun"]) return SenkoLocalizedText(@"utun tunnel");
     return SenkoLocalizedText(@"Auto");
 }
 
@@ -47,14 +38,6 @@ static NSString *BlockTitle(NSString *value) {
     if ([value isEqualToString:@"nxdomain"]) return @"NXDOMAIN";
     if ([value isEqualToString:@"refused"]) return @"REFUSED";
     return SenkoLocalizedText(@"Zero address");
-}
-
-static NSString *PFModeTitle(NSString *value) {
-    int index = [value intValue];
-    if (![value length] || [value isEqualToString:@"auto"])
-        return SenkoLocalizedText(@"Auto");
-    if (index < 0 || index >= DEV_PF_MODE_COUNT) return value;
-    return [NSString stringWithFormat:@"%d: %@", index, kPFModeNames[index]];
 }
 
 @implementation DevTogglesVC
@@ -111,7 +94,7 @@ static NSString *PFModeTitle(NSString *value) {
 
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s {
     (void)tv;
-    if (s == 0) return 2;
+    if (s == 0) return 1;
     if (s == 1) return 3;
     if (s == 2) return 2;
     return 3;
@@ -136,13 +119,8 @@ static NSString *PFModeTitle(NSString *value) {
     UISwitch *toggle = nil;
 
     if (ip.section == 0) {
-        if (ip.row == 0) {
-            cell.textLabel.text = SenkoLocalizedText(@"Backend");
-            cell.detailTextLabel.text = BackendTitle([self value:@"force_backend"]);
-        } else {
-            cell.textLabel.text = SenkoLocalizedText(@"pf variant");
-            cell.detailTextLabel.text = PFModeTitle([self value:@"force_pf_mode"]);
-        }
+        cell.textLabel.text = SenkoLocalizedText(@"Backend");
+        cell.detailTextLabel.text = BackendTitle([self value:@"force_backend"]);
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         if (_settings) SenkoStyleSelectableCell(cell);
         return cell;
@@ -173,7 +151,7 @@ static NSString *PFModeTitle(NSString *value) {
             [toggle addTarget:self action:@selector(gatingChanged:)
              forControlEvents:UIControlEventValueChanged];
         } else {
-            cell.textLabel.text = SenkoLocalizedText(@"Reset dynamic bypass");
+            cell.textLabel.text = SenkoLocalizedText(@"Forget direct addresses");
             cell.textLabel.textColor = kAccentBlue;
             SenkoStyleSelectableCell(cell);
         }
@@ -226,7 +204,7 @@ static NSString *PFModeTitle(NSString *value) {
     [tv deselectRowAtIndexPath:ip animated:YES];
     if (ip.section == 0 && !_settings) return;
     if (ip.section == 0) {
-        [self showPicker:ip.row == 0 ? DEV_SHEET_BACKEND : DEV_SHEET_PF_MODE];
+        [self showPicker:DEV_SHEET_BACKEND];
     } else if (ip.section == 1) {
         if (ip.row == 1 && _settings) [self showPicker:DEV_SHEET_BLOCK];
         else if (ip.row == 2)
@@ -236,7 +214,7 @@ static NSString *PFModeTitle(NSString *value) {
                          tag:DEV_CONFIRM_FLUSH_DNS];
     } else if (ip.section == 2) {
         if (ip.row == 1)
-            [self devConfirm:SenkoLocalizedText(@"Reset dynamic bypass")
+            [self devConfirm:SenkoLocalizedText(@"Forget direct addresses")
                      message:nil
                       button:SenkoLocalizedText(@"Reset")
                          tag:DEV_CONFIRM_FLUSH_BYPASS];
@@ -252,8 +230,7 @@ static NSString *PFModeTitle(NSString *value) {
    screen */
 - (void)showPicker:(NSInteger)tag {
     NSString *title = tag == DEV_SHEET_BACKEND ? SenkoLocalizedText(@"Backend")
-                    : tag == DEV_SHEET_BLOCK ? SenkoLocalizedText(@"Blocked answers")
-                    : SenkoLocalizedText(@"pf variant");
+                    : SenkoLocalizedText(@"Blocked answers");
     UIActionSheet *sheet = [[[UIActionSheet alloc]
              initWithTitle:title
                   delegate:self
@@ -263,13 +240,9 @@ static NSString *PFModeTitle(NSString *value) {
     if (tag == DEV_SHEET_BACKEND) {
         for (int i = 0; i < DEV_BACKEND_COUNT; ++i)
             [sheet addButtonWithTitle:BackendTitle(kBackendValues[i])];
-    } else if (tag == DEV_SHEET_BLOCK) {
+    } else {
         for (int i = 0; i < DEV_BLOCK_COUNT; ++i)
             [sheet addButtonWithTitle:BlockTitle(kBlockValues[i])];
-    } else {
-        [sheet addButtonWithTitle:SenkoLocalizedText(@"Auto")];
-        for (int i = 0; i < DEV_PF_MODE_COUNT; ++i)
-            [sheet addButtonWithTitle:[NSString stringWithFormat:@"%d: %@", i, kPFModeNames[i]]];
     }
     sheet.tag = tag;
     sheet.cancelButtonIndex = [sheet addButtonWithTitle:SenkoLocalizedText(@"Cancel")];
@@ -282,21 +255,13 @@ static NSString *PFModeTitle(NSString *value) {
         if (index < DEV_BACKEND_COUNT) [self apply:@"force_backend" value:kBackendValues[index]];
         return;
     }
-    if (sheet.tag == DEV_SHEET_BLOCK) {
-        if (index < DEV_BLOCK_COUNT) [self apply:@"block_response" value:kBlockValues[index]];
-        return;
-    }
-    if (sheet.tag == DEV_SHEET_PF_MODE) {
-        if (index == 0) { [self apply:@"force_pf_mode" value:@"auto"]; return; }
-        if (index <= DEV_PF_MODE_COUNT)
-            [self apply:@"force_pf_mode"
-                  value:[NSString stringWithFormat:@"%d", (int)index - 1]];
-    }
+    if (sheet.tag == DEV_SHEET_BLOCK && index < DEV_BLOCK_COUNT)
+        [self apply:@"block_response" value:kBlockValues[index]];
 }
 
 - (void)devConfirmed:(NSInteger)tag {
     NSString *target = tag == DEV_CONFIRM_FLUSH_DNS ? @"dns"
-                     : tag == DEV_CONFIRM_FLUSH_BYPASS ? @"bypass"
+                     : tag == DEV_CONFIRM_FLUSH_BYPASS ? @"direct"
                      : tag == DEV_CONFIRM_FLUSH_CONFIG ? @"config" : nil;
     if (!target) return;
     [_ctl flushTarget:target reply:^(NSString *reply) {

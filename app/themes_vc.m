@@ -84,14 +84,14 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = SenkoThemeGroupTitle(_groupId);
+    self.title = SenkoLocalizedText(SenkoThemeGroupTitle(_groupId));
     if ([self respondsToSelector:@selector(setEdgesForExtendedLayout:)])
         ((void (*)(id, SEL, NSUInteger))objc_msgSend)(self, @selector(setEdgesForExtendedLayout:), 0);
     if ([self respondsToSelector:@selector(setAutomaticallyAdjustsScrollViewInsets:)])
         ((void (*)(id, SEL, BOOL))objc_msgSend)(self, @selector(setAutomaticallyAdjustsScrollViewInsets:), NO);
     if ([self respondsToSelector:@selector(setExtendedLayoutIncludesOpaqueBars:)])
         ((void (*)(id, SEL, BOOL))objc_msgSend)(self, @selector(setExtendedLayoutIncludesOpaqueBars:), NO);
-    self.view.backgroundColor = kBG;
+    SenkoApplyScreenChrome(self.view);
     _tv = [[UITableView alloc] initWithFrame:self.view.bounds
                                        style:UITableViewStyleGrouped];
     _tv.dataSource = self;
@@ -101,7 +101,7 @@
     _tv.contentInset = UIEdgeInsetsMake(8.0f, 0.0f, 16.0f, 0.0f);
     _tv.scrollIndicatorInsets = _tv.contentInset;
     _tv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    _tv.backgroundColor = kBG;
+    SenkoClearTableBackground(_tv);
     _tv.separatorStyle = UITableViewCellSeparatorStyleSingleLine;
     _tv.separatorColor = SenkoThemeIsLight()
         ? [UIColor colorWithWhite:0 alpha:0.18]
@@ -207,8 +207,8 @@
 
 - (void)themeDidChange:(NSNotification *)n {
     (void)n;
-    self.view.backgroundColor = kBG;
-    _tv.backgroundColor = kBG;
+    SenkoApplyScreenChrome(self.view);
+    SenkoClearTableBackground(_tv);
     _tv.separatorColor = SenkoThemeIsLight()
         ? [UIColor colorWithWhite:0 alpha:0.18]
         : [UIColor colorWithWhite:1 alpha:0.14];
@@ -336,7 +336,7 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"Themes";
+    self.title = SenkoLocalizedText(@"Themes");
     [_groups release];
     _groups = [SenkoThemeGroupIds() retain];
     if ([self respondsToSelector:@selector(setEdgesForExtendedLayout:)])
@@ -345,7 +345,7 @@
         ((void (*)(id, SEL, BOOL))objc_msgSend)(self, @selector(setAutomaticallyAdjustsScrollViewInsets:), NO);
     if ([self respondsToSelector:@selector(setExtendedLayoutIncludesOpaqueBars:)])
         ((void (*)(id, SEL, BOOL))objc_msgSend)(self, @selector(setExtendedLayoutIncludesOpaqueBars:), NO);
-    self.view.backgroundColor = kBG;
+    SenkoApplyScreenChrome(self.view);
     _tv = [[UITableView alloc] initWithFrame:self.view.bounds
                                        style:UITableViewStyleGrouped];
     _tv.dataSource = self;
@@ -355,7 +355,7 @@
     _tv.contentInset = UIEdgeInsetsMake(8.0f, 0.0f, 16.0f, 0.0f);
     _tv.scrollIndicatorInsets = _tv.contentInset;
     _tv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    _tv.backgroundColor = kBG;
+    SenkoClearTableBackground(_tv);
     _tv.separatorStyle = UITableViewCellSeparatorStyleSingleLine;
     _tv.separatorColor = SenkoThemeIsLight()
         ? [UIColor colorWithWhite:0 alpha:0.18]
@@ -378,8 +378,8 @@
 
 - (void)themeDidChange:(NSNotification *)n {
     (void)n;
-    self.view.backgroundColor = kBG;
-    _tv.backgroundColor = kBG;
+    SenkoApplyScreenChrome(self.view);
+    SenkoClearTableBackground(_tv);
     _tv.separatorStyle = UITableViewCellSeparatorStyleSingleLine;
     _tv.separatorColor = SenkoThemeIsLight()
         ? [UIColor colorWithWhite:0 alpha:0.18]
@@ -447,8 +447,8 @@
     UILabel *lab = [[[UILabel alloc] initWithFrame:CGRectMake(16, 8, w - 32, 18)] autorelease];
     lab.backgroundColor = [UIColor clearColor];
     lab.font = [UIFont boldSystemFontOfSize:13];
-    if (s == 0) lab.text = @"Style";
-    else if (s == 1) lab.text = @"Appearance";
+    if (s == 0) lab.text = SenkoLocalizedText(@"Style");
+    else if (s == 1) lab.text = SenkoLocalizedText(@"Appearance");
     else lab.text = SenkoThemeIsMiside() ? @"ooouch" : @"meowmeowmeow";
     lab.textAlignment = NSTextAlignmentCenter;
     SenkoStyleAccentLabel(lab);
@@ -473,13 +473,13 @@
         lab.textAlignment = NSTextAlignmentCenter;
         lab.font = [UIFont systemFontOfSize:12];
         if (SenkoThemeIsMiside())
-            lab.text = @"Senko-Miside is Dark only: pattern wallpaper and candy heart ON.";
+            lab.text = SenkoLocalizedText(@"Senko-Miside is Dark only: pattern wallpaper and candy heart ON.");
         else if (SenkoThemeIsBoykisser())
-            lab.text = @"Senko-Boykisser: pink paper or rose ink, with falling boykissers on the home screen.";
+            lab.text = SenkoLocalizedText(@"Senko-Boykisser: pink paper or rose ink, with falling boykissers on the home screen.");
         else if (SenkoThemeIsFrutigeraero())
-            lab.text = @"Senko-Aero is Light only: sky wallpaper and floating gloss bubbles.";
+            lab.text = SenkoLocalizedText(@"Senko-Aero is Light only: sky wallpaper and floating gloss bubbles.");
         else
-            lab.text = @"Dark / Light applies to the selected style. Choice is stored on device.";
+            lab.text = SenkoLocalizedText(@"Dark / Light applies to the selected style. Choice is stored on device.");
         SenkoStyleMutedLabel(lab);
         lab.autoresizingMask = UIViewAutoresizingFlexibleWidth;
         [wrap addSubview:lab];
@@ -493,9 +493,9 @@
         lab.numberOfLines = 0;
         lab.textAlignment = NSTextAlignmentCenter;
         lab.font = [UIFont systemFontOfSize:12];
-        lab.text = SenkoThemeIsMiside()
+        lab.text = SenkoLocalizedText(SenkoThemeIsMiside()
             ? @"Play a short ouch on every button tap."
-            : @"Play a short meow on every button tap.";
+            : @"Play a short meow on every button tap.");
         SenkoStyleMutedLabel(lab);
         lab.autoresizingMask = UIViewAutoresizingFlexibleWidth;
         [wrap addSubview:lab];
@@ -596,7 +596,7 @@
         cell = [[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1
                                        reuseIdentifier:cid] autorelease];
     NSString *gid = [_groups objectAtIndex:ip.row];
-    cell.textLabel.text = SenkoThemeGroupTitle(gid);
+    cell.textLabel.text = SenkoLocalizedText(SenkoThemeGroupTitle(gid));
     NSString *curG = SenkoThemeGroupOfId(SenkoThemeCurrentId());
     if ([curG isEqualToString:gid])
         cell.detailTextLabel.text = SenkoThemeDisplayName(SenkoThemeCurrentId());

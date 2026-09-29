@@ -14,7 +14,6 @@
 #import "bubble_field.h"
 #import "themes_vc.h"
 #import "server_cell.h"
-#import "home_layout.h"
 #import "update_install.h"
 #import "meow.h"
 #import "app_common.h"
@@ -89,6 +88,16 @@ static NSString *SenkoHeaderWithHWID(NSString *header, BOOL enabled, BOOL *compa
 
 @interface EditSubscriptionVC () <UITextFieldDelegate>
 @end
+
+/* landscape ipad gives long subscription urls room to be edited */
+static BOOL SenkoSubscriptionEditorLandscapePad(CGRect bounds) {
+    return [[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad &&
+           bounds.size.width > bounds.size.height;
+}
+
+static CGFloat SenkoSubscriptionEditorMaxWidth(CGRect bounds) {
+    return SenkoSubscriptionEditorLandscapePad(bounds) ? 920.0f : 620.0f;
+}
 
 @implementation EditSubscriptionVC {
 
@@ -221,8 +230,10 @@ static NSString *SenkoHeaderWithHWID(NSString *header, BOOL enabled, BOOL *compa
 
     _scroll.frame = b;
 
+    BOOL widePad = SenkoSubscriptionEditorLandscapePad(b);
     CGFloat contentW = b.size.width;
-    if (contentW > 620.0f) contentW = 620.0f;
+    CGFloat maxW = SenkoSubscriptionEditorMaxWidth(b);
+    if (contentW > maxW) contentW = maxW;
     CGFloat x = floorf((b.size.width - contentW) * 0.5f);
     const CGFloat plateH = 410.0f;
     _plate.frame = CGRectMake(x, 0, contentW, plateH);
@@ -233,6 +244,7 @@ static NSString *SenkoHeaderWithHWID(NSString *header, BOOL enabled, BOOL *compa
     _nameField.frame = CGRectMake(18, 125, fieldW, 42);
     _nameLine.frame = CGRectMake(0, 179, contentW, 1);
     _urlField.frame = CGRectMake(18, 197, fieldW, 42);
+    _urlField.font = [UIFont systemFontOfSize:widePad ? 17.0f : 15.0f];
     _urlLine.frame = CGRectMake(0, 251, contentW, 1);
     _headerField.frame = CGRectMake(18, 267, fieldW, 48);
     _headerLine.frame = CGRectMake(0, 337, contentW, 1);
@@ -241,7 +253,7 @@ static NSString *SenkoHeaderWithHWID(NSString *header, BOOL enabled, BOOL *compa
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"Edit";
-    self.view.backgroundColor = kBG;
+    SenkoApplyScreenChrome(self.view);
     AddVGradient(self.view, kBG, kBGBot);
 
     self.navigationItem.leftBarButtonItem =
@@ -255,7 +267,8 @@ static NSString *SenkoHeaderWithHWID(NSString *header, BOOL enabled, BOOL *compa
 
     CGRect b = self.view.bounds;
     CGFloat contentW = b.size.width > 1.0f ? b.size.width : 320.0f;
-    if (contentW > 620.0f) contentW = 620.0f;
+    CGFloat maxW = SenkoSubscriptionEditorMaxWidth(b);
+    if (contentW > maxW) contentW = maxW;
 
     _scroll = [[UIScrollView alloc] initWithFrame:b];
     SenkoScrollViewUseManualInsets(_scroll);

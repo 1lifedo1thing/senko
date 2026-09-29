@@ -9,13 +9,14 @@
 
 /* the daemon's own words, kept in one place so a renamed button cannot start
    sending a mode the check parser does not know */
-static NSString *const kCheckModes[] = { @"tcp", @"proxy", @"tunnel", @"handshake" };
-#define DEV_CHECK_MODE_COUNT 4
+static NSString *const kCheckModes[] = { @"tcp", @"real", @"proxy", @"tunnel", @"handshake" };
+#define DEV_CHECK_MODE_COUNT 5
 
 static NSString *CheckModeTitle(NSString *mode) {
     if ([mode isEqualToString:@"proxy"]) return SenkoLocalizedText(@"Local proxy");
     if ([mode isEqualToString:@"tunnel"]) return SenkoLocalizedText(@"Active tunnel");
     if ([mode isEqualToString:@"handshake"]) return SenkoLocalizedText(@"Profile handshake");
+    if ([mode isEqualToString:@"real"]) return SenkoLocalizedText(@"Real delay");
     return SenkoLocalizedText(@"TCP to the node");
 }
 
@@ -121,7 +122,7 @@ static NSString *CheckModeTitle(NSString *mode) {
     }
 
     if (ip.section == 1) {
-        cell.textLabel.text = SenkoLocalizedText(@"Show ruleset");
+        cell.textLabel.text = SenkoLocalizedText(@"Show tunnel routes");
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         SenkoStyleSelectableCell(cell);
         return cell;
@@ -145,7 +146,7 @@ static NSString *CheckModeTitle(NSString *mode) {
 
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
-    if (ip.section == 1) { [self showFirewallConfig]; return; }
+    if (ip.section == 1) { [self showTunnelRoutes]; return; }
     if (ip.section != 0) return;
     if (ip.row == 0) [self showServerPicker];
     else if (ip.row == 1) [self showModePicker];
@@ -239,15 +240,15 @@ static NSString *CheckModeTitle(NSString *mode) {
     }];
 }
 
-- (void)showFirewallConfig {
-    [_ctl firewallConfig:^(NSString *text, NSString *error) {
+- (void)showTunnelRoutes {
+    [_ctl tunnelRoutes:^(NSString *text, NSString *error) {
         if (![text length]) {
-            [self devSay:SenkoLocalizedText(@"Generated firewall ruleset")
+            [self devSay:SenkoLocalizedText(@"Tunnel routes")
                  message:SenkoHumanReadableError(error)];
             return;
         }
         DevTextVC *vc = [[[DevTextVC alloc]
-            initWithTitle:SenkoLocalizedText(@"Firewall ruleset")
+            initWithTitle:SenkoLocalizedText(@"Tunnel routes")
                      body:text] autorelease];
         [self.navigationController pushViewController:vc animated:YES];
     }];

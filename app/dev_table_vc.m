@@ -75,7 +75,7 @@
         ((void (*)(id, SEL, BOOL))objc_msgSend)(self,
             @selector(setAutomaticallyAdjustsScrollViewInsets:), NO);
 
-    self.view.backgroundColor = kBG;
+    SenkoApplyScreenChrome(self.view);
     _tv = [[UITableView alloc] initWithFrame:self.view.bounds
                                        style:UITableViewStyleGrouped];
     _tv.dataSource = self;
@@ -83,7 +83,7 @@
     _tv.alwaysBounceVertical = YES;
     SenkoScrollViewUseManualInsets(_tv);
     _tv.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    _tv.backgroundColor = kBG;
+    SenkoClearTableBackground(_tv);
     /* the cell background owns the engraved groove, so UIKit must not draw a
        second separator over it */
     _tv.separatorStyle = UITableViewCellSeparatorStyleNone;
@@ -122,8 +122,8 @@
 
 - (void)devThemeDidChange:(NSNotification *)n {
     (void)n;
-    self.view.backgroundColor = kBG;
-    _tv.backgroundColor = kBG;
+    SenkoApplyScreenChrome(self.view);
+    SenkoClearTableBackground(_tv);
     if (self.navigationController)
         StyleNavBarClassic(self.navigationController);
     [_tv reloadData];
@@ -303,7 +303,7 @@
     self.title = _pageTitle;
     if ([self respondsToSelector:@selector(setEdgesForExtendedLayout:)])
         ((void (*)(id, SEL, NSUInteger))objc_msgSend)(self, @selector(setEdgesForExtendedLayout:), 0);
-    self.view.backgroundColor = kBG;
+    SenkoApplyScreenChrome(self.view);
     _text = [[UITextView alloc] initWithFrame:self.view.bounds];
     _text.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     _text.editable = NO;
@@ -333,7 +333,7 @@
 
 - (void)themeDidChange:(NSNotification *)n {
     (void)n;
-    self.view.backgroundColor = kBG;
+    SenkoApplyScreenChrome(self.view);
     SenkoStyleTerminalText(_text);
 }
 

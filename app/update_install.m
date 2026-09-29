@@ -345,7 +345,7 @@
                          } else if ([result length]) {
                              [self finishErr:result];
                          } else {
-                             [self finishErr:@"UPDATE ERR no response from senko-kick"];
+                             [self finishErr:@"UPDATE ERR no response from senkod"];
                          }
                      }];
 }

@@ -49,7 +49,7 @@ static NSString *const kConsoleHints =
     self.title = SenkoLocalizedText(@"Console");
     if ([self respondsToSelector:@selector(setEdgesForExtendedLayout:)])
         ((void (*)(id, SEL, NSUInteger))objc_msgSend)(self, @selector(setEdgesForExtendedLayout:), 0);
-    self.view.backgroundColor = kBG;
+    SenkoApplyScreenChrome(self.view);
 
     _out = [[UITextView alloc] initWithFrame:CGRectZero];
     _out.editable = NO;
@@ -113,7 +113,7 @@ static NSString *const kConsoleHints =
 
 - (void)themeDidChange:(NSNotification *)n {
     (void)n;
-    self.view.backgroundColor = kBG;
+    SenkoApplyScreenChrome(self.view);
     SenkoStyleTerminalText(_out);
     SenkoStyleGlassField(_input);
     _out.layer.borderColor = [UIColor colorWithWhite:1.0f alpha:0.18f].CGColor;
