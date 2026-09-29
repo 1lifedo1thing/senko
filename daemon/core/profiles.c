@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <string.h>
 
 /* one entry is a flat key/value table: nested yaml maps are flattened into
@@ -120,46 +121,41 @@ static int parse_port(const char *v, uint16_t *out) {
     return 0;
 }
 
-static void set_network(vl_server_t *s, const char *net) {
-    if (!net || !net[0]) { s->net = VL_NET_TCP; return; }
-    if (ci_equal(net, "tcp") || ci_equal(net, "raw") || ci_equal(net, "none"))
-        s->net = VL_NET_TCP;
-    else if (ci_equal(net, "ws") || ci_equal(net, "websocket"))
-        s->net = VL_NET_WS;
-    else if (ci_equal(net, "grpc"))
-        s->net = VL_NET_GRPC;
-    else if (ci_equal(net, "h2") || ci_equal(net, "http") ||
-             ci_equal(net, "httpupgrade"))
-        s->net = VL_NET_HTTP;
-    else if (ci_equal(net, "xhttp") || ci_equal(net, "splithttp"))
-        s->net = VL_NET_XHTTP;
-    else
-        s->net = VL_NET_UNKNOWN;
+static void set_why(char *why, size_t cap, const char *text) {
+    if (why && cap) snprintf(why, cap, "%s", text);
 }
 
-/* the last step every converted entry goes through, so senko never stores a
-   node whose sni or ws host the transport would have to invent later */
-static void finish_server(vl_server_t *s) {
-    if (s->sni[0] == '\0' &&
-        (s->security == VL_SEC_TLS || s->security == VL_SEC_REALITY))
-        snprintf(s->sni, sizeof s->sni, "%s", s->host);
-    if (s->net == VL_NET_WS && s->ws_host[0] == '\0')
-        snprintf(s->ws_host, sizeof s->ws_host, "%s",
-                 s->sni[0] ? s->sni : s->host);
-    if (s->remark[0] == '\0')
-        snprintf(s->remark, sizeof s->remark, "%.120s:%u",
-                 s->host, (unsigned)s->port);
+/* clash's "network": "http" there is tcp behind the http header disguise
+   (http-opts), http/2 is "h2" */
+static int clash_transport(const prof_entry_t *e, vl_server_t *s, char *why, size_t why_cap) {
+    const char *net = entry_get(e, "network");
+    if (!net || !net[0] || ci_equal(net, "none")) net = "tcp";
+    if (ci_equal(net, "http")) return cfg_node_transport(s, "tcp", "http", why, why_cap);
+    if (cfg_node_transport(s, net, NULL, why, why_cap) != 0) return -1;
+    if (s->net == VL_NET_WS) {
+        const char *path = entry_get(e, "ws-opts.path");
+        const char *whost = entry_get_any(e, "ws-opts.headers.Host", "ws-opts.headers.host");
+        if (path) snprintf(s->path, sizeof s->path, "%s", path);
+        if (whost && whost[0]) snprintf(s->ws_host, sizeof s->ws_host, "%s", whost);
+    } else if (s->net == VL_NET_GRPC) {
+        const char *svc = entry_get_any(e, "grpc-opts.grpc-service-name", "grpc-opts.serviceName");
+        if (svc) snprintf(s->path, sizeof s->path, "%s", svc);
+    }
+    return 0;
 }
 
-static int entry_to_server(const prof_entry_t *e, vl_server_t *s) {
+/* -1 with why naming what senko cannot carry, or that the entry is broken */
+static int entry_to_server(const prof_entry_t *e, vl_server_t *s, char *why, size_t why_cap) {
     const char *type = entry_get(e, "type");
     const char *host = entry_get_any(e, "server", "host");
     const char *port = entry_get(e, "port");
     const char *name = entry_get(e, "name");
 
+    set_why(why, why_cap, "malformed profile entry");
     if (!type || !host || !host[0] || !port) return -1;
     memset(s, 0, sizeof *s);
     if (parse_port(port, &s->port) != 0) return -1;
+    if (truthy(entry_get(e, "skip-cert-verify"))) s->insecure = 1;
     snprintf(s->host, sizeof s->host, "%s", host);
     if (name) snprintf(s->remark, sizeof s->remark, "%s", name);
 
@@ -167,13 +163,13 @@ static int entry_to_server(const prof_entry_t *e, vl_server_t *s) {
         const char *uuid = entry_get_any(e, "uuid", "id");
         if (!uuid || !uuid[0]) return -1;
         s->proto = VL_PROTO_VLESS;
-        snprintf(s->uuid, sizeof s->uuid, "%s", uuid);
+        cfg_node_vless_id(s, uuid);
         snprintf(s->encryption, sizeof s->encryption, "none");
         {
             const char *flow = entry_get(e, "flow");
             if (flow) snprintf(s->flow, sizeof s->flow, "%s", flow);
         }
-        set_network(s, entry_get(e, "network"));
+        if (clash_transport(e, s, why, why_cap) != 0) return -1;
 
         {
             const char *pbk = entry_get_any(e, "reality-opts.public-key",
@@ -196,22 +192,13 @@ static int entry_to_server(const prof_entry_t *e, vl_server_t *s) {
             const char *fp = entry_get_any(e, "client-fingerprint", "fingerprint");
             if (fp && fp[0]) snprintf(s->fp, sizeof s->fp, "%s", fp);
         }
-        if (s->net == VL_NET_WS) {
-            const char *path = entry_get(e, "ws-opts.path");
-            const char *whost = entry_get_any(e, "ws-opts.headers.Host",
-                                              "ws-opts.headers.host");
-            if (path) snprintf(s->path, sizeof s->path, "%s", path);
-            if (whost && whost[0])
-                snprintf(s->ws_host, sizeof s->ws_host, "%s", whost);
-        } else if (s->net == VL_NET_GRPC) {
-            const char *svc = entry_get_any(e, "grpc-opts.grpc-service-name",
-                                            "grpc-opts.serviceName");
-            if (svc) snprintf(s->path, sizeof s->path, "%s", svc);
-        }
     } else if (ci_equal(type, "socks5") || ci_equal(type, "socks")) {
         s->proto = VL_PROTO_SOCKS5;
         s->net = VL_NET_TCP;
-        s->security = truthy(entry_get(e, "tls")) ? VL_SEC_TLS : VL_SEC_NONE;
+        if (truthy(entry_get(e, "tls"))) {
+            set_why(why, why_cap, "socks over tls");
+            return -1;
+        }
         {
             const char *u = entry_get_any(e, "username", "user");
             const char *p = entry_get(e, "password");
@@ -237,32 +224,36 @@ static int entry_to_server(const prof_entry_t *e, vl_server_t *s) {
         if (p) snprintf(s->pass, sizeof s->pass, "%s", p);
         const char *sni = entry_get_any(e, "sni", "server-name");
         if (sni) snprintf(s->sni, sizeof s->sni, "%s", sni);
-        const char *net = entry_get(e, "network");
-        if (net && ci_equal(net, "ws")) {
-            s->net = VL_NET_WS;
-            const char *path = entry_get(e, "ws-opts.path");
-            if (path) snprintf(s->path, sizeof s->path, "%s", path);
-        } else if (net && ci_equal(net, "grpc")) {
-            s->net = VL_NET_GRPC;
-            const char *svc = entry_get_any(e, "grpc-opts.grpc-service-name", "grpc-opts.serviceName");
-            if (svc) snprintf(s->path, sizeof s->path, "%s", svc);
+        const char *fp = entry_get_any(e, "client-fingerprint", "fingerprint");
+        if (fp && fp[0]) snprintf(s->fp, sizeof s->fp, "%s", fp);
+        if (entry_get(e, "reality-opts.public-key")) {
+            set_why(why, why_cap, "trojan over reality");
+            return -1;
         }
+        if (clash_transport(e, s, why, why_cap) != 0) return -1;
     } else if (ci_equal(type, "ss") || ci_equal(type, "shadowsocks")) {
         s->proto = VL_PROTO_SHADOWSOCKS;
         s->security = VL_SEC_NONE;
         s->net = VL_NET_TCP;
         const char *p = entry_get(e, "password");
         const char *c = entry_get(e, "cipher");
+        const char *plugin = entry_get(e, "plugin");
         if (p) snprintf(s->pass, sizeof s->pass, "%s", p);
-        if (c) {
-            snprintf(s->encryption, sizeof s->encryption, "%s", c);
-            snprintf(s->user, sizeof s->user, "%s", c);
+        if (c) cfg_node_ss_method(s, c);
+        if (plugin && plugin[0]) {
+            char text[64];
+            snprintf(text, sizeof text, "shadowsocks plugin %.32s", plugin);
+            set_why(why, why_cap, text);
+            return -1;
         }
     } else if (ci_equal(type, "hysteria2")) {
 /* hysteria1 ("hysteria") is a different, incompatible handshake: only the
-   type spelled exactly "hysteria2" reaches the go core's hysteria client */
+   type spelled exactly "hysteria2" reaches senko-core's hysteria client */
         const char *pass = entry_get_any(e, "password", "auth");
-        if (!pass || !pass[0]) return -1;
+        if (!pass || !pass[0]) {
+            set_why(why, why_cap, "hysteria2 requires an auth password");
+            return -1;
+        }
         s->proto = VL_PROTO_HYSTERIA2;
         s->security = VL_SEC_TLS;
         s->net = VL_NET_TCP;
@@ -288,11 +279,31 @@ static int entry_to_server(const prof_entry_t *e, vl_server_t *s) {
                                          sizeof s->port_hop, NULL);
         }
     } else {
-        return -1; /* vmess has no senko transport */
+        /* vmess and the rest have no senko client */
+        char text[32];
+        size_t i = 0;
+        for (; type[i] && i + 1 < sizeof text; ++i) text[i] = (char)tolower((unsigned char)type[i]);
+        text[i] = '\0';
+        set_why(why, why_cap, text);
+        return -1;
     }
 
-    finish_server(s);
-    return cfg_validate_server(s, NULL, 0) ? 0 : -1;
+    cfg_node_finish(s);
+    if (s->remark[0] == '\0')
+        snprintf(s->remark, sizeof s->remark, "%.120s:%u", s->host, (unsigned)s->port);
+    return cfg_validate_server(s, why, why_cap) ? 0 : -1;
+}
+
+/* one entry into out[*count], or one skip counted by its reason */
+static void take_entry(const prof_entry_t *e, vl_server_t *out, size_t max, size_t *count,
+                       cfg_import_stats_t *st) {
+    char why[96];
+    if (*count >= max) return;
+    /* a refused entry's placeholder reads its port from this slot */
+    memset(&out[*count], 0, sizeof out[*count]);
+    if (entry_to_server(e, &out[*count], why, sizeof why) == 0) (*count)++;
+    else cfg_import_skip(st, out, max, count, entry_get(e, "name"),
+                         entry_get_any(e, "server", "host"), out[*count].port, why);
 }
 
 /* ---- clash yaml -------------------------------------------------------- */
@@ -346,6 +357,11 @@ static void clash_flow_pairs(prof_entry_t *e, const char *p, const char *end) {
 
 size_t profiles_parse_clash(const char *blob, size_t len,
                             vl_server_t *out, size_t max) {
+    return profiles_parse_clash_ex(blob, len, out, max, NULL);
+}
+
+size_t profiles_parse_clash_ex(const char *blob, size_t len, vl_server_t *out,
+                               size_t max, cfg_import_stats_t *st) {
     if (!blob || !out || max == 0) return 0;
     const char *end = blob + len;
     const char *p = blob;
@@ -380,10 +396,15 @@ size_t profiles_parse_clash(const char *blob, size_t len,
 /* a key at column zero ends the proxies block */
         if (ind == 0 && *body != '-') break;
 
+/* a dash deeper than the items is an element of a nested list such as
+   "alpn:\n  - h3"; taking it for a new item split the proxy in two */
+        if (*body == '-' && have_entry && ind > item_indent) {
+            p = next;
+            continue;
+        }
+
         if (*body == '-') {
-            if (have_entry && count < max &&
-                entry_to_server(&entry, &out[count]) == 0)
-                ++count;
+            if (have_entry) take_entry(&entry, out, max, &count, st);
             if (count >= max) return count;
             entry_reset(&entry);
             have_entry = 1;
@@ -399,7 +420,17 @@ size_t profiles_parse_clash(const char *blob, size_t len,
                 if (close > v) clash_flow_pairs(&entry, v + 1, close - 1);
             } else if (v < le) {
                 const char *colon = (const char *)memchr(v, ':', (size_t)(le - v));
-                if (colon) entry_put(&entry, NULL, v, colon, colon + 1, le);
+                const char *vs = colon ? colon + 1 : le, *ve = le;
+                trim_span(&vs, &ve);
+                if (colon && ve == vs) {
+                    const char *ks = v, *ke = colon;
+                    trim_span(&ks, &ke);
+                    unquote(&ks, &ke);
+                    copy_span(nest, sizeof nest, ks, ke);
+                    nest_indent = (size_t)(v - p);
+                } else if (colon) {
+                    entry_put(&entry, NULL, v, colon, colon + 1, le);
+                }
             }
             p = next;
             continue;
@@ -439,8 +470,7 @@ size_t profiles_parse_clash(const char *blob, size_t len,
         p = next;
     }
 
-    if (have_entry && count < max && entry_to_server(&entry, &out[count]) == 0)
-        ++count;
+    if (have_entry) take_entry(&entry, out, max, &count, st);
     return count;
 }
 
@@ -462,7 +492,7 @@ int profiles_looks_like_surge(const char *blob, size_t len) {
 /* surge writes: Name = type, host, port, [user], [pass], key=value, ... */
 static int surge_line_to_server(const char *name_s, const char *name_e,
                                 const char *body_s, const char *body_e,
-                                vl_server_t *s) {
+                                vl_server_t *s, char *why, size_t why_cap) {
     prof_entry_t e;
     entry_reset(&e);
 
@@ -529,11 +559,16 @@ static int surge_line_to_server(const char *name_s, const char *name_e,
             if (uri) entry_put_str(&e, "grpc-opts.grpc-service-name", uri);
         }
     }
-    return entry_to_server(&e, s);
+    return entry_to_server(&e, s, why, why_cap);
 }
 
 size_t profiles_parse_surge(const char *blob, size_t len,
                             vl_server_t *out, size_t max) {
+    return profiles_parse_surge_ex(blob, len, out, max, NULL);
+}
+
+size_t profiles_parse_surge_ex(const char *blob, size_t len, vl_server_t *out,
+                               size_t max, cfg_import_stats_t *st) {
     if (!blob || !out || max == 0) return 0;
     const char *end = blob + len;
     const char *p = blob;
@@ -554,8 +589,13 @@ size_t profiles_parse_surge(const char *blob, size_t len,
         if (!in_proxy) { p = next; continue; }
         {
             const char *eq = (const char *)memchr(b, '=', (size_t)(e2 - b));
-            if (eq && surge_line_to_server(b, eq, eq + 1, e2, &out[count]) == 0)
+            char why[96] = "";
+            memset(&out[count], 0, sizeof out[count]);
+            if (eq && surge_line_to_server(b, eq, eq + 1, e2, &out[count], why, sizeof why) == 0)
                 ++count;
+            else if (eq && why[0])
+                cfg_import_skip(st, out, max, &count, out[count].remark,
+                                out[count].host, out[count].port, why);
         }
         p = next;
     }

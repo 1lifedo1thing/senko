@@ -72,7 +72,7 @@ int main(void) {
        cfg_parse_link("vless://11111111-1111-4111-8111-111111111111@example.com:443?security=tls&type=tcp&encryption=mlkem768x25519plus#badenc",
                       &s) == CFG_OK &&
        !cfg_validate_server(&s, reason, sizeof reason) &&
-       strcmp(reason, "unsupported encryption") == 0);
+       strcmp(reason, "vless encryption") == 0);
 
     ok("valid reality contract",
        cfg_parse_link("vless://11111111-1111-4111-8111-111111111111@example.com:443?security=reality&type=raw&flow=xtls-rprx-vision&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=00#ok",
@@ -88,7 +88,7 @@ int main(void) {
 
     reason[0] = '\0';
     ok("bad tls flow rejected",
-       cfg_parse_link("vless://11111111-1111-4111-8111-111111111111@example.com:443?security=tls&type=tcp&flow=none#bad",
+       cfg_parse_link("vless://11111111-1111-4111-8111-111111111111@example.com:443?security=tls&type=tcp&flow=xtls-rprx-direct#bad",
                       &s) == CFG_OK &&
        !cfg_validate_server(&s, reason, sizeof reason) &&
        strcmp(reason, "unsupported tls flow") == 0);
@@ -125,6 +125,35 @@ int main(void) {
            strlen(a.remark) % 2 == 0 &&
            ((unsigned char)a.remark[strlen(a.remark) - 1] & 0xC0) == 0x80);
     }
+
+
+/* a public subscription list ships "sni=t.me%252Fripaojiedian". an sni that
+   cannot be a dns name must not reach the wire, the host takes over instead */
+    ok("parse junk sni",
+       cfg_parse_link("trojan://pw@100.42.228.109:443?security=tls&type=tcp&sni=t.me%252Fripaojiedian&fp=android#junk",
+                      &s) == CFG_OK);
+    ok("junk sni falls back to the host", strcmp(s.sni, "100.42.228.109") == 0);
+
+    ok("parse sni with a slash",
+       cfg_parse_link("vless://11111111-1111-4111-8111-111111111111@1.2.3.4:443?security=tls&type=tcp&sni=host.example%2Fpath#slash",
+                      &s) == CFG_OK);
+    ok("sliced sni falls back to the host", strcmp(s.sni, "1.2.3.4") == 0);
+
+    ok("parse sni with a trailing dot",
+       cfg_parse_link("vless://11111111-1111-4111-8111-111111111111@1.2.3.4:443?security=tls&type=tcp&sni=host.example.#dot",
+                      &s) == CFG_OK);
+    ok("trailing dot sni falls back to the host", strcmp(s.sni, "1.2.3.4") == 0);
+
+/* an ip literal is what the empty-sni path already substitutes, so it stays */
+    ok("parse ip sni",
+       cfg_parse_link("vless://11111111-1111-4111-8111-111111111111@example.com:443?security=tls&type=tcp&sni=203.0.113.9#ip",
+                      &s) == CFG_OK);
+    ok("ip literal sni survives", strcmp(s.sni, "203.0.113.9") == 0);
+
+    ok("parse hyphenated sni",
+       cfg_parse_link("vless://11111111-1111-4111-8111-111111111111@1.2.3.4:443?security=tls&type=tcp&sni=my-cdn.a-b.example#hy",
+                      &s) == CFG_OK);
+    ok("hyphenated sni survives", strcmp(s.sni, "my-cdn.a-b.example") == 0);
 
     if (g_fail) {
         fprintf(stderr, "%d check(s) failed\n", g_fail);

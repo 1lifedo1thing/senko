@@ -3,6 +3,7 @@
 #include "happ.h"
 #include "profiles.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,19 +21,6 @@ static int hexnib(char c) {
     return -1;
 }
 
-static int copy_span(const char *s, const char *e, char *dst, size_t cap) {
-    size_t n = (size_t)(e - s);
-    if (n + 1 > cap) return -1;
-    memcpy(dst, s, n);
-    dst[n] = '\0';
-    return 0;
-}
-
-static int copy_query_value(const char *v, size_t vlen, char *dst, size_t cap) {
-/* query parameter values are the one place where '+' encodes a space */
-    return url_percent_decode_ex(v, vlen, dst, cap, 1) >= 0 ? 0 : -1;
-}
-
 const char *vl_sec_name(vl_sec_t s) {
     switch (s) {
         case VL_SEC_NONE:    return "none";
@@ -47,8 +35,40 @@ static void cfg_reason(char *reason, size_t cap, const char *msg) {
     snprintf(reason, cap, "%s", msg ? msg : "unsupported server");
 }
 
+/* rfc 1035 label shape, which an ip literal also satisfies: xray puts the host
+   in sni when none is configured, and that host is sometimes an address */
+int cfg_sni_text_ok(const char *h) {
+    if (!h || !h[0]) return 0;
+    size_t total = strlen(h);
+    if (total > 253) return 0;
+    size_t label = 0;
+    for (size_t i = 0; i < total; ++i) {
+        char c = h[i];
+        if (c == '.') {
+            if (label == 0) return 0; /* empty label, leading or doubled dot */
+            if (h[i - 1] == '-') return 0;
+            label = 0;
+            continue;
+        }
+        int ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                 (c >= '0' && c <= '9') || c == '-';
+        if (!ok) return 0;
+        if (label == 0 && c == '-') return 0;
+        if (++label > 63) return 0;
+    }
+    return label != 0 && h[total - 1] != '-'; /* reject a trailing dot */
+}
+
+/* what xray accepts as a vless id: a uuid, or any string of 1 to 30 bytes that
+   it hashes into one (vless_uuid_parse) */
 static int uuid_text_ok(const char *u) {
     if (!u) return 0;
+    size_t n = strlen(u);
+    if (n >= 1 && n <= 30) {
+        for (size_t i = 0; i < n; ++i)
+            if ((unsigned char)u[i] < 0x20) return 0;
+        return 1;
+    }
     for (int i = 0; i < 36; ++i) {
         char c = u[i];
         if (c == '\0') return 0;
@@ -84,6 +104,10 @@ int cfg_validate_server(const vl_server_t *s, char *reason, size_t reason_cap) {
         cfg_reason(reason, reason_cap, "empty server");
         return 0;
     }
+    if (s->proto == VL_PROTO_UNSUPPORTED) {
+        cfg_reason(reason, reason_cap, s->unsupported[0] ? s->unsupported : "unsupported");
+        return 0;
+    }
     if (!s->host[0] || s->port == 0) {
         cfg_reason(reason, reason_cap, "missing host or port");
         return 0;
@@ -97,6 +121,10 @@ int cfg_validate_server(const vl_server_t *s, char *reason, size_t reason_cap) {
     if (s->proto == VL_PROTO_TROJAN) {
         if (!s->pass[0]) {
             cfg_reason(reason, reason_cap, "trojan requires password");
+            return 0;
+        }
+        if (s->security == VL_SEC_REALITY) {
+            cfg_reason(reason, reason_cap, "trojan over reality");
             return 0;
         }
         if (s->security != VL_SEC_TLS) {
@@ -118,7 +146,17 @@ int cfg_validate_server(const vl_server_t *s, char *reason, size_t reason_cap) {
         if (strcmp(s->encryption, "aes-256-gcm") &&
             strcmp(s->encryption, "aes-128-gcm") &&
             strcmp(s->encryption, "chacha20-ietf-poly1305")) {
-            cfg_reason(reason, reason_cap, "unsupported shadowsocks cipher");
+            char text[80];
+            int named = s->encryption[0] != '\0';
+            for (const char *c = s->encryption; *c && named; ++c)
+                named = (*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '-' || *c == '_';
+            snprintf(text, sizeof text, "shadowsocks %.40s", named ? s->encryption : "cipher that is not a name");
+            cfg_reason(reason, reason_cap, text);
+            return 0;
+        }
+        /* senko speaks shadowsocks over a bare tcp stream only */
+        if (s->net != VL_NET_TCP) {
+            cfg_reason(reason, reason_cap, "shadowsocks over another transport");
             return 0;
         }
         return 1;
@@ -130,7 +168,7 @@ int cfg_validate_server(const vl_server_t *s, char *reason, size_t reason_cap) {
             return 0;
         }
         if (s->obfs[0] && strcmp(s->obfs, "none") != 0) {
-/* the go core's finalmask udp mask only builds a salamander conn */
+/* senko-core's finalmask udp mask only builds a salamander conn */
             if (strcmp(s->obfs, "salamander") != 0) {
                 cfg_reason(reason, reason_cap, "unsupported hysteria2 obfuscation type");
                 return 0;
@@ -149,11 +187,11 @@ int cfg_validate_server(const vl_server_t *s, char *reason, size_t reason_cap) {
         return 0;
     }
     if (!uuid_text_ok(s->uuid)) {
-        cfg_reason(reason, reason_cap, "invalid uuid");
+        cfg_reason(reason, reason_cap, "invalid vless id");
         return 0;
     }
     if (s->encryption[0] && strcmp(s->encryption, "none") != 0) {
-        cfg_reason(reason, reason_cap, "unsupported encryption");
+        cfg_reason(reason, reason_cap, "vless encryption");
         return 0;
     }
     if (s->net != VL_NET_TCP && s->net != VL_NET_WS &&
@@ -352,111 +390,8 @@ int cfg_parse_port_hop(const char *text, size_t len, char *dst, size_t dst_cap,
     return 0;
 }
 
-/* panel templates prepend a long shared banner to every node name, so clipping
-   a name at a byte boundary can leave every server in a feed reading the same.
-   decode into a wide scratch first, then step back to a codepoint boundary so a
-   name that still has to be shortened stays valid utf-8 for the control line */
-static void copy_remark(const char *src, size_t src_len, char *dst, size_t cap) {
-    char wide[1024];
-    size_t n;
-
-    if (!dst || cap == 0) return;
-    dst[0] = '\0';
-    if (url_percent_decode(src, src_len, wide, sizeof wide) < 0) {
-        n = src_len < sizeof wide - 1 ? src_len : sizeof wide - 1;
-        memcpy(wide, src, n);
-        wide[n] = '\0';
-    }
-
-    n = strlen(wide);
-    if (n >= cap) {
-        n = cap - 1;
-        while (n > 0 && ((unsigned char)wide[n] & 0xC0) == 0x80) --n;
-    }
-    memcpy(dst, wide, n);
-    dst[n] = '\0';
-}
-
-static void assign_kv(vl_server_t *s,
-                      const char *k, size_t klen,
-                      const char *v, size_t vlen) {
-    #define KEY_IS(lit) (klen == sizeof(lit) - 1 && memcmp(k, lit, klen) == 0)
-
-    if (KEY_IS("security")) {
-        char tmp[32];
-        if (copy_span(v, v + vlen, tmp, sizeof tmp) == 0) {
-            if      (strcmp(tmp, "reality") == 0) s->security = VL_SEC_REALITY;
-            else if (strcmp(tmp, "tls")     == 0) s->security = VL_SEC_TLS;
-            else if (strcmp(tmp, "none")    == 0) s->security = VL_SEC_NONE;
-            else if (tmp[0] == '\0')              s->security = VL_SEC_NONE;
-            else                                  s->security = VL_SEC_UNKNOWN;
-        }
-    } else if (KEY_IS("type")) {
-        char tmp[32];
-        if (copy_span(v, v + vlen, tmp, sizeof tmp) == 0) {
-            if      (strcmp(tmp, "tcp")  == 0 ||
-                     strcmp(tmp, "raw")  == 0) s->net = VL_NET_TCP;
-            else if (strcmp(tmp, "ws")   == 0) s->net = VL_NET_WS;
-            else if (strcmp(tmp, "grpc") == 0) s->net = VL_NET_GRPC;
-            else if (strcmp(tmp, "http") == 0 || strcmp(tmp, "h2") == 0)
-                                               s->net = VL_NET_HTTP;
-            else if (strcmp(tmp, "xhttp") == 0 ||
-                     strcmp(tmp, "splithttp") == 0)
-                                               s->net = VL_NET_XHTTP;
-            else                               s->net = VL_NET_UNKNOWN;
-        }
-    } else if (KEY_IS("sni") || KEY_IS("serverName")) {
-        copy_query_value(v, vlen, s->sni, sizeof s->sni);
-    } else if (KEY_IS("host")) {
-/* ws links use this for the http host header, sni stays separate */
-        copy_query_value(v, vlen, s->ws_host, sizeof s->ws_host);
-    } else if (KEY_IS("flow")) {
-        copy_query_value(v, vlen, s->flow, sizeof s->flow);
-    } else if (KEY_IS("encryption")) {
-        if (copy_query_value(v, vlen, s->encryption, sizeof s->encryption) != 0)
-            snprintf(s->encryption, sizeof s->encryption, "%s", "unsupported");
-    } else if (KEY_IS("fp")) {
-        copy_query_value(v, vlen, s->fp, sizeof s->fp);
-    } else if (KEY_IS("pbk")) {
-        copy_query_value(v, vlen, s->pbk, sizeof s->pbk);
-    } else if (KEY_IS("sid")) {
-        copy_query_value(v, vlen, s->sid, sizeof s->sid);
-    } else if (KEY_IS("path")) {
-        url_percent_decode(v, vlen, s->path, sizeof s->path);
-    } else if (KEY_IS("serviceName")) {
-        url_percent_decode(v, vlen, s->path, sizeof s->path);
-    } else if (KEY_IS("mode")) {
-        copy_query_value(v, vlen, s->mode, sizeof s->mode);
-    } else if (KEY_IS("allowInsecure") || KEY_IS("insecure")) {
-        char tmp[8];
-        if (copy_span(v, v + vlen, tmp, sizeof tmp) == 0)
-            s->insecure = (strcmp(tmp, "1") == 0 || strcmp(tmp, "true") == 0);
-    } else if (KEY_IS("pinSHA256") || KEY_IS("pinsha256")) {
-        copy_query_value(v, vlen, s->pin_sha256, sizeof s->pin_sha256);
-    } else if (KEY_IS("obfs")) {
-        copy_query_value(v, vlen, s->obfs, sizeof s->obfs);
-    } else if (KEY_IS("obfs-password") || KEY_IS("obfs_password")) {
-        copy_query_value(v, vlen, s->obfs_password, sizeof s->obfs_password);
-    }
-
-    #undef KEY_IS
-}
-
-static void parse_query(vl_server_t *s, const char *q, const char *end) {
-    while (q < end) {
-        const char *amp = memchr(q, '&', (size_t)(end - q));
-        const char *seg_end = amp ? amp : end;
-        const char *eq = memchr(q, '=', (size_t)(seg_end - q));
-        if (eq) {
-            assign_kv(s, q, (size_t)(eq - q), eq + 1, (size_t)(seg_end - eq - 1));
-        }
-        if (!amp) break;
-        q = amp + 1;
-    }
-}
-
 /* xray's old grpc links carry only serviceName; the wire path also contains Tun */
-static void normalize_grpc_path(vl_server_t *s) {
+void cfg_normalize_grpc_path(vl_server_t *s) {
     char base[sizeof s->path];
     size_t n;
 
@@ -478,254 +413,6 @@ static void normalize_grpc_path(vl_server_t *s) {
         snprintf(s->path, sizeof s->path, "%s/Tun", base);
     }
     snprintf(s->mode, sizeof s->mode, "grpc");
-}
-
-/* happ:// unwrapping and the ss:// legacy-base64 form both re-enter this
-   function with content they themselves decoded. Both are driven by bytes an
-   untrusted subscription panel supplied, so a crafted chain that keeps
-   re-decoding into another instance of itself needs a hard stop rather than
-   riding the C stack down. */
-#define CFG_PARSE_LINK_MAX_DEPTH 8
-
-static cfg_status_t cfg_parse_link_inner(const char *uri, vl_server_t *out, int depth) {
-    if (!uri || !out) return CFG_ERR_BAD_ARG;
-    memset(out, 0, sizeof *out);
-    if (depth > CFG_PARSE_LINK_MAX_DEPTH) return CFG_ERR_SCHEME;
-
-/* happ://crypt... unwraps to vless/socks/http before scheme match */
-    if (strncmp(uri, "happ://", 7) == 0 || strncmp(uri, "HAPP://", 7) == 0) {
-        char plain[8192];
-        char line[1024];
-        const char *p, *end, *nl;
-        if (happ_unwrap(uri, plain, sizeof plain) != 0)
-            return CFG_ERR_SCHEME;
-        if (cfg_parse_link_inner(plain, out, depth + 1) == CFG_OK)
-            return CFG_OK;
-        p = plain;
-        end = plain + strlen(plain);
-        while (p < end) {
-            size_t llen;
-            nl = memchr(p, '\n', (size_t)(end - p));
-            llen = nl ? (size_t)(nl - p) : (size_t)(end - p);
-            while (llen > 0 && (p[llen - 1] == '\r' || p[llen - 1] == ' '))
-                llen--;
-            if (llen > 0 && llen < sizeof line) {
-                memcpy(line, p, llen);
-                line[llen] = '\0';
-                if (cfg_parse_link_inner(line, out, depth + 1) == CFG_OK)
-                    return CFG_OK;
-            }
-            if (!nl) break;
-            p = nl + 1;
-        }
-        return CFG_ERR_SCHEME;
-    }
-
-    const char *p = uri;
-    vl_proto_t proto = VL_PROTO_VLESS;
-    size_t slen = 0;
-
-    if (strncmp(p, "vless://", 8) == 0) {
-        proto = VL_PROTO_VLESS;
-        slen = 8;
-    } else if (strncmp(p, "socks5://", 9) == 0) {
-        proto = VL_PROTO_SOCKS5;
-        slen = 9;
-    } else if (strncmp(p, "http://", 7) == 0) {
-        proto = VL_PROTO_HTTP;
-        slen = 7;
-    } else if (strncmp(p, "https://", 8) == 0) {
-        proto = VL_PROTO_HTTPS;
-        slen = 8;
-    } else if (strncmp(p, "trojan://", 9) == 0) {
-        proto = VL_PROTO_TROJAN;
-        slen = 9;
-    } else if (strncmp(p, "ss://", 5) == 0) {
-        proto = VL_PROTO_SHADOWSOCKS;
-        slen = 5;
-    } else if (strncmp(p, "hysteria2://", 12) == 0) {
-        proto = VL_PROTO_HYSTERIA2;
-        slen = 12;
-    } else if (strncmp(p, "hy2://", 6) == 0) {
-        proto = VL_PROTO_HYSTERIA2;
-        slen = 6;
-    } else {
-        return CFG_ERR_SCHEME;
-    }
-    p += slen;
-    out->proto = proto;
-
-    const char *frag = strchr(p, '#');
-    const char *body_end = frag ? frag : (p + strlen(p));
-
-    if (proto == VL_PROTO_SHADOWSOCKS) {
-        const char *at_check = memchr(p, '@', (size_t)(body_end - p));
-        if (!at_check) {
-            unsigned char dec[1024];
-            size_t dec_len = 0;
-            if (b64_decode(p, (size_t)(body_end - p), dec, sizeof dec - 1, &dec_len) == 0 && dec_len > 0) {
-                dec[dec_len] = '\0';
-                char reconstituted[1280];
-                int n = frag
-                    ? snprintf(reconstituted, sizeof reconstituted, "ss://%s%s", (char *)dec, frag)
-                    : snprintf(reconstituted, sizeof reconstituted, "ss://%s", (char *)dec);
-                if (n < 0 || (size_t)n >= sizeof reconstituted) return CFG_ERR_TOO_LONG;
-                return cfg_parse_link_inner(reconstituted, out, depth + 1);
-            }
-        }
-    }
-
-    const char *at = memchr(p, '@', (size_t)(body_end - p));
-    if (at) {
-        if (proto == VL_PROTO_VLESS) {
-            if (copy_span(p, at, out->uuid, sizeof out->uuid) != 0) return CFG_ERR_TOO_LONG;
-        } else if (proto == VL_PROTO_TROJAN || proto == VL_PROTO_HYSTERIA2) {
-/* the whole userinfo is one opaque auth token, not a user:pass pair: a
-   hysteria2 password commonly contains a colon of its own */
-            char encoded_pass[sizeof out->pass];
-            if (copy_span(p, at, encoded_pass, sizeof encoded_pass) != 0 ||
-                url_percent_decode(encoded_pass, strlen(encoded_pass), out->pass, sizeof out->pass) < 0)
-                return CFG_ERR_TOO_LONG;
-        } else if (proto == VL_PROTO_SHADOWSOCKS) {
-            const char *colon = memchr(p, ':', (size_t)(at - p));
-            if (!colon) {
-                unsigned char udec[256];
-                size_t udlen = 0;
-                if (b64_decode(p, (size_t)(at - p), udec, sizeof udec - 1, &udlen) == 0 && udlen > 0) {
-                    udec[udlen] = '\0';
-                    char *uc = strchr((char *)udec, ':');
-                    if (uc) {
-                        *uc = '\0';
-                        snprintf(out->user, sizeof out->user, "%s", (char *)udec);
-                        snprintf(out->encryption, sizeof out->encryption, "%s", (char *)udec);
-                        snprintf(out->pass, sizeof out->pass, "%s", uc + 1);
-                    }
-                }
-            } else {
-                char enc_u[sizeof out->user];
-                char enc_p[sizeof out->pass];
-                if (copy_span(p, colon, enc_u, sizeof enc_u) != 0 ||
-                    copy_span(colon + 1, at, enc_p, sizeof enc_p) != 0)
-                    return CFG_ERR_TOO_LONG;
-                url_percent_decode(enc_u, strlen(enc_u), out->user, sizeof out->user);
-                snprintf(out->encryption, sizeof out->encryption, "%s", out->user);
-                url_percent_decode(enc_p, strlen(enc_p), out->pass, sizeof out->pass);
-            }
-        } else {
-            const char *colon = memchr(p, ':', (size_t)(at - p));
-            char encoded_user[sizeof out->user];
-            char encoded_pass[sizeof out->pass];
-            if (colon) {
-                if (copy_span(p, colon, encoded_user, sizeof encoded_user) != 0 ||
-                    copy_span(colon + 1, at, encoded_pass, sizeof encoded_pass) != 0)
-                    return CFG_ERR_TOO_LONG;
-                if (url_percent_decode(encoded_user, strlen(encoded_user), out->user,
-                                       sizeof out->user) < 0 ||
-                    url_percent_decode(encoded_pass, strlen(encoded_pass), out->pass,
-                                       sizeof out->pass) < 0)
-                    return CFG_ERR_TOO_LONG;
-            } else {
-                if (copy_span(p, at, encoded_user, sizeof encoded_user) != 0 ||
-                    url_percent_decode(encoded_user, strlen(encoded_user), out->user,
-                                       sizeof out->user) < 0)
-                    return CFG_ERR_TOO_LONG;
-            }
-        }
-        p = at + 1;
-    } else {
-        if (proto == VL_PROTO_VLESS || proto == VL_PROTO_TROJAN ||
-            proto == VL_PROTO_SHADOWSOCKS || proto == VL_PROTO_HYSTERIA2)
-            return CFG_ERR_NO_AT;
-    }
-
-    const char *hostport = p;
-    const char *qmark = memchr(hostport, '?', (size_t)(body_end - hostport));
-    const char *hp_end = qmark ? qmark : body_end;
-
-/* stop before '/' too so grpc and ws links do not spill into the port */
-    const char *slash = memchr(hostport, '/', (size_t)(hp_end - hostport));
-    if (slash) hp_end = slash;
-
-    const char *colon = NULL;
-    if (*hostport == '[') {
-        const char *rb = memchr(hostport, ']', (size_t)(hp_end - hostport));
-        if (!rb) return CFG_ERR_NO_HOST;
-        if (copy_span(hostport + 1, rb, out->host, sizeof out->host) != 0)
-            return CFG_ERR_TOO_LONG;
-        if (rb + 1 < hp_end && rb[1] == ':') colon = rb + 1;
-    } else {
-        for (const char *c = hp_end - 1; c >= hostport; --c) {
-            if (*c == ':') { colon = c; break; }
-        }
-        if (!colon) return CFG_ERR_BAD_PORT;
-        if (copy_span(hostport, colon, out->host, sizeof out->host) != 0)
-            return CFG_ERR_TOO_LONG;
-    }
-    if (out->host[0] == '\0') return CFG_ERR_NO_HOST;
-    if (!colon) return CFG_ERR_BAD_PORT;
-
-    unsigned long port = 0;
-    const char *pp = colon + 1;
-    if (pp >= hp_end) return CFG_ERR_BAD_PORT;
-/* hysteria2 alone carries a "multi-port" hop list in place of one port
-   (host:123,5000-6000): the go core dials a random port from it and hops */
-    if (proto == VL_PROTO_HYSTERIA2 &&
-        (memchr(pp, ',', (size_t)(hp_end - pp)) || memchr(pp, '-', (size_t)(hp_end - pp)))) {
-        uint16_t first_port = 0;
-        if (cfg_parse_port_hop(pp, (size_t)(hp_end - pp), out->port_hop,
-                               sizeof out->port_hop, &first_port) != 0)
-            return CFG_ERR_BAD_PORT;
-        out->port = first_port;
-    } else {
-        for (; pp < hp_end; ++pp) {
-            if (*pp < '0' || *pp > '9') return CFG_ERR_BAD_PORT;
-            port = port * 10 + (unsigned long)(*pp - '0');
-            if (port > 65535) return CFG_ERR_BAD_PORT;
-        }
-        if (port == 0) return CFG_ERR_BAD_PORT;
-        out->port = (uint16_t)port;
-    }
-
-    if (qmark) parse_query(out, qmark + 1, body_end);
-
-    normalize_grpc_path(out);
-
-    if (out->sni[0] == '\0' &&
-        (out->security == VL_SEC_TLS || out->security == VL_SEC_REALITY))
-        snprintf(out->sni, sizeof out->sni, "%s", out->host);
-
-    if (out->net == VL_NET_WS && out->ws_host[0] == '\0') {
-        if (out->sni[0])
-            snprintf(out->ws_host, sizeof out->ws_host, "%s", out->sni);
-        else
-            snprintf(out->ws_host, sizeof out->ws_host, "%s", out->host);
-    }
-
-/* do not invent flow=vision: durev-style reality links omit flow and expect plain vless */
-    if (out->security == VL_SEC_REALITY && out->net == VL_NET_UNKNOWN)
-        out->net = VL_NET_TCP;
-
-    if (out->proto == VL_PROTO_HYSTERIA2) {
-/* quic carries its own tls handshake; there is no plain or reality variant */
-        out->security = VL_SEC_TLS;
-        out->net = VL_NET_TCP;
-        if (out->sni[0] == '\0') snprintf(out->sni, sizeof out->sni, "%s", out->host);
-    } else if (out->proto == VL_PROTO_TROJAN) {
-        if (out->security == VL_SEC_UNKNOWN) out->security = VL_SEC_TLS;
-        if (out->net == VL_NET_UNKNOWN) out->net = VL_NET_TCP;
-    } else if (out->proto == VL_PROTO_SHADOWSOCKS) {
-        if (out->security == VL_SEC_UNKNOWN) out->security = VL_SEC_NONE;
-        if (out->net == VL_NET_UNKNOWN) out->net = VL_NET_TCP;
-        if (!out->user[0]) snprintf(out->user, sizeof out->user, "chacha20-ietf-poly1305");
-    }
-
-    if (frag) copy_remark(frag + 1, strlen(frag + 1), out->remark, sizeof out->remark);
-
-    return CFG_OK;
-}
-
-cfg_status_t cfg_parse_link(const char *uri, vl_server_t *out) {
-    return cfg_parse_link_inner(uri, out, 0);
 }
 
 /* the blob is not nul terminated, so strstr cannot be used on it */
@@ -755,85 +442,197 @@ static int looks_like_json(const char *b, size_t n) {
     return b[i] == '{' || b[i] == '[';
 }
 
-static void parse_link_lines(const char *text, size_t len,
-                             vl_server_t *out, size_t max, size_t *count);
+void cfg_import_stats_add(cfg_import_stats_t *st, const char *what) {
+    if (!st || !what || !what[0]) return;
+    st->skipped++;
+    size_t i = 0;
+    for (; i < CFG_SKIP_KINDS && st->kinds[i].count; ++i)
+        if (strcmp(st->kinds[i].what, what) == 0) break;
+    if (i == CFG_SKIP_KINDS) {
+        st->other++;
+        return;
+    }
+    if (!st->kinds[i].count) snprintf(st->kinds[i].what, sizeof st->kinds[i].what, "%s", what);
+    st->kinds[i].count++;
+    /* keep the most common first */
+    while (i > 0 && st->kinds[i].count > st->kinds[i - 1].count) {
+        char tmp[sizeof st->kinds[0].what];
+        size_t c = st->kinds[i].count;
+        snprintf(tmp, sizeof tmp, "%s", st->kinds[i].what);
+        st->kinds[i] = st->kinds[i - 1];
+        snprintf(st->kinds[i - 1].what, sizeof st->kinds[i - 1].what, "%s", tmp);
+        st->kinds[i - 1].count = c;
+        --i;
+    }
+}
 
-/* a panel that answers with its own web page still carries the nodes inside the
-   markup, wrapped in quotes and tags. only the schemes that are always a node
-   are picked out of a line: an http(s) url inside a page is a page link far
-   more often than it is a CONNECT proxy */
-static int embedded_link_start(const char *p) {
-    return strncmp(p, "vless://", 8) == 0 ||
-           strncmp(p, "socks5://", 9) == 0 ||
-           strncmp(p, "happ://", 7) == 0 ||
-           strncmp(p, "HAPP://", 7) == 0 ||
-           strncmp(p, "trojan://", 9) == 0 ||
-           strncmp(p, "ss://", 5) == 0;
+void cfg_import_skip(cfg_import_stats_t *st, vl_server_t *out, size_t max,
+                     size_t *count, const char *remark, const char *host,
+                     uint16_t port, const char *what) {
+    vl_server_t row;
+    cfg_import_stats_add(st, what);
+    if (!st || !st->keep_unsupported || !out || !count || *count >= max) return;
+    if ((!remark || !remark[0]) && (!host || !host[0])) return;
+    /* the caller may pass fields that live in out[*count] itself */
+    memset(&row, 0, sizeof row);
+    row.proto = VL_PROTO_UNSUPPORTED;
+    row.port = port;
+    snprintf(row.host, sizeof row.host, "%s", host ? host : "");
+    snprintf(row.unsupported, sizeof row.unsupported, "%s",
+             what && what[0] ? what : "unsupported");
+    if (remark && remark[0])
+        snprintf(row.remark, sizeof row.remark, "%s", remark);
+    else if (port)
+        snprintf(row.remark, sizeof row.remark, "%.120s:%u", row.host, (unsigned)port);
+    else
+        snprintf(row.remark, sizeof row.remark, "%s", row.host);
+    out[(*count)++] = row;
+}
+
+void cfg_import_stats_text(const cfg_import_stats_t *st, char *out, size_t cap) {
+    if (!out || !cap) return;
+    out[0] = '\0';
+    if (!st || !st->skipped) return;
+    size_t off = 0;
+    int n = snprintf(out, cap, "skipped %zu:", st->skipped);
+    if (n < 0 || (size_t)n >= cap) return;
+    off = (size_t)n;
+    size_t other = st->other;
+    for (size_t i = 0; i < CFG_SKIP_KINDS && st->kinds[i].count; ++i) {
+        if (i >= 4) {
+            other += st->kinds[i].count;
+            continue;
+        }
+        n = snprintf(out + off, cap - off, "%s %s %zu", i ? "," : "",
+                     st->kinds[i].what, st->kinds[i].count);
+        if (n < 0 || (size_t)n >= cap - off) return;
+        off += (size_t)n;
+    }
+    if (other) {
+        n = snprintf(out + off, cap - off, ", other %zu", other);
+        if (n > 0 && (size_t)n < cap - off) off += (size_t)n;
+    }
+}
+
+static void parse_link_lines(const char *text, size_t len, vl_server_t *out,
+                             size_t max, size_t *count, cfg_import_stats_t *st);
+
+/* the schemes a line can carry a node in; anything else is prose */
+static int node_scheme_at(const char *p) {
+    static const char *const schemes[] = {
+        "vless://", "vmess://", "trojan://", "ss://", "ssr://", "socks://",
+        "socks5://", "hysteria2://", "hy2://", "hysteria://", "tuic://",
+        "wireguard://", "anytls://", "happ://", NULL
+    };
+    for (int i = 0; schemes[i]; ++i)
+        if (strncasecmp(p, schemes[i], strlen(schemes[i])) == 0) return 1;
+    return 0;
+}
+
+static void link_fields(const char *link, char *remark, size_t remark_cap,
+                        char *host, size_t host_cap, uint16_t *port);
+
+/* one link into out[*count]; a link that cannot be used is counted by why */
+static int take_link(const char *link, vl_server_t *out, size_t max, size_t *count,
+                     cfg_import_stats_t *st) {
+    char why[96];
+    char remark[256], host[256];
+    uint16_t port = 0;
+    if (*count >= max) return 0;
+    if (strncasecmp(link, "happ://", 7) == 0) {
+        char plain[8192];
+        size_t before = *count;
+        if (happ_unwrap(link, plain, sizeof plain) != 0) {
+            cfg_import_stats_add(st, "happ link that does not open");
+            return 0;
+        }
+        parse_link_lines(plain, strlen(plain), out, max, count, st);
+        return *count > before;
+    }
+    cfg_status_t r = cfg_parse_link_ex(link, &out[*count], why, sizeof why);
+    if (r == CFG_OK) {
+        vl_server_t *s = &out[*count];
+        if (cfg_validate_server(s, why, sizeof why)) {
+            (*count)++;
+            return 1;
+        }
+        cfg_import_skip(st, out, max, count, s->remark, s->host, s->port, why);
+    } else if (r == CFG_ERR_UNSUPPORTED || node_scheme_at(link)) {
+        link_fields(link, remark, sizeof remark, host, sizeof host, &port);
+        cfg_import_skip(st, out, max, count, remark, host, port,
+                        r == CFG_ERR_UNSUPPORTED ? why : "malformed link");
+    }
+    return 0;
 }
 
 static int link_token_char(char c) {
-    return !(c == '"' || c == '\'' || c == '<' || c == '>' || c == '\\' ||
+    return !(c == '"' || c == '\'' || c == '<' || c == '>' || c == '\\' || c == '`' ||
              c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\0');
 }
 
-static void scan_embedded_links(const char *line, vl_server_t *out,
-                                size_t max, size_t *count) {
-    char token[4096];
-    size_t i = 0;
+/* a panel page, a telegram post or a line of several links carries the nodes
+   between quotes, tags and prose; they are picked out one by one */
+static void scan_embedded_links(const char *line, vl_server_t *out, size_t max,
+                                size_t *count, cfg_import_stats_t *st) {
+    char token[8192];
     size_t n = strlen(line);
-    while (i < n && *count < max) {
-        size_t j;
-        if (!embedded_link_start(line + i)) { ++i; continue; }
-        j = i;
+    for (size_t i = 0; i < n && *count < max; ) {
+        if (!node_scheme_at(line + i) || (i > 0 && isalnum((unsigned char)line[i - 1]))) {
+            ++i;
+            continue;
+        }
+        size_t j = i;
         while (j < n && link_token_char(line[j])) ++j;
-        if (j - i > 0 && j - i < sizeof token) {
+        if (j - i < sizeof token) {
             memcpy(token, line + i, j - i);
             token[j - i] = '\0';
-            if (token[0] == 'h' || token[0] == 'H') {
-                char plain[8192];
-                if (happ_unwrap(token, plain, sizeof plain) == 0)
-                    parse_link_lines(plain, strlen(plain), out, max, count);
-            } else if (cfg_parse_link(token, &out[*count]) == CFG_OK &&
-                       cfg_validate_server(&out[*count], NULL, 0)) {
-                (*count)++;
-            }
+            (void)take_link(token, out, max, count, st);
         }
         i = j > i ? j : i + 1;
     }
 }
 
-static void parse_link_lines(const char *text, size_t len,
-                             vl_server_t *out, size_t max, size_t *count) {
+/* panels write the remark unencoded ("#Hong Kong 🇭🇰"), so spaces after the
+   '#' stay in the name unless another link starts there */
+static int whole_line_link(const char *l, size_t len) {
+    if (!node_scheme_at(l)) return 0;
+    const char *hash = memchr(l, '#', len);
+    size_t head = hash ? (size_t)(hash - l) : len;
+    if (memchr(l, ' ', head) || memchr(l, '\t', head)) return 0;
+    for (size_t i = head; i + 1 < len; ++i)
+        if ((l[i] == ' ' || l[i] == '\t') && node_scheme_at(l + i + 1)) return 0;
+    return 1;
+}
+
+static void parse_link_lines(const char *text, size_t len, vl_server_t *out,
+                             size_t max, size_t *count, cfg_import_stats_t *st) {
     const char *p = text;
     const char *end = text + len;
-    char line[8192]; /* feeds often append long xhttp metadata to each link */
+    char line[8192]; /* feeds append long xhttp metadata to each link */
 
     while (p < end && *count < max) {
-        const char *nl = memchr(p, '\n', (size_t)(end - p));
-        const char *line_end = nl ? nl : end;
-        const char *le = line_end;
-        if (le > p && le[-1] == '\r') --le;
-
-        size_t llen = (size_t)(le - p);
+        const char *nl = p;
+        while (nl < end && *nl != '\n' && *nl != '\r') ++nl;
+        size_t llen = (size_t)(nl - p);
+        if (llen >= sizeof line && memmem_ascii(p, llen, "://"))
+            cfg_import_stats_add(st, "link too long");
         if (llen > 0 && llen < sizeof line) {
-            size_t before = *count;
             memcpy(line, p, llen);
             line[llen] = '\0';
-/* expand happ lines into one or many nodes */
-            if ((strncmp(line, "happ://", 7) == 0 ||
-                 strncmp(line, "HAPP://", 7) == 0)) {
-                char plain[8192];
-                if (happ_unwrap(line, plain, sizeof plain) == 0)
-                    parse_link_lines(plain, strlen(plain), out, max, count);
-            } else if (cfg_parse_link(line, &out[*count]) == CFG_OK &&
-                       cfg_validate_server(&out[*count], NULL, 0)) {
-                (*count)++;
-            }
-            if (*count == before)
-                scan_embedded_links(line, out, max, count);
+            const char *l = line;
+            if ((unsigned char)l[0] == 0xEF && (unsigned char)l[1] == 0xBB && (unsigned char)l[2] == 0xBF)
+                l += 3;
+            while (*l == ' ' || *l == '\t') ++l;
+            /* a whole line that is one link keeps characters the embedded scan
+               would end a token at */
+            size_t tail = strlen(l);
+            while (tail && (l[tail - 1] == ' ' || l[tail - 1] == '\t')) --tail;
+            if (whole_line_link(l, tail))
+                (void)take_link(l, out, max, count, st);
+            else if (*l != '#' || strstr(l, "://"))
+                scan_embedded_links(l, out, max, count, st);
         }
-        if (!nl) break;
-        p = nl + 1;
+        p = nl < end ? nl + 1 : end;
     }
 }
 
@@ -867,8 +666,8 @@ const char *cfg_reject_reason(const char *blob, size_t blob_len,
 /* a page whose only offer is a link back to itself is not a subscription, and
    following it again would just fetch the same page */
         if (source_url && strcmp(target, source_url) == 0)
-            return "this address only hands back its own link: the provider has "
-                   "not published a subscription feed behind it";
+            return "this address only hands back its own link instead of a "
+                   "subscription feed";
     } else if (memmem_ascii(blob, blob_len, "happ://crypt5/") ||
                memmem_ascii(blob, blob_len, "HAPP://crypt5/")) {
         return "the happ crypt5 bundle on this page could not be opened: it is "
@@ -887,12 +686,20 @@ const char *cfg_reject_reason(const char *blob, size_t blob_len,
 
 #include "third_party/cJSON.h"
 
+static const cJSON *jobj(const cJSON *obj, const char *key) {
+    const cJSON *v = cJSON_IsObject(obj) ? cJSON_GetObjectItemCaseSensitive(obj, key) : NULL;
+    return cJSON_IsObject(v) ? v : NULL;
+}
+
+static const char *jstr(const cJSON *obj, const char *key) {
+    const cJSON *v = cJSON_IsObject(obj) ? cJSON_GetObjectItemCaseSensitive(obj, key) : NULL;
+    return cJSON_IsString(v) && v->valuestring ? v->valuestring : NULL;
+}
+
 static int jstr_copy(const cJSON *obj, const char *key, char *dst, size_t cap) {
-    const cJSON *v;
-    if (!obj || !key || !dst || cap == 0) return -1;
-    v = cJSON_GetObjectItemCaseSensitive(obj, key);
-    if (!cJSON_IsString(v) || !v->valuestring) return -1;
-    snprintf(dst, cap, "%s", v->valuestring);
+    const char *v = jstr(obj, key);
+    if (!v || !dst || cap == 0) return -1;
+    snprintf(dst, cap, "%s", v);
     return 0;
 }
 
@@ -903,36 +710,16 @@ static int jstr_copy_any(const cJSON *obj, char *dst, size_t cap,
     return -1;
 }
 
-/* shortid may be a hex string or an array of candidates; keep the first */
-static void j_copy_short_id_key(const cJSON *reality, const char *key,
-                                char *dst, size_t cap) {
-    const cJSON *sid;
-    if (!reality || !key || !dst || cap == 0) return;
-    sid = cJSON_GetObjectItemCaseSensitive(reality, key);
-    if (cJSON_IsString(sid) && sid->valuestring) {
-        snprintf(dst, cap, "%s", sid->valuestring);
-        return;
-    }
-    if (cJSON_IsArray(sid) && cJSON_GetArraySize(sid) > 0) {
-        const cJSON *first = cJSON_GetArrayItem(sid, 0);
-        if (cJSON_IsString(first) && first->valuestring)
-            snprintf(dst, cap, "%s", first->valuestring);
-    }
-}
-
-static void j_copy_short_id(const cJSON *reality, char *dst, size_t cap) {
-    j_copy_short_id_key(reality, "shortId", dst, cap);
-}
-
-/* sing-box spells it short_id, xray shortId, and a hand-merged config can carry
-   either */
-static void j_copy_short_id_any(const cJSON *reality, char *dst, size_t cap) {
-    j_copy_short_id_key(reality, "short_id", dst, cap);
-    if (dst[0] == '\0') j_copy_short_id_key(reality, "shortId", dst, cap);
+/* a short id, a host list or an alpn list is a string or an array of them;
+   the first one is what a single connection uses */
+static void jstr_first(const cJSON *obj, const char *key, char *dst, size_t cap) {
+    const cJSON *v = cJSON_IsObject(obj) ? cJSON_GetObjectItemCaseSensitive(obj, key) : NULL;
+    if (cJSON_IsArray(v) && cJSON_GetArraySize(v) > 0) v = cJSON_GetArrayItem(v, 0);
+    if (cJSON_IsString(v) && v->valuestring && cap) snprintf(dst, cap, "%s", v->valuestring);
 }
 
 static int j_port(const cJSON *obj, const char *key, uint16_t *out) {
-    const cJSON *v = cJSON_GetObjectItemCaseSensitive(obj, key);
+    const cJSON *v = cJSON_IsObject(obj) ? cJSON_GetObjectItemCaseSensitive(obj, key) : NULL;
     double n;
     if (!out) return -1;
     if (cJSON_IsNumber(v)) {
@@ -949,22 +736,81 @@ static int j_port(const cJSON *obj, const char *key, uint16_t *out) {
     return 0;
 }
 
-/* both formats name the same wire transports, and each has spelled some of them
-   more than one way across versions */
-static void json_set_network(vl_server_t *s, const char *network) {
-    if (strcmp(network, "tcp") == 0 || strcmp(network, "raw") == 0)
-        s->net = VL_NET_TCP;
-    else if (strcmp(network, "ws") == 0 || strcmp(network, "websocket") == 0)
-        s->net = VL_NET_WS;
-    else if (strcmp(network, "xhttp") == 0 || strcmp(network, "splithttp") == 0)
-        s->net = VL_NET_XHTTP;
-    else if (strcmp(network, "grpc") == 0)
-        s->net = VL_NET_GRPC;
-    else if (strcmp(network, "http") == 0 || strcmp(network, "h2") == 0 ||
-             strcmp(network, "httpupgrade") == 0)
-        s->net = VL_NET_HTTP;
-    else
-        s->net = VL_NET_UNKNOWN;
+static int host_text_ok(const char *h) {
+    if (!h[0]) return 0;
+    for (; *h; ++h)
+        if (!isalnum((unsigned char)*h) && *h != '.' && *h != '-' && *h != ':' &&
+            *h != '_')
+            return 0;
+    return 1;
+}
+
+/* the name, host and port of a link senko cannot read, for its placeholder row.
+   vmess carries them in a base64 json body, every other scheme in the
+   authority and the fragment. fields that do not look right stay empty */
+static void link_fields(const char *link, char *remark, size_t remark_cap,
+                        char *host, size_t host_cap, uint16_t *port) {
+    const char *body = strstr(link, "://");
+    remark[0] = '\0';
+    host[0] = '\0';
+    *port = 0;
+    if (!body) return;
+    body += 3;
+    if (strncasecmp(link, "vmess://", 8) == 0) {
+        unsigned char plain[4096];
+        size_t n = 0;
+        size_t len = strcspn(body, "#?");
+        if (b64_decode(body, len, plain, sizeof plain - 1, &n) == 0 && n > 0) {
+            cJSON *root = cJSON_ParseWithLength((const char *)plain, n);
+            if (root) {
+                (void)jstr_copy(root, "ps", remark, remark_cap);
+                (void)jstr_copy(root, "add", host, host_cap);
+                (void)j_port(root, "port", port);
+                cJSON_Delete(root);
+                if (!host_text_ok(host)) host[0] = '\0';
+                return;
+            }
+        }
+    }
+    const char *hash = strchr(body, '#');
+    if (hash && hash[1] &&
+        url_percent_decode(hash + 1, strlen(hash + 1), remark, remark_cap) < 0)
+        remark[0] = '\0';
+    size_t auth_len = strcspn(body, "/?#");
+    const char *auth = body;
+    for (size_t i = 0; i < auth_len; ++i)
+        if (body[i] == '@') auth = body + i + 1;
+    auth_len -= (size_t)(auth - body);
+    const char *colon = NULL;
+    const char *hs = auth, *he = auth + auth_len;
+    if (auth_len && auth[0] == '[') {
+        const char *close = memchr(auth, ']', auth_len);
+        if (!close) return;
+        hs = auth + 1;
+        he = close;
+        if (close + 1 < auth + auth_len && close[1] == ':') colon = close + 1;
+    } else {
+        for (const char *c = auth; c < auth + auth_len; ++c)
+            if (*c == ':') colon = c;
+        if (colon) he = colon;
+    }
+    if ((size_t)(he - hs) >= host_cap) return;
+    memcpy(host, hs, (size_t)(he - hs));
+    host[he - hs] = '\0';
+    if (!host_text_ok(host)) {
+        host[0] = '\0';
+        return;
+    }
+    if (colon) {
+        char digits[8];
+        size_t dn = (size_t)(auth + auth_len - colon - 1);
+        char *end = NULL;
+        if (dn == 0 || dn >= sizeof digits) return;
+        memcpy(digits, colon + 1, dn);
+        digits[dn] = '\0';
+        long v = strtol(digits, &end, 10);
+        if (end == digits + dn && v > 0 && v <= 65535) *port = (uint16_t)v;
+    }
 }
 
 /* sing-box gates tls and reality on their own boolean, and a block that is
@@ -975,438 +821,412 @@ static int json_flag_on(const cJSON *obj, const char *key) {
     v = cJSON_GetObjectItemCaseSensitive(obj, key);
     if (cJSON_IsBool(v)) return cJSON_IsTrue(v) ? 1 : 0;
     if (cJSON_IsNumber(v)) return v->valuedouble != 0.0;
+    if (cJSON_IsString(v) && v->valuestring)
+        return strcmp(v->valuestring, "true") == 0 || strcmp(v->valuestring, "1") == 0;
     return 0;
 }
 
-/* the defaults are the same in both formats: an absent sni follows the host,
-   and a websocket without a Host header follows the sni */
-static int json_server_finish(vl_server_t *s, const cJSON *ob,
-                              const char *remarks, int multi) {
-    char tag[128];
-
-    /* the ui keeps same-name profiles as one row and tries every endpoint, so
-       an endpoint suffix here would split one provider location into copies */
-    (void)multi;
-
-    normalize_grpc_path(s);
-
-    if (s->sni[0] == '\0' &&
-        (s->security == VL_SEC_TLS || s->security == VL_SEC_REALITY))
-        snprintf(s->sni, sizeof s->sni, "%s", s->host);
-
-    if (s->net == VL_NET_WS && s->ws_host[0] == '\0') {
-        if (s->sni[0])
-            snprintf(s->ws_host, sizeof s->ws_host, "%s", s->sni);
-        else
-            snprintf(s->ws_host, sizeof s->ws_host, "%s", s->host);
-    }
-
-    tag[0] = '\0';
-    (void)jstr_copy(ob, "tag", tag, sizeof tag);
-    if (remarks && remarks[0]) {
-        size_t rl = strlen(remarks);
-        if (rl > 80) rl = 80;
-        snprintf(s->remark, sizeof s->remark, "%.*s", (int)rl, remarks);
-    } else if (tag[0]) {
-        snprintf(s->remark, sizeof s->remark, "%s", tag);
-    } else {
-        snprintf(s->remark, sizeof s->remark, "%.120s:%u",
-                 s->host, (unsigned)s->port);
-    }
-
-    if (!cfg_validate_server(s, NULL, 0)) return -1;
+/* outbounds that route rather than carry: never a node, never a skip */
+static int json_plumbing(const char *kind) {
+    static const char *const names[] = {
+        "freedom", "blackhole", "dns", "loopback", "direct", "block", "selector",
+        "urltest", "url-test", "fallback", "load-balance", NULL
+    };
+    for (int i = 0; names[i]; ++i)
+        if (strcmp(kind, names[i]) == 0) return 1;
     return 0;
 }
 
-/* this fork's own hysteria outbound shape (see go_config.c's append_outbound):
+/* this fork's own hysteria outbound shape (see senko_core_config.c's append_outbound):
    the destination sits in settings, auth and quic live under
    streamSettings.hysteriaSettings, and finalmask carries obfuscation and
    port hopping when the node uses either */
-static int xray_hysteria_to_server(const cJSON *ob, const cJSON *settings,
-                                   const char *remarks, int multi,
-                                   vl_server_t *s) {
-    const cJSON *stream = cJSON_GetObjectItemCaseSensitive(ob, "streamSettings");
-    const cJSON *hy, *ts, *fm;
+static int xray_hysteria(const cJSON *ob, const cJSON *settings, vl_server_t *s) {
+    const cJSON *stream = jobj(ob, "streamSettings");
+    const cJSON *ts, *fm;
 
-    if (jstr_copy(settings, "address", s->host, sizeof s->host) != 0) return -1;
-    if (j_port(settings, "port", &s->port) != 0) return -1;
-    if (!cJSON_IsObject(stream)) return -1;
-
-    hy = cJSON_GetObjectItemCaseSensitive(stream, "hysteriaSettings");
-    if (!cJSON_IsObject(hy) || jstr_copy(hy, "auth", s->pass, sizeof s->pass) != 0)
+    if (jstr_copy(settings, "address", s->host, sizeof s->host) != 0 ||
+        j_port(settings, "port", &s->port) != 0 ||
+        jstr_copy(jobj(stream, "hysteriaSettings"), "auth", s->pass, sizeof s->pass) != 0)
         return -1;
-
     s->proto = VL_PROTO_HYSTERIA2;
-    s->security = VL_SEC_TLS;
-    s->net = VL_NET_TCP;
 
-    ts = cJSON_GetObjectItemCaseSensitive(stream, "tlsSettings");
-    if (cJSON_IsObject(ts)) {
-        (void)jstr_copy_any(ts, s->sni, sizeof s->sni, "serverName", "server_name");
-        (void)jstr_copy(ts, "pinnedPeerCertSha256", s->pin_sha256, sizeof s->pin_sha256);
-    }
+    ts = jobj(stream, "tlsSettings");
+    (void)jstr_copy_any(ts, s->sni, sizeof s->sni, "serverName", "server_name");
+    (void)jstr_copy(ts, "pinnedPeerCertSha256", s->pin_sha256, sizeof s->pin_sha256);
 
-    fm = cJSON_GetObjectItemCaseSensitive(stream, "finalmask");
-    if (cJSON_IsObject(fm)) {
+    fm = jobj(stream, "finalmask");
+    if (fm) {
         const cJSON *udp = cJSON_GetObjectItemCaseSensitive(fm, "udp");
         if (cJSON_IsArray(udp) && cJSON_GetArraySize(udp) > 0) {
             const cJSON *mask = cJSON_GetArrayItem(udp, 0);
-            if (cJSON_IsObject(mask) &&
-                jstr_copy(mask, "type", s->obfs, sizeof s->obfs) == 0) {
-                const cJSON *mset = cJSON_GetObjectItemCaseSensitive(mask, "settings");
-                if (cJSON_IsObject(mset))
-                    (void)jstr_copy(mset, "password", s->obfs_password,
-                                   sizeof s->obfs_password);
-            }
+            if (jstr_copy(mask, "type", s->obfs, sizeof s->obfs) == 0)
+                (void)jstr_copy(jobj(mask, "settings"), "password", s->obfs_password,
+                                sizeof s->obfs_password);
         }
-        {
-            const cJSON *qp = cJSON_GetObjectItemCaseSensitive(fm, "quicParams");
-            const cJSON *hop = cJSON_IsObject(qp)
-                ? cJSON_GetObjectItemCaseSensitive(qp, "udpHop") : NULL;
-            if (cJSON_IsObject(hop))
-                (void)jstr_copy(hop, "ports", s->port_hop, sizeof s->port_hop);
-        }
+        (void)jstr_copy(jobj(jobj(fm, "quicParams"), "udpHop"), "ports",
+                        s->port_hop, sizeof s->port_hop);
     }
-
-    return json_server_finish(s, ob, remarks, multi);
+    return 0;
 }
 
-/* trojan and shadowsocks both list their one endpoint under settings.servers[0],
-   the shape xray-core gives every outbound that is not vless */
-static int xray_trojan_or_ss_to_server(const char *protocol_name,
-                                       const cJSON *ob, const cJSON *settings,
-                                       const char *remarks, int multi,
-                                       vl_server_t *s) {
-    const cJSON *servers = cJSON_GetObjectItemCaseSensitive(settings, "servers");
-    const cJSON *srv;
-    if (!cJSON_IsArray(servers) || cJSON_GetArraySize(servers) < 1) return -1;
-    srv = cJSON_GetArrayItem(servers, 0);
-    if (!cJSON_IsObject(srv)) return -1;
-    if (jstr_copy(srv, "address", s->host, sizeof s->host) != 0) return -1;
-    if (j_port(srv, "port", &s->port) != 0) return -1;
-    if (jstr_copy(srv, "password", s->pass, sizeof s->pass) != 0) return -1;
+/* xray's streamSettings, the same block for vless, trojan and shadowsocks */
+static int xray_stream(const cJSON *ob, vl_server_t *s, char *why, size_t cap) {
+    const cJSON *st = jobj(ob, "streamSettings");
+    const cJSON *tcp = jobj(st, "tcpSettings");
+    const char *net = jstr(st, "network");
+    const char *sec = jstr(st, "security");
+    char header[16] = "";
 
-    if (strcmp(protocol_name, "trojan") == 0) {
-        const cJSON *stream = cJSON_GetObjectItemCaseSensitive(ob, "streamSettings");
-        s->proto = VL_PROTO_TROJAN;
-        s->security = VL_SEC_TLS;
-        if (cJSON_IsObject(stream)) {
-            const cJSON *netj = cJSON_GetObjectItemCaseSensitive(stream, "network");
-            const cJSON *ts = cJSON_GetObjectItemCaseSensitive(stream, "tlsSettings");
-            if (cJSON_IsString(netj) && netj->valuestring &&
-                strcmp(netj->valuestring, "ws") == 0)
-                s->net = VL_NET_WS;
-            if (cJSON_IsObject(ts))
-                (void)jstr_copy_any(ts, s->sni, sizeof s->sni, "serverName", "server_name");
-            if (s->net == VL_NET_WS) {
-                const cJSON *ws = cJSON_GetObjectItemCaseSensitive(stream, "wsSettings");
-                if (cJSON_IsObject(ws))
-                    (void)jstr_copy(ws, "path", s->path, sizeof s->path);
-            }
+    if (!tcp) tcp = jobj(st, "rawSettings");
+    (void)jstr_copy(jobj(tcp, "header"), "type", header, sizeof header);
+    if (cfg_node_transport(s, net ? net : "tcp", header, why, cap) != 0) return -1;
+    /* xray's own default is none, but trojan without tls is not a node anyone
+       exports, and the share link convention is tls */
+    if (!sec) sec = s->proto == VL_PROTO_TROJAN ? "tls" : "none";
+    if (cfg_node_security(s, sec, why, cap) != 0) return -1;
+
+    if (s->security == VL_SEC_TLS) {
+        const cJSON *ts = jobj(st, "tlsSettings");
+        if (!ts) ts = jobj(st, "xtlsSettings");
+        (void)jstr_copy_any(ts, s->sni, sizeof s->sni, "serverName", "server_name");
+        (void)jstr_copy_any(ts, s->fp, sizeof s->fp, "fingerprint", "fp");
+        s->insecure = json_flag_on(ts, "allowInsecure");
+    } else if (s->security == VL_SEC_REALITY) {
+        const cJSON *rs = jobj(st, "realitySettings");
+        (void)jstr_copy_any(rs, s->sni, sizeof s->sni, "serverName", "server_name");
+        (void)jstr_copy_any(rs, s->fp, sizeof s->fp, "fingerprint", "fp");
+        (void)jstr_copy_any(rs, s->pbk, sizeof s->pbk, "publicKey", "public_key");
+        jstr_first(rs, "shortId", s->sid, sizeof s->sid);
+        if (!s->sid[0]) jstr_first(rs, "shortIds", s->sid, sizeof s->sid);
+    }
+
+    if (s->net == VL_NET_WS) {
+        const cJSON *ws = jobj(st, "wsSettings");
+        (void)jstr_copy(ws, "path", s->path, sizeof s->path);
+        if (jstr_copy_any(jobj(ws, "headers"), s->ws_host, sizeof s->ws_host, "Host", "host") != 0)
+            (void)jstr_copy(ws, "host", s->ws_host, sizeof s->ws_host);
+    } else if (s->net == VL_NET_GRPC) {
+        const cJSON *gr = jobj(st, "grpcSettings");
+        (void)jstr_copy_any(gr, s->path, sizeof s->path, "serviceName", "service_name");
+    } else if (s->net == VL_NET_HTTP) {
+        const cJSON *h2 = jobj(st, "httpSettings");
+        (void)jstr_copy(h2, "path", s->path, sizeof s->path);
+        jstr_first(h2, "host", s->ws_host, sizeof s->ws_host);
+    } else if (s->net == VL_NET_XHTTP) {
+        const cJSON *xh = jobj(st, "xhttpSettings");
+        if (!xh) xh = jobj(st, "splithttpSettings");
+        (void)jstr_copy(xh, "path", s->path, sizeof s->path);
+        (void)jstr_copy(xh, "mode", s->mode, sizeof s->mode);
+        (void)jstr_copy(xh, "host", s->ws_host, sizeof s->ws_host);
+    }
+    return 0;
+}
+
+/* the one endpoint an xray outbound names: settings.vnext[0] for vless,
+   settings.servers[0] for the rest, or the same fields flat on settings as
+   xray 25 also accepts */
+static const cJSON *xray_endpoint(const cJSON *settings, const char *list) {
+    const cJSON *a = cJSON_IsObject(settings)
+        ? cJSON_GetObjectItemCaseSensitive(settings, list) : NULL;
+    if (cJSON_IsArray(a)) {
+        const cJSON *first = cJSON_GetArraySize(a) > 0 ? cJSON_GetArrayItem(a, 0) : NULL;
+        return cJSON_IsObject(first) ? first : NULL;
+    }
+    return cJSON_IsObject(settings) ? settings : NULL;
+}
+
+/* the first user of an endpoint, or the endpoint itself in the flat form */
+static const cJSON *xray_user(const cJSON *ep) {
+    const cJSON *a = cJSON_IsObject(ep) ? cJSON_GetObjectItemCaseSensitive(ep, "users") : NULL;
+    if (cJSON_IsArray(a)) {
+        const cJSON *first = cJSON_GetArraySize(a) > 0 ? cJSON_GetArrayItem(a, 0) : NULL;
+        return cJSON_IsObject(first) ? first : NULL;
+    }
+    return ep;
+}
+
+/* 1 for a node, 0 for an outbound that is not one, -1 with why for a node
+   senko cannot read or run */
+static int xray_node(const cJSON *ob, vl_server_t *s, char *why, size_t cap) {
+    const char *proto = jstr(ob, "protocol");
+    const cJSON *settings = jobj(ob, "settings");
+    const cJSON *ep, *user;
+
+    if (!proto || json_plumbing(proto)) return 0;
+    if (strcmp(proto, "hysteria") == 0) {
+        if (xray_hysteria(ob, settings, s) != 0) goto malformed;
+        return 1;
+    }
+    if (strcmp(proto, "vless") == 0) {
+        char id[64] = "";
+        ep = xray_endpoint(settings, "vnext");
+        user = xray_user(ep);
+        s->proto = VL_PROTO_VLESS;
+        if (jstr_copy(user, "id", id, sizeof id) != 0) goto malformed;
+        cfg_node_vless_id(s, id);
+        (void)jstr_copy(user, "flow", s->flow, sizeof s->flow);
+        if (jstr_copy(user, "encryption", s->encryption, sizeof s->encryption) != 0)
+            snprintf(s->encryption, sizeof s->encryption, "none");
+    } else if (strcmp(proto, "trojan") == 0 || strcmp(proto, "shadowsocks") == 0) {
+        ep = xray_endpoint(settings, "servers");
+        if (jstr_copy(ep, "password", s->pass, sizeof s->pass) != 0) goto malformed;
+        if (proto[0] == 't') {
+            s->proto = VL_PROTO_TROJAN;
+        } else {
+            s->proto = VL_PROTO_SHADOWSOCKS;
+            cfg_node_ss_method(s, jstr(ep, "method") ? jstr(ep, "method") : "");
         }
+    } else if (strcmp(proto, "socks") == 0 || strcmp(proto, "http") == 0) {
+        ep = xray_endpoint(settings, "servers");
+        user = xray_user(ep);
+        s->proto = proto[0] == 's' ? VL_PROTO_SOCKS5 : VL_PROTO_HTTP;
+        (void)jstr_copy(user, "user", s->user, sizeof s->user);
+        (void)jstr_copy(user, "pass", s->pass, sizeof s->pass);
     } else {
-        char method[32];
-        s->proto = VL_PROTO_SHADOWSOCKS;
-        if (jstr_copy(srv, "method", method, sizeof method) == 0) {
-            snprintf(s->encryption, sizeof s->encryption, "%s", method);
-            snprintf(s->user, sizeof s->user, "%s", method);
-        }
+        snprintf(why, cap, "%.40s", proto);
+        return -1;
     }
-    return json_server_finish(s, ob, remarks, multi);
+    if (jstr_copy(ep, "address", s->host, sizeof s->host) != 0 ||
+        j_port(ep, "port", &s->port) != 0)
+        goto malformed;
+
+    if (s->proto == VL_PROTO_SOCKS5 || s->proto == VL_PROTO_HTTP) {
+        const char *sec = jstr(jobj(ob, "streamSettings"), "security");
+        if (sec && strcmp(sec, "tls") == 0) {
+            if (s->proto == VL_PROTO_SOCKS5) {
+                snprintf(why, cap, "socks over tls");
+                return -1;
+            }
+            s->proto = VL_PROTO_HTTPS;
+        }
+        return 1;
+    }
+    return xray_stream(ob, s, why, cap) == 0 ? 1 : -1;
+
+malformed:
+    snprintf(why, cap, "malformed profile entry");
+    return -1;
 }
 
-static int xray_outbound_to_server(const cJSON *ob, const char *remarks,
-                                   int multi, vl_server_t *s) {
-    const cJSON *proto, *settings, *stream, *vnext, *user, *netj, *secj;
-    const char *network = "tcp";
-    const char *security = "none";
-    const char *protocol_name;
-
-    if (!ob || !s) return -1;
-    memset(s, 0, sizeof *s);
-
-    proto = cJSON_GetObjectItemCaseSensitive(ob, "protocol");
-    if (!cJSON_IsString(proto) || !proto->valuestring) return -1;
-    protocol_name = proto->valuestring;
-
-    settings = cJSON_GetObjectItemCaseSensitive(ob, "settings");
-    if (!cJSON_IsObject(settings)) return -1;
-
-    if (strcmp(protocol_name, "trojan") == 0 || strcmp(protocol_name, "shadowsocks") == 0)
-        return xray_trojan_or_ss_to_server(protocol_name, ob, settings, remarks, multi, s);
-
-    if (strcmp(protocol_name, "hysteria") == 0)
-        return xray_hysteria_to_server(ob, settings, remarks, multi, s);
-
-    if (strcmp(protocol_name, "vless") != 0) return -1;
-    s->proto = VL_PROTO_VLESS;
-
-    vnext = cJSON_GetObjectItemCaseSensitive(settings, "vnext");
-    if (!cJSON_IsArray(vnext) || cJSON_GetArraySize(vnext) < 1) return -1;
-    vnext = cJSON_GetArrayItem(vnext, 0);
-    if (!cJSON_IsObject(vnext)) return -1;
-
-    if (jstr_copy(vnext, "address", s->host, sizeof s->host) != 0) return -1;
-    if (j_port(vnext, "port", &s->port) != 0) return -1;
-
-    user = cJSON_GetObjectItemCaseSensitive(vnext, "users");
-    if (!cJSON_IsArray(user) || cJSON_GetArraySize(user) < 1) return -1;
-    user = cJSON_GetArrayItem(user, 0);
-    if (!cJSON_IsObject(user)) return -1;
-    if (jstr_copy(user, "id", s->uuid, sizeof s->uuid) != 0) return -1;
-    (void)jstr_copy(user, "flow", s->flow, sizeof s->flow);
-    if (jstr_copy(user, "encryption", s->encryption, sizeof s->encryption) != 0)
-        snprintf(s->encryption, sizeof s->encryption, "%s", "none");
-
-    stream = cJSON_GetObjectItemCaseSensitive(ob, "streamSettings");
-    if (cJSON_IsObject(stream)) {
-        netj = cJSON_GetObjectItemCaseSensitive(stream, "network");
-        if (cJSON_IsString(netj) && netj->valuestring) network = netj->valuestring;
-        secj = cJSON_GetObjectItemCaseSensitive(stream, "security");
-        if (cJSON_IsString(secj) && secj->valuestring) security = secj->valuestring;
+/* sing-box's transport object: ws, grpc, http and httpupgrade carry their own
+   fields, and there is no tcp header disguise */
+static int singbox_transport(const cJSON *ob, vl_server_t *s, char *why, size_t cap) {
+    const cJSON *tr = jobj(ob, "transport");
+    const char *type = jstr(tr, "type");
+    if (cfg_node_transport(s, type ? type : "tcp", NULL, why, cap) != 0) return -1;
+    if (s->net == VL_NET_WS) {
+        (void)jstr_copy(tr, "path", s->path, sizeof s->path);
+        const cJSON *hdr = jobj(tr, "headers");
+        jstr_first(hdr, "Host", s->ws_host, sizeof s->ws_host);
+        if (!s->ws_host[0]) jstr_first(hdr, "host", s->ws_host, sizeof s->ws_host);
+    } else if (s->net == VL_NET_GRPC) {
+        (void)jstr_copy_any(tr, s->path, sizeof s->path, "service_name", "serviceName");
+    } else if (s->net == VL_NET_HTTP) {
+        (void)jstr_copy(tr, "path", s->path, sizeof s->path);
+        jstr_first(tr, "host", s->ws_host, sizeof s->ws_host);
     }
+    return 0;
+}
 
-    json_set_network(s, network);
-
-    if (strcmp(security, "reality") == 0)
-        s->security = VL_SEC_REALITY;
-    else if (strcmp(security, "tls") == 0)
-        s->security = VL_SEC_TLS;
-    else if (strcmp(security, "none") == 0 || security[0] == '\0')
+/* sing-box writes tls as its own block with an enabled flag, reality nested
+   inside it */
+static void singbox_tls(const cJSON *ob, vl_server_t *s) {
+    const cJSON *tls = jobj(ob, "tls");
+    const cJSON *reality = jobj(tls, "reality");
+    if (!tls) {
+        s->security = s->proto == VL_PROTO_TROJAN ? VL_SEC_TLS : VL_SEC_NONE;
+        return;
+    }
+    if (!json_flag_on(tls, "enabled")) {
         s->security = VL_SEC_NONE;
+        return;
+    }
+    s->security = json_flag_on(reality, "enabled") ? VL_SEC_REALITY : VL_SEC_TLS;
+    (void)jstr_copy_any(tls, s->sni, sizeof s->sni, "server_name", "serverName");
+    s->insecure = json_flag_on(tls, "insecure");
+    if (json_flag_on(jobj(tls, "utls"), "enabled"))
+        (void)jstr_copy(jobj(tls, "utls"), "fingerprint", s->fp, sizeof s->fp);
+    if (s->security == VL_SEC_REALITY) {
+        (void)jstr_copy_any(reality, s->pbk, sizeof s->pbk, "public_key", "publicKey");
+        jstr_first(reality, "short_id", s->sid, sizeof s->sid);
+        if (!s->sid[0]) jstr_first(reality, "shortId", s->sid, sizeof s->sid);
+    }
+}
+
+/* sing-box's server_ports ("20000:30000" or a list of them) in the hop list
+   form share links use ("20000-30000,443") */
+static int singbox_port_hop(const cJSON *ob, vl_server_t *s) {
+    const cJSON *v = cJSON_GetObjectItemCaseSensitive(ob, "server_ports");
+    char list[sizeof s->port_hop];
+    size_t n = 0;
+    uint16_t first = 0;
+    int i, count;
+    if (!v) return 0;
+    count = cJSON_IsArray(v) ? cJSON_GetArraySize(v) : 1;
+    for (i = 0; i < count; ++i) {
+        const cJSON *e = cJSON_IsArray(v) ? cJSON_GetArrayItem(v, i) : v;
+        if (!cJSON_IsString(e) || !e->valuestring) return -1;
+        for (const char *c = e->valuestring; *c; ++c) {
+            if (n + 2 >= sizeof list) return -1;
+            list[n++] = *c == ':' ? '-' : *c;
+        }
+        if (i + 1 < count) list[n++] = ',';
+    }
+    list[n] = '\0';
+    if (cfg_parse_port_hop(list, n, s->port_hop, sizeof s->port_hop, &first) != 0)
+        return -1;
+    if (!s->port) s->port = first;
+    return 0;
+}
+
+static int singbox_node(const cJSON *ob, vl_server_t *s, char *why, size_t cap) {
+    const char *type = jstr(ob, "type");
+    if (!type || json_plumbing(type)) return 0;
+
+    if (strcmp(type, "vless") == 0) {
+        char id[64] = "";
+        s->proto = VL_PROTO_VLESS;
+        if (jstr_copy(ob, "uuid", id, sizeof id) != 0) goto malformed;
+        cfg_node_vless_id(s, id);
+        (void)jstr_copy(ob, "flow", s->flow, sizeof s->flow);
+        snprintf(s->encryption, sizeof s->encryption, "none");
+    } else if (strcmp(type, "trojan") == 0 || strcmp(type, "hysteria2") == 0) {
+        s->proto = type[0] == 't' ? VL_PROTO_TROJAN : VL_PROTO_HYSTERIA2;
+        if (jstr_copy(ob, "password", s->pass, sizeof s->pass) != 0) goto malformed;
+    } else if (strcmp(type, "shadowsocks") == 0) {
+        const char *plugin = jstr(ob, "plugin");
+        if (plugin && plugin[0]) {
+            snprintf(why, cap, "shadowsocks plugin %.32s", plugin);
+            return -1;
+        }
+        s->proto = VL_PROTO_SHADOWSOCKS;
+        if (jstr_copy(ob, "password", s->pass, sizeof s->pass) != 0) goto malformed;
+        cfg_node_ss_method(s, jstr(ob, "method") ? jstr(ob, "method") : "");
+    } else if (strcmp(type, "socks") == 0 || strcmp(type, "http") == 0) {
+        const char *version = jstr(ob, "version");
+        if (version && version[0] == '4') {
+            snprintf(why, cap, "socks4");
+            return -1;
+        }
+        s->proto = type[0] == 's' ? VL_PROTO_SOCKS5 : VL_PROTO_HTTP;
+        (void)jstr_copy(ob, "username", s->user, sizeof s->user);
+        (void)jstr_copy(ob, "password", s->pass, sizeof s->pass);
+    } else {
+        snprintf(why, cap, "%.40s", type);
+        return -1;
+    }
+    if (jstr_copy(ob, "server", s->host, sizeof s->host) != 0) goto malformed;
+    (void)j_port(ob, "server_port", &s->port);
+
+    switch (s->proto) {
+    case VL_PROTO_VLESS:
+    case VL_PROTO_TROJAN:
+        if (singbox_transport(ob, s, why, cap) != 0) return -1;
+        singbox_tls(ob, s);
+        break;
+    case VL_PROTO_HYSTERIA2: {
+        const cJSON *obfs = jobj(ob, "obfs");
+        singbox_tls(ob, s);
+        if (jstr_copy(obfs, "type", s->obfs, sizeof s->obfs) == 0)
+            (void)jstr_copy(obfs, "password", s->obfs_password, sizeof s->obfs_password);
+        if (singbox_port_hop(ob, s) != 0) goto malformed;
+        break;
+    }
+    case VL_PROTO_HTTP:
+        if (json_flag_on(jobj(ob, "tls"), "enabled")) s->proto = VL_PROTO_HTTPS;
+        break;
+    default:
+        break;
+    }
+    if (!s->port) goto malformed;
+    return 1;
+
+malformed:
+    snprintf(why, cap, "malformed profile entry");
+    return -1;
+}
+
+/* one xray or sing-box outbound: 1 and a usable server, 0 for plumbing, -1
+   with why for a node senko skips */
+static int json_node(const cJSON *ob, const char *remarks, vl_server_t *s,
+                     char *why, size_t cap) {
+    char tag[128] = "";
+    int r;
+    memset(s, 0, sizeof *s);
+    why[0] = '\0';
+    if (!cJSON_IsObject(ob)) return 0;
+    r = jstr(ob, "protocol") ? xray_node(ob, s, why, cap) : singbox_node(ob, s, why, cap);
+    if (r != 1) return r;
+    cfg_node_finish(s);
+
+    /* the outbounds of one profile share its name, so the app lists them as one
+       row and tries them in turn */
+    (void)jstr_copy(ob, "tag", tag, sizeof tag);
+    if (remarks && remarks[0])
+        snprintf(s->remark, sizeof s->remark, "%.80s", remarks);
+    else if (tag[0])
+        snprintf(s->remark, sizeof s->remark, "%s", tag);
     else
-        s->security = VL_SEC_UNKNOWN;
-
-    if (cJSON_IsObject(stream)) {
-        const cJSON *rs = cJSON_GetObjectItemCaseSensitive(stream, "realitySettings");
-        const cJSON *ts = cJSON_GetObjectItemCaseSensitive(stream, "tlsSettings");
-        const cJSON *ws = cJSON_GetObjectItemCaseSensitive(stream, "wsSettings");
-        const cJSON *xh = cJSON_GetObjectItemCaseSensitive(stream, "xhttpSettings");
-        const cJSON *gr = cJSON_GetObjectItemCaseSensitive(stream, "grpcSettings");
-        if (!cJSON_IsObject(xh))
-            xh = cJSON_GetObjectItemCaseSensitive(stream, "splithttpSettings");
-
-        if (s->security == VL_SEC_REALITY && cJSON_IsObject(rs)) {
-            (void)jstr_copy(rs, "publicKey", s->pbk, sizeof s->pbk);
-            j_copy_short_id(rs, s->sid, sizeof s->sid);
-            (void)jstr_copy_any(rs, s->sni, sizeof s->sni, "serverName", "server_name");
-            (void)jstr_copy_any(rs, s->fp, sizeof s->fp, "fingerprint", "fp");
-        }
-        if ((s->security == VL_SEC_TLS || s->sni[0] == '\0') && cJSON_IsObject(ts)) {
-            if (s->sni[0] == '\0')
-                (void)jstr_copy_any(ts, s->sni, sizeof s->sni, "serverName", "server_name");
-            if (s->fp[0] == '\0')
-                (void)jstr_copy_any(ts, s->fp, sizeof s->fp, "fingerprint", "fp");
-        }
-        if (s->net == VL_NET_WS && cJSON_IsObject(ws)) {
-            (void)jstr_copy(ws, "path", s->path, sizeof s->path);
-            {
-                const cJSON *hdr = cJSON_GetObjectItemCaseSensitive(ws, "headers");
-                if (cJSON_IsObject(hdr))
-                    (void)jstr_copy_any(hdr, s->ws_host, sizeof s->ws_host, "Host", "host");
-            }
-            if (s->ws_host[0] == '\0')
-                (void)jstr_copy(ws, "host", s->ws_host, sizeof s->ws_host);
-        }
-        if (s->net == VL_NET_XHTTP && cJSON_IsObject(xh)) {
-            (void)jstr_copy(xh, "path", s->path, sizeof s->path);
-            (void)jstr_copy(xh, "mode", s->mode, sizeof s->mode);
-            (void)jstr_copy(xh, "host", s->ws_host, sizeof s->ws_host);
-        }
-        if (s->net == VL_NET_GRPC && cJSON_IsObject(gr))
-            (void)jstr_copy(gr, "serviceName", s->path, sizeof s->path);
-    }
-
-    return json_server_finish(s, ob, remarks, multi);
+        snprintf(s->remark, sizeof s->remark, "%.120s:%u", s->host, (unsigned)s->port);
+    return cfg_validate_server(s, why, cap) ? 1 : -1;
 }
 
-/* sing-box names everything differently from xray: the protocol is "type", the
-   endpoint is server/server_port, the credential sits on the outbound itself,
-   and tls and transport are nested objects that carry their own enabled flags.
-   it is what every current panel and gui exports, and a feed in it used to
-   parse as no servers at all because none of the xray keys are present. trojan
-   and shadowsocks spell the same endpoint shape, just without vless's users
-   array */
-static int singbox_trojan_or_ss_to_server(const char *type_name, const cJSON *ob,
-                                          const char *remarks, int multi,
-                                          vl_server_t *s) {
-    if (jstr_copy(ob, "server", s->host, sizeof s->host) != 0) return -1;
-    if (j_port(ob, "server_port", &s->port) != 0) return -1;
-    if (jstr_copy(ob, "password", s->pass, sizeof s->pass) != 0) return -1;
-
-    if (strcmp(type_name, "trojan") == 0) {
-        const cJSON *tls = cJSON_GetObjectItemCaseSensitive(ob, "tls");
-        const cJSON *transport = cJSON_GetObjectItemCaseSensitive(ob, "transport");
-        s->proto = VL_PROTO_TROJAN;
-        s->security = VL_SEC_TLS;
-        if (cJSON_IsObject(tls))
-            (void)jstr_copy_any(tls, s->sni, sizeof s->sni, "server_name", "serverName");
-        if (cJSON_IsObject(transport)) {
-            const cJSON *tt = cJSON_GetObjectItemCaseSensitive(transport, "type");
-            if (cJSON_IsString(tt) && tt->valuestring && strcmp(tt->valuestring, "ws") == 0) {
-                s->net = VL_NET_WS;
-                (void)jstr_copy(transport, "path", s->path, sizeof s->path);
-            }
-        }
+/* the endpoint of an outbound json_node refused, for its placeholder row:
+   xray's settings (vnext, servers or flat) or sing-box's server fields */
+static void json_fields(const cJSON *ob, char *host, size_t host_cap, uint16_t *port) {
+    const cJSON *settings = jobj(ob, "settings");
+    const cJSON *ep = NULL;
+    host[0] = '\0';
+    *port = 0;
+    if (settings) {
+        ep = xray_endpoint(settings, "vnext");
+        if (!jstr(ep, "address")) ep = xray_endpoint(settings, "servers");
+        (void)jstr_copy(ep, "address", host, host_cap);
+        (void)j_port(ep, "port", port);
     } else {
-        char method[32];
-        s->proto = VL_PROTO_SHADOWSOCKS;
-        if (jstr_copy(ob, "method", method, sizeof method) == 0) {
-            snprintf(s->encryption, sizeof s->encryption, "%s", method);
-            snprintf(s->user, sizeof s->user, "%s", method);
-        }
+        (void)jstr_copy(ob, "server", host, host_cap);
+        (void)j_port(ob, "server_port", port);
     }
-    return json_server_finish(s, ob, remarks, multi);
 }
 
-/* sing-box's hysteria2 outbound: server/server_port/password sit on the
-   outbound itself, obfs is its own nested object, and tls only carries sni
-   since this fork's hysteria transport has no allowInsecure to read */
-static int singbox_hysteria2_to_server(const cJSON *ob, const char *remarks,
-                                       int multi, vl_server_t *s) {
-    const cJSON *tls, *obfs;
-
-    if (jstr_copy(ob, "server", s->host, sizeof s->host) != 0) return -1;
-    if (j_port(ob, "server_port", &s->port) != 0) return -1;
-    if (jstr_copy(ob, "password", s->pass, sizeof s->pass) != 0) return -1;
-
-    s->proto = VL_PROTO_HYSTERIA2;
-    s->security = VL_SEC_TLS;
-    s->net = VL_NET_TCP;
-
-    tls = cJSON_GetObjectItemCaseSensitive(ob, "tls");
-    if (cJSON_IsObject(tls))
-        (void)jstr_copy_any(tls, s->sni, sizeof s->sni, "server_name", "serverName");
-
-    obfs = cJSON_GetObjectItemCaseSensitive(ob, "obfs");
-    if (cJSON_IsObject(obfs) && jstr_copy(obfs, "type", s->obfs, sizeof s->obfs) == 0)
-        (void)jstr_copy(obfs, "password", s->obfs_password, sizeof s->obfs_password);
-
-    return json_server_finish(s, ob, remarks, multi);
-}
-
-static int singbox_outbound_to_server(const cJSON *ob, const char *remarks,
-                                      int multi, vl_server_t *s) {
-    const cJSON *type, *tls, *transport;
-    const char *network = "tcp";
-    const char *type_name;
-
-    if (!ob || !s) return -1;
-    type = cJSON_GetObjectItemCaseSensitive(ob, "type");
-    if (!cJSON_IsString(type) || !type->valuestring) return -1;
-    type_name = type->valuestring;
-
-    if (strcmp(type_name, "trojan") == 0 || strcmp(type_name, "shadowsocks") == 0) {
-        memset(s, 0, sizeof *s);
-        return singbox_trojan_or_ss_to_server(type_name, ob, remarks, multi, s);
-    }
-
-    if (strcmp(type_name, "hysteria2") == 0) {
-        memset(s, 0, sizeof *s);
-        return singbox_hysteria2_to_server(ob, remarks, multi, s);
-    }
-
-    if (strcmp(type_name, "vless") != 0) return -1;
-
-    memset(s, 0, sizeof *s);
-    s->proto = VL_PROTO_VLESS;
-
-    if (jstr_copy(ob, "server", s->host, sizeof s->host) != 0) return -1;
-    if (j_port(ob, "server_port", &s->port) != 0) return -1;
-    if (jstr_copy(ob, "uuid", s->uuid, sizeof s->uuid) != 0) return -1;
-    (void)jstr_copy(ob, "flow", s->flow, sizeof s->flow);
-/* sing-box has no per-user encryption field: vless over it is always none */
-    snprintf(s->encryption, sizeof s->encryption, "%s", "none");
-
-    transport = cJSON_GetObjectItemCaseSensitive(ob, "transport");
-    if (cJSON_IsObject(transport)) {
-        const cJSON *tt = cJSON_GetObjectItemCaseSensitive(transport, "type");
-        if (cJSON_IsString(tt) && tt->valuestring) network = tt->valuestring;
-    }
-    json_set_network(s, network);
-
-    tls = cJSON_GetObjectItemCaseSensitive(ob, "tls");
-    if (json_flag_on(tls, "enabled")) {
-        const cJSON *reality = cJSON_GetObjectItemCaseSensitive(tls, "reality");
-        const cJSON *utls = cJSON_GetObjectItemCaseSensitive(tls, "utls");
-        s->security = VL_SEC_TLS;
-        (void)jstr_copy_any(tls, s->sni, sizeof s->sni, "server_name", "serverName");
-        if (json_flag_on(utls, "enabled"))
-            (void)jstr_copy(utls, "fingerprint", s->fp, sizeof s->fp);
-        if (json_flag_on(reality, "enabled")) {
-            s->security = VL_SEC_REALITY;
-            (void)jstr_copy_any(reality, s->pbk, sizeof s->pbk,
-                                "public_key", "publicKey");
-            j_copy_short_id_any(reality, s->sid, sizeof s->sid);
-        }
-    } else {
-        s->security = VL_SEC_NONE;
-    }
-
-    if (cJSON_IsObject(transport)) {
-        if (s->net == VL_NET_WS || s->net == VL_NET_HTTP) {
-            (void)jstr_copy(transport, "path", s->path, sizeof s->path);
-            {
-                const cJSON *hdr = cJSON_GetObjectItemCaseSensitive(transport, "headers");
-                if (cJSON_IsObject(hdr))
-                    (void)jstr_copy_any(hdr, s->ws_host, sizeof s->ws_host,
-                                        "Host", "host");
-            }
-            if (s->ws_host[0] == '\0') {
-/* the http transport lists hosts as an array, the httpupgrade one as a string */
-                const cJSON *h = cJSON_GetObjectItemCaseSensitive(transport, "host");
-                if (cJSON_IsString(h) && h->valuestring)
-                    snprintf(s->ws_host, sizeof s->ws_host, "%s", h->valuestring);
-                else if (cJSON_IsArray(h) && cJSON_GetArraySize(h) > 0) {
-                    const cJSON *first = cJSON_GetArrayItem(h, 0);
-                    if (cJSON_IsString(first) && first->valuestring)
-                        snprintf(s->ws_host, sizeof s->ws_host, "%s", first->valuestring);
-                }
-            }
-        }
-        if (s->net == VL_NET_GRPC)
-            (void)jstr_copy_any(transport, s->path, sizeof s->path,
-                                "service_name", "serviceName");
-    }
-
-    return json_server_finish(s, ob, remarks, multi);
-}
-
-/* every proxy outbound in one feed shares the panel's single "remarks"/name;
-   count how many actually turn into servers so json_server_finish knows
-   whether it must keep them apart with a host suffix or a shared name would
-   leave the list with indistinguishable rows */
-static int json_count_proxy_outbounds(const cJSON *outbounds) {
-    const cJSON *ob;
-    vl_server_t probe;
-    int n = 0;
-    if (!cJSON_IsArray(outbounds)) return 0;
-    cJSON_ArrayForEach(ob, outbounds) {
-        if (xray_outbound_to_server(ob, NULL, 0, &probe) == 0 ||
-            singbox_outbound_to_server(ob, NULL, 0, &probe) == 0)
-            n++;
-    }
-    return n;
-}
-
-/* both formats are accepted from the same array, because a panel that exports
-   one of them still labels the file the same way */
 static void json_collect_outbounds(const cJSON *outbounds, const char *remarks,
-                                   vl_server_t *out, size_t max, size_t *count) {
+                                   vl_server_t *out, size_t max, size_t *count,
+                                   cfg_import_stats_t *st) {
     const cJSON *ob;
-    int multi;
     if (!cJSON_IsArray(outbounds) || !out || !count) return;
-    multi = json_count_proxy_outbounds(outbounds) > 1;
     cJSON_ArrayForEach(ob, outbounds) {
-        if (*count >= max) return;
-        if (xray_outbound_to_server(ob, remarks, multi, &out[*count]) == 0 ||
-            singbox_outbound_to_server(ob, remarks, multi, &out[*count]) == 0)
+        char why[96];
+        if (*count >= max) break;
+        int r = json_node(ob, remarks, &out[*count], why, sizeof why);
+        if (r == 1) {
             (*count)++;
+        } else if (r < 0) {
+            char host[256] = "";
+            uint16_t port = 0;
+            json_fields(ob, host, sizeof host, &port);
+            cfg_import_skip(st, out, max, count,
+                            remarks && remarks[0] ? remarks : jstr(ob, "tag"),
+                            host, port, why[0] ? why : "malformed profile entry");
+        }
     }
+}
+
+/* a profile is an xray config ("outbounds", named by "remarks") or a sing-box
+   one ("outbounds", plus wireguard under "endpoints" since 1.11) */
+static void json_collect_profile(const cJSON *profile, vl_server_t *out, size_t max,
+                                 size_t *count, cfg_import_stats_t *st) {
+    char remarks[256] = "";
+    (void)jstr_copy(profile, "remarks", remarks, sizeof remarks);
+    json_collect_outbounds(cJSON_GetObjectItemCaseSensitive(profile, "outbounds"),
+                           remarks, out, max, count, st);
+    json_collect_outbounds(cJSON_GetObjectItemCaseSensitive(profile, "endpoints"),
+                           remarks, out, max, count, st);
 }
 
 static int parse_xray_json(const char *blob, size_t blob_len,
-                           vl_server_t *out, size_t max, size_t *count) {
+                           vl_server_t *out, size_t max, size_t *count,
+                           cfg_import_stats_t *st) {
     cJSON *root;
     if (!blob || !out || !count || max == 0) return -1;
 
@@ -1416,23 +1236,11 @@ static int parse_xray_json(const char *blob, size_t blob_len,
     if (cJSON_IsArray(root)) {
         const cJSON *item;
         cJSON_ArrayForEach(item, root) {
-            const cJSON *outbounds;
-            char remarks[256];
             if (*count >= max) break;
-            if (!cJSON_IsObject(item)) continue;
-            remarks[0] = '\0';
-            (void)jstr_copy(item, "remarks", remarks, sizeof remarks);
-            outbounds = cJSON_GetObjectItemCaseSensitive(item, "outbounds");
-            if (cJSON_IsArray(outbounds))
-                json_collect_outbounds(outbounds, remarks, out, max, count);
+            if (cJSON_IsObject(item)) json_collect_profile(item, out, max, count, st);
         }
     } else if (cJSON_IsObject(root)) {
-        const cJSON *outbounds = cJSON_GetObjectItemCaseSensitive(root, "outbounds");
-        char remarks[256];
-        remarks[0] = '\0';
-        (void)jstr_copy(root, "remarks", remarks, sizeof remarks);
-        if (cJSON_IsArray(outbounds))
-            json_collect_outbounds(outbounds, remarks, out, max, count);
+        json_collect_profile(root, out, max, count, st);
     }
 
     cJSON_Delete(root);
@@ -1522,79 +1330,215 @@ int cfg_subscription_url(const char *blob, size_t blob_len,
     return 0;
 }
 
-cfg_status_t cfg_parse_subscription(const char *blob, size_t blob_len,
-                                    vl_server_t *out, size_t max_servers,
-                                    size_t *out_count) {
-    if (!blob || !out || !out_count || max_servers == 0) return CFG_ERR_BAD_ARG;
-    *out_count = 0;
+/* the body without a byte order mark, the whitespace around it, or the
+   "#profile-title: ..." and "//profile-title: ..." lines hiddify style panels
+   put above a base64 or sing-box json body, which hid both formats */
+static void trim_body(const char **blob, size_t *len) {
+    const char *b = *blob;
+    size_t n = *len;
+    if (n >= 3 && (unsigned char)b[0] == 0xEF && (unsigned char)b[1] == 0xBB &&
+        (unsigned char)b[2] == 0xBF) {
+        b += 3;
+        n -= 3;
+    }
+    for (;;) {
+        while (n && (*b == ' ' || *b == '\t' || *b == '\r' || *b == '\n')) { ++b; --n; }
+        if (!(n && *b == '#') && !(n >= 2 && b[0] == '/' && b[1] == '/')) break;
+        while (n && *b != '\n' && *b != '\r') { ++b; --n; }
+    }
+    while (n && (b[n - 1] == ' ' || b[n - 1] == '\t' || b[n - 1] == '\r' || b[n - 1] == '\n')) --n;
+    *blob = b;
+    *len = n;
+}
 
-    if (looks_like_happ(blob, blob_len)) {
-        char plain[16384];
+/* a body that is base64 and nothing else, wrapped or not */
+static int looks_like_base64(const char *b, size_t n) {
+    size_t alnum = 0;
+    for (size_t i = 0; i < n; ++i) {
+        unsigned char c = (unsigned char)b[i];
+        if (isalnum(c)) { ++alnum; continue; }
+        if (c == '+' || c == '/' || c == '-' || c == '_' || c == '=' ||
+            c == '\r' || c == '\n' || c == ' ' || c == '\t')
+            continue;
+        return 0;
+    }
+    return alnum >= 8;
+}
+
+static cfg_status_t parse_body(const char *blob, size_t blob_len, vl_server_t *out,
+                               size_t max, size_t *count, cfg_import_stats_t *st,
+                               int depth) {
+    trim_body(&blob, &blob_len);
+    if (!blob_len) return CFG_OK;
+
+    if (depth > 3) return CFG_OK;
+    /* one happ link can carry a whole feed: a list, base64 or json */
+    if (looks_like_happ(blob, blob_len) && !memchr(blob, '\n', blob_len)) {
         char tmp[8192];
-        size_t n = blob_len < sizeof tmp - 1 ? blob_len : sizeof tmp - 1;
-        memcpy(tmp, blob, n);
-        tmp[n] = '\0';
-        if (happ_unwrap(tmp, plain, sizeof plain) == 0) {
-            return cfg_parse_subscription(plain, strlen(plain),
-                                          out, max_servers, out_count);
+        char plain[16384];
+        if (blob_len >= sizeof tmp) return CFG_ERR_TOO_LONG;
+        memcpy(tmp, blob, blob_len);
+        tmp[blob_len] = '\0';
+        if (happ_unwrap(tmp, plain, sizeof plain) != 0) {
+            cfg_import_stats_add(st, "happ link that does not open");
+            return CFG_OK;
         }
-        return CFG_ERR_SCHEME;
+        return parse_body(plain, strlen(plain), out, max, count, st, depth + 1);
     }
 
 /* JSON must win because DNS URLs inside it look like standalone server links */
-    if (looks_like_json(blob, blob_len)) {
-        if (parse_xray_json(blob, blob_len, out, max_servers, out_count) == 0)
-            return CFG_OK;
-    }
+    if (looks_like_json(blob, blob_len) &&
+        parse_xray_json(blob, blob_len, out, max, count, st) == 0)
+        return CFG_OK;
 
 /* the foreign client profiles are checked before the link scan because a clash
    document embeds urls in its dns and rule sections */
     if (profiles_looks_like_clash(blob, blob_len)) {
-        *out_count = profiles_parse_clash(blob, blob_len, out, max_servers);
+        *count += profiles_parse_clash_ex(blob, blob_len, out + *count, max - *count, st);
         return CFG_OK;
     }
-
     if (profiles_looks_like_surge(blob, blob_len)) {
-        *out_count = profiles_parse_surge(blob, blob_len, out, max_servers);
+        *count += profiles_parse_surge_ex(blob, blob_len, out + *count, max - *count, st);
         return CFG_OK;
     }
 
-    if (looks_like_links(blob, blob_len)) {
-        parse_link_lines(blob, blob_len, out, max_servers, out_count);
-        return CFG_OK;
+    if (looks_like_base64(blob, blob_len)) {
+        size_t cap = b64_decoded_maxlen(blob_len);
+        if (cap > (size_t)(4 * 1024 * 1024)) return CFG_ERR_TOO_LONG;
+        unsigned char *plain = malloc(cap + 1);
+        if (!plain) return CFG_ERR_NO_MEMORY;
+        size_t plain_len = 0;
+        cfg_status_t r = CFG_OK;
+        if (b64_decode(blob, blob_len, plain, cap, &plain_len) == 0) {
+            plain[plain_len] = '\0';
+            r = parse_body((const char *)plain, plain_len, out, max, count, st, depth + 1);
+        }
+        free(plain);
+        return r;
     }
 
-    size_t cap = b64_decoded_maxlen(blob_len);
-    if (cap > (size_t)(2 * 1024 * 1024)) return CFG_ERR_TOO_LONG;
-
-    unsigned char *scratch = (unsigned char *)malloc(cap ? cap : 1);
-    if (!scratch) return CFG_ERR_NO_MEMORY;
-    size_t dec_len = 0;
-    if (b64_decode(blob, blob_len, scratch, cap, &dec_len) != 0) {
-        free(scratch);
-        return CFG_OK;
-    }
-    if (looks_like_json((const char *)scratch, dec_len)) {
-        (void)parse_xray_json((const char *)scratch, dec_len, out, max_servers, out_count);
-        free(scratch);
-        return CFG_OK;
-    }
-    if (profiles_looks_like_clash((const char *)scratch, dec_len)) {
-        *out_count = profiles_parse_clash((const char *)scratch, dec_len,
-                                          out, max_servers);
-        free(scratch);
-        return CFG_OK;
-    }
-    if (profiles_looks_like_surge((const char *)scratch, dec_len)) {
-        *out_count = profiles_parse_surge((const char *)scratch, dec_len,
-                                          out, max_servers);
-        free(scratch);
-        return CFG_OK;
-    }
-    parse_link_lines((const char *)scratch, dec_len, out, max_servers, out_count);
-    free(scratch);
+    parse_link_lines(blob, blob_len, out, max, count, st);
     return CFG_OK;
 }
+
+/* the end of the last line that arrived whole, or 0 */
+static size_t whole_lines_end(const char *b, size_t n) {
+    while (n && b[n - 1] != '\n') --n;
+    return n;
+}
+
+/* the end of the last object or array item of a top level json array that
+   arrived whole, or 0. a remnawave xray json feed repeats its routing rules in
+   every profile and passes 512 KB at around fifty nodes */
+static size_t json_array_items_end(const char *b, size_t n) {
+    size_t end = 0;
+    int depth = 0, in_string = 0, escaped = 0;
+    for (size_t i = 0; i < n; ++i) {
+        char c = b[i];
+        if (in_string) {
+            if (escaped) escaped = 0;
+            else if (c == '\\') escaped = 1;
+            else if (c == '"') in_string = 0;
+            continue;
+        }
+        if (c == '"') {
+            in_string = 1;
+        } else if (c == '{' || c == '[') {
+            depth++;
+        } else if (c == '}' || c == ']') {
+            if (--depth == 1) end = i + 1;
+            else if (depth <= 0) return 0;
+        }
+    }
+    return end;
+}
+
+int cfg_subscription_prefix(char *blob, size_t *len) {
+    const char *b;
+    size_t n, end;
+    if (!blob || !len) return -1;
+    b = blob;
+    n = *len;
+    trim_body(&b, &n);
+    if (!n || looks_like_happ(b, n)) return -1;
+    if (looks_like_json(b, n)) {
+        size_t off = (size_t)(b - blob);
+        if (b[0] != '[') return -1;
+        end = json_array_items_end(b, n);
+        /* the cut item is dropped, so the closing bracket always has room */
+        if (!end || end >= n) return -1;
+        blob[off + end] = ']';
+        *len = off + end + 1;
+        return 0;
+    }
+    if (profiles_looks_like_clash(b, n)) {
+/* an entry spans lines, so the cut goes before the last list item rather
+   than after the last line */
+        end = whole_lines_end(b, n);
+        while (end) {
+            size_t start = end - 1;
+            while (start && b[start - 1] != '\n') --start;
+            size_t i = start;
+            while (i < end && (b[i] == ' ' || b[i] == '\t')) ++i;
+            end = start;
+            if (i < n && b[i] == '-') break;
+        }
+    } else if (!profiles_looks_like_surge(b, n) && looks_like_base64(b, n)) {
+/* decode whole quartets only, then keep the lines of the text they carry */
+        size_t sig = 0, cut = 0;
+        for (size_t i = 0; i < n; ++i) {
+            if (b[i] == ' ' || b[i] == '\t' || b[i] == '\r' || b[i] == '\n') continue;
+            if (++sig % 4 == 0) cut = i + 1;
+        }
+        unsigned char *plain = malloc(b64_decoded_maxlen(cut) + 1);
+        size_t plain_len = 0;
+        if (!plain) return -1;
+        if (!cut || b64_decode(b, cut, plain, b64_decoded_maxlen(cut), &plain_len) != 0 ||
+            plain_len > *len) {
+            free(plain);
+            return -1;
+        }
+        memcpy(blob, plain, plain_len);
+        free(plain);
+        *len = plain_len;
+        return cfg_subscription_prefix(blob, len);
+    } else {
+        end = whole_lines_end(b, n);
+    }
+    if (!end) return -1;
+    *len = (size_t)(b - blob) + end;
+    return 0;
+}
+
+cfg_status_t cfg_parse_subscription_ex(const char *blob, size_t blob_len,
+                                       vl_server_t *out, size_t max_servers,
+                                       size_t *out_count, cfg_import_stats_t *stats) {
+    cfg_import_stats_t local;
+    if (!stats) stats = &local;
+    memset(stats, 0, sizeof *stats);
+    if (!blob || !out || !out_count || max_servers == 0) return CFG_ERR_BAD_ARG;
+    *out_count = 0;
+    return parse_body(blob, blob_len, out, max_servers, out_count, stats, 0);
+}
+
+cfg_status_t cfg_parse_subscription_rows(const char *blob, size_t blob_len,
+                                         vl_server_t *out, size_t max_servers,
+                                         size_t *out_count, cfg_import_stats_t *stats) {
+    cfg_import_stats_t local;
+    if (!stats) stats = &local;
+    memset(stats, 0, sizeof *stats);
+    stats->keep_unsupported = 1;
+    if (!blob || !out || !out_count || max_servers == 0) return CFG_ERR_BAD_ARG;
+    *out_count = 0;
+    return parse_body(blob, blob_len, out, max_servers, out_count, stats, 0);
+}
+
+cfg_status_t cfg_parse_subscription(const char *blob, size_t blob_len,
+                                    vl_server_t *out, size_t max_servers,
+                                    size_t *out_count) {
+    return cfg_parse_subscription_ex(blob, blob_len, out, max_servers, out_count, NULL);
+}
+
 rules_status_t cfg_parse_rule(const char *text, size_t len, rule_t *out) {
     return rules_parse(text, len, out);
 }
