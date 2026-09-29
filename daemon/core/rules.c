@@ -1,5 +1,7 @@
 #include "rules.h"
 
+#include <stddef.h>
+
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -24,6 +26,9 @@ const char *rule_action_name(rule_action_t action) {
     if (action == RULE_ACTION_BLOCK) return "block";
     return NULL;
 }
+
+/* a build where hits lost its alignment would crash on the first matched rule */
+typedef char rule_hits_are_aligned[offsetof(rule_t, hits) % 8 == 0 ? 1 : -1];
 
 uint64_t rule_hit_count(const rule_t *rule) {
     if (!rule) return 0;

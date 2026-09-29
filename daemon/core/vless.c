@@ -1,5 +1,6 @@
 #include "vless.h"
 
+#include <openssl/evp.h>
 #include <string.h>
 
 static size_t bounded_len(const char *s, size_t max) {
@@ -17,6 +18,24 @@ static int hexval(char c) {
 
 vless_status_t vless_uuid_parse(const char *str, uint8_t out[VLESS_UUID_LEN]) {
     if (!str || !out) return VLESS_ERR_BAD_ARG;
+
+    /* xray takes any id of 1 to 30 bytes and hashes it into a version 5 uuid:
+       sha1(16 zero bytes || id), common/uuid ParseString */
+    size_t len = strlen(str);
+    if (len >= 1 && len <= 30) {
+        uint8_t input[VLESS_UUID_LEN + 30] = {0};
+        uint8_t digest[EVP_MAX_MD_SIZE];
+        unsigned int dlen = 0;
+        memcpy(input + VLESS_UUID_LEN, str, len);
+        if (EVP_Digest(input, VLESS_UUID_LEN + len, digest, &dlen, EVP_sha1(), NULL) != 1 ||
+            dlen < VLESS_UUID_LEN)
+            return VLESS_ERR_BAD_UUID;
+        memcpy(out, digest, VLESS_UUID_LEN);
+        out[6] = (uint8_t)((out[6] & 0x0f) | 0x50);
+        out[8] = (uint8_t)((out[8] & 0x3f) | 0x80);
+        return VLESS_OK;
+    }
+    if (len < 32 || len > 36) return VLESS_ERR_BAD_UUID;
 
     int n = 0; /* nibbles seen so far */
     int hi = 0; /* pending high nibble */
@@ -51,17 +70,21 @@ static int addr_wire_len(const vless_dest_t *d) {
 
 vless_status_t vless_build_request(const vless_request_t *req,
                                    uint8_t *buf, size_t cap, size_t *out_len) {
+    if (out_len) *out_len = 0;
     if (!req || !buf || !out_len) return VLESS_ERR_BAD_ARG;
 
-    int alen = addr_wire_len(&req->dest);
+    if (req->cmd != VLESS_CMD_TCP && req->cmd != VLESS_CMD_UDP &&
+        req->cmd != VLESS_CMD_MUX) return VLESS_ERR_BAD_ARG;
+    int alen = req->cmd == VLESS_CMD_MUX ? 0 : addr_wire_len(&req->dest);
     if (alen < 0) return VLESS_ERR_BAD_ADDR;
 
 /* only emit flow when present so the addon block stays minimal */
-    size_t flow_len = (req->flow && req->flow[0]) ? strlen(req->flow) : 0;
-    if (flow_len > 255) return VLESS_ERR_BAD_ARG; /* flow should stay short */
+    size_t flow_len = req->flow ? bounded_len(req->flow, 254) : 0;
+    if (flow_len > 253) return VLESS_ERR_BAD_ARG;
     size_t addons_len = flow_len ? (2 + flow_len) : 0;
 
-    size_t need = 1 + VLESS_UUID_LEN + 1 + addons_len + 1 + 2 + 1 + (size_t)alen;
+    size_t need = 1 + VLESS_UUID_LEN + 1 + addons_len + 1;
+    if (req->cmd != VLESS_CMD_MUX) need += 2 + 1 + (size_t)alen;
     if (cap < need) return VLESS_ERR_BUF_TOO_SMALL;
 
     uint8_t *p = buf;
@@ -79,6 +102,12 @@ vless_status_t vless_build_request(const vless_request_t *req,
     }
 
     *p++ = (uint8_t)req->cmd;
+
+    /* mux carries each destination inside its own datagram frame */
+    if (req->cmd == VLESS_CMD_MUX) {
+        *out_len = (size_t)(p - buf);
+        return VLESS_OK;
+    }
 
     *p++ = (uint8_t)(req->dest.port >> 8); /* ports are serialized big endian */
     *p++ = (uint8_t)(req->dest.port & 0xff);

@@ -3,12 +3,15 @@
 #include "senko_replay.h"
 #include "senko_upload.h"
 #include "socks5.h"
+#include "senko_time.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <sys/time.h>
 
 #define VISION_FIRST_WAIT_MS 500
+
+static void queue_socks_reply(session_t *s, uint8_t code);
 
 static size_t q_append(uint8_t *q, size_t *qlen, size_t cap,
                        const uint8_t *src, size_t len) {
@@ -30,6 +33,10 @@ static int transport_write_mode(session_t *s, const uint8_t *buf, size_t len, in
         w = s->vt->raw_write(s->th, buf, len);
     if (w > 0)
         senko_upload_wire_feed(s, buf, (size_t)w);
+    if (w > 0 || w == TRANSPORT_WANT_WRITE)
+        s->to_remote_wait_read = 0;
+    else if (w == TRANSPORT_WANT_READ)
+        s->to_remote_wait_read = 1;
     return w;
 }
 
@@ -104,12 +111,6 @@ static size_t push_remote_raw(session_t *s, const uint8_t *buf, size_t len) {
     return push_remote_mode(s, buf, len, 1);
 }
 
-static long now_ms(void) {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (long)tv.tv_sec * 1000L + (long)(tv.tv_usec / 1000);
-}
-
 static void flush_remote(session_t *s) {
     size_t off = 0;
     while (off < s->to_remote_len) {
@@ -142,18 +143,16 @@ static sess_status_t send_vision_first(session_t *s,
 
     uint8_t blk[8192 + VISION_MAX_OVERHEAD];
     size_t blk_len = 0;
-    int sent_mode_switch = 0;
+    int sent_direct = 0;
     if (content > 0) {
         senko_upload_in_feed(s, payload, content);
         int was_direct = s->vwrap.direct_sent;
-        int was_end = s->vwrap.end_sent;
         if (vision_wrap(&s->vwrap, payload, content,
                         blk, sizeof blk, &blk_len) != 0) {
             s->state = SESS_ERROR;
             return SESS_ERR;
         }
-        sent_mode_switch = (!was_direct && s->vwrap.direct_sent) ||
-                            (!was_end && s->vwrap.end_sent);
+        sent_direct = !was_direct && s->vwrap.direct_sent;
     } else {
         if (vision_wrap_bootstrap(&s->vwrap, blk, sizeof blk, &blk_len) != 0) {
             s->state = SESS_ERROR;
@@ -179,9 +178,10 @@ static sess_status_t send_vision_first(session_t *s,
     if (s->state == SESS_ERROR) return SESS_ERR;
 
     s->state = SESS_VLESS_RESP;
-/* enable bulk aead when vision requests direct mode immediately */
-    if (sent_mode_switch)
-        request_upstream_direct(s, "vision first framing end", 1);
+/* only DIRECT leaves the outer tls; after END xray keeps decrypting records
+   and answers bare bytes with a protocol_version alert */
+    if (sent_direct)
+        request_upstream_direct(s, "vision first DIRECT", 1);
     if (taken) *taken = content;
     senko_trace_sess(s, content ? "vision_first_payload" : "vision_first_bootstrap",
                      content ? "header+payload" : "header+bootstrap");
@@ -235,15 +235,13 @@ static size_t push_app(session_t *s, const uint8_t *buf, size_t len) {
     uint8_t blk[8192 + VISION_MAX_OVERHEAD];
     size_t bn = 0;
     int was_direct = s->vwrap.direct_sent;
-    int was_end = s->vwrap.end_sent;
     if (vision_wrap(&s->vwrap, buf, content, blk, sizeof blk, &bn) != 0) return 0;
-    int sent_mode_switch = (!was_direct && s->vwrap.direct_sent) ||
-                           (!was_end && s->vwrap.end_sent);
+    int sent_direct = !was_direct && s->vwrap.direct_sent;
 
     push_remote(s, blk, bn);
     if (s->state == SESS_ERROR) return 0;
-    if (sent_mode_switch)
-        request_upstream_direct(s, "local framing end", 1);
+    if (sent_direct)
+        request_upstream_direct(s, "local DIRECT", 1);
 #ifndef SENKO_RELEASE
     s->trace_app_tx += (uint64_t)content;
 #endif
@@ -307,11 +305,69 @@ static void push_staged_client(session_t *s) {
     if ((s->state != SESS_VLESS_RESP && s->state != SESS_RELAY) ||
         s->client_stage_len == 0)
         return;
+    /* proxy CONNECT must finish before application bytes reach the server */
+    if (s->state == SESS_VLESS_RESP &&
+        (s->proto == VL_PROTO_SOCKS5 || s->proto == VL_PROTO_HTTP ||
+         s->proto == VL_PROTO_HTTPS))
+        return;
 
     size_t pushed = push_app(s, s->client_stage, s->client_stage_len);
     memmove(s->client_stage, s->client_stage + pushed,
             s->client_stage_len - pushed);
     s->client_stage_len -= pushed;
+}
+
+static sess_status_t feed_socks_response(session_t *s, const uint8_t *in,
+                                         size_t in_len) {
+    size_t off = 0;
+    while (off < in_len || s->remote_stage_len > 0) {
+        if (s->u.s5c.state == S5C_ST_OPEN) {
+            deliver_client(s, s->remote_stage, s->remote_stage_len);
+            if (s->state == SESS_ERROR) return SESS_ERR;
+            s->remote_stage_len = 0;
+            deliver_client(s, in + off, in_len - off);
+            return s->state == SESS_ERROR ? SESS_ERR : SESS_OK;
+        }
+        size_t room = sizeof s->remote_stage - s->remote_stage_len;
+        size_t take = in_len - off < room ? in_len - off : room;
+        if (take > 0) {
+            memcpy(s->remote_stage + s->remote_stage_len, in + off, take);
+            s->remote_stage_len += take;
+            off += take;
+        }
+        size_t consumed = 0, out_len = 0;
+        uint8_t out[512];
+        int rs = s5c_feed(&s->u.s5c, s->remote_stage,
+                          s->remote_stage_len, &consumed,
+                          out, sizeof out, &out_len);
+        if (rs == S5C_NEED_MORE) {
+            if (room == 0 || s->remote_stage_len == sizeof s->remote_stage)
+                goto fail;
+            return SESS_OK;
+        }
+        if (rs != S5C_OK || consumed > s->remote_stage_len) goto fail;
+        memmove(s->remote_stage, s->remote_stage + consumed,
+                s->remote_stage_len - consumed);
+        s->remote_stage_len -= consumed;
+        if (out_len > 0) {
+            push_remote(s, out, out_len);
+            if (s->state == SESS_ERROR) return SESS_ERR;
+        }
+        if (s->u.s5c.state == S5C_ST_OPEN) {
+            if (!s->transparent_client)
+                queue_socks_reply(s, SOCKS5_REP_OK);
+            s->state = SESS_RELAY;
+            push_staged_client(s);
+            if (s->state == SESS_ERROR) return SESS_ERR;
+        }
+        if (consumed == 0 && take == 0) goto fail;
+    }
+    return SESS_OK;
+fail:
+    if (!s->transparent_client)
+        queue_socks_reply(s, SOCKS5_REP_GENERAL_FAIL);
+    s->state = SESS_ERROR;
+    return SESS_ERR;
 }
 
 sess_status_t session_init(session_t *s,
@@ -331,6 +387,7 @@ sess_status_t session_init(session_t *s,
     if (proto == VL_PROTO_VLESS) {
         if (uuid) memcpy(s->u.vc.uuid, uuid, VLESS_UUID_LEN);
         s->u.vc.flow = (flow && flow[0]) ? flow : NULL;
+        s->u.vc.cmd = VLESS_CMD_TCP;
 /* enable vision only for its explicit flow so both directions agree */
         if (flow && strcmp(flow, "xtls-rprx-vision") == 0 && uuid) {
             s->vision_on = 1;
@@ -407,10 +464,10 @@ static sess_status_t begin_vless_dest(session_t *s, const vless_dest_t *dest,
         } else {
 /* wait for client bytes before sending an empty vision bootstrap */
             s->state = SESS_VISION_FIRST;
-            s->vision_first_deadline_ms = now_ms() + VISION_FIRST_WAIT_MS;
+            s->vision_first_deadline_ms = senko_now_ms() + VISION_FIRST_WAIT_MS;
             senko_trace_sess(s, "vision_first_wait",
                              send_socks_ok ? "await client after socks ok"
-                                           : "empty tproxy payload");
+                                           : "no client payload yet");
         }
     } else {
         uint8_t req[VLESS_UUID_LEN + 512];
@@ -448,9 +505,83 @@ sess_status_t session_start_from_transparent_dest(session_t *s,
                                                   const uint8_t *payload,
                                                   size_t payload_len,
                                                   size_t *payload_used_out) {
-    if (!s || !dest) return SESS_ERR_ARG;
-    if (s->proto != VL_PROTO_VLESS) return SESS_ERR_ARG;
-    return begin_vless_dest(s, dest, payload, payload_len, payload_used_out, 0);
+    if (!s || !dest || (!payload && payload_len)) return SESS_ERR_ARG;
+    if (payload_used_out) *payload_used_out = 0;
+    s->transparent_client = 1;
+    if (s->proto == VL_PROTO_VLESS)
+        return begin_vless_dest(s, dest, payload, payload_len, payload_used_out, 0);
+
+    session_set_trace_host(s, dest);
+    if (s->proto == VL_PROTO_SOCKS5) {
+        uint8_t req[512];
+        size_t reqlen = 0;
+        s->u.s5c.dest = *dest;
+        s->u.s5c.state = S5C_ST_INIT;
+        if (s5c_make_request(&s->u.s5c, req, sizeof req, &reqlen) != S5C_OK)
+            goto fail;
+        push_remote(s, req, reqlen);
+        if (s->state == SESS_ERROR) return SESS_ERR;
+        s->state = SESS_VLESS_RESP;
+    } else if (s->proto == VL_PROTO_HTTP || s->proto == VL_PROTO_HTTPS) {
+        uint8_t req[1024];
+        size_t reqlen = 0;
+        s->u.hc.dest = *dest;
+        s->u.hc.state = HC_ST_INIT;
+        if (hc_make_request(&s->u.hc, req, sizeof req, &reqlen) != HC_OK)
+            goto fail;
+        push_remote(s, req, reqlen);
+        if (s->state == SESS_ERROR) return SESS_ERR;
+        s->state = SESS_VLESS_RESP;
+    } else if (s->proto == VL_PROTO_TROJAN) {
+        uint8_t req[1024];
+        size_t reqlen = 0;
+        s->u.tc.dest = *dest;
+        if (trojan_client_build_request(&s->u.tc, NULL, 0, req,
+                                        sizeof req, &reqlen) != TR_OK)
+            goto fail;
+        push_remote(s, req, reqlen);
+        if (s->state == SESS_ERROR) return SESS_ERR;
+        s->state = SESS_RELAY;
+    } else if (s->proto == VL_PROTO_SHADOWSOCKS) {
+        uint8_t req[1024];
+        size_t reqlen = 0;
+        s->u.sc.dest = *dest;
+        if (ss_client_build_request(&s->u.sc, NULL, 0, req,
+                                    sizeof req, &reqlen) != SS_OK)
+            goto fail;
+        push_remote(s, req, reqlen);
+        if (s->state == SESS_ERROR) return SESS_ERR;
+        s->state = SESS_RELAY;
+    } else {
+        goto fail;
+    }
+
+    if (payload_len > 0) {
+        size_t used = 0;
+        if (session_feed_client(s, payload, payload_len, &used) != SESS_OK)
+            return SESS_ERR;
+        if (payload_used_out) *payload_used_out = used;
+    }
+    return SESS_OK;
+
+fail:
+    s->state = SESS_ERROR;
+    return SESS_ERR;
+}
+
+sess_status_t session_start_from_transparent_udp(session_t *s,
+                                                const vless_dest_t *dest,
+                                                const uint8_t *first_frame,
+                                                size_t frame_len,
+                                                size_t *frame_used_out) {
+    if (frame_used_out) *frame_used_out = 0;
+    if (!s || !dest || !first_frame || frame_len == 0 || !frame_used_out ||
+        s->proto != VL_PROTO_VLESS || s->state != SESS_GREETING)
+        return SESS_ERR_ARG;
+    s->transparent_client = 1;
+    s->u.vc.cmd = s->vision_on ? VLESS_CMD_MUX : VLESS_CMD_UDP;
+    return begin_vless_dest(s, dest, first_frame, frame_len,
+                            frame_used_out, 0);
 }
 
 static sess_status_t do_greeting(session_t *s, size_t *consumed) {
@@ -610,8 +741,15 @@ sess_status_t session_feed_client(session_t *s,
         return SESS_OK;
     }
 
-/* relay client data while the remote side parses its response header */
-    *consumed = push_app(s, in, len);
+/* the upstream proxy has not accepted CONNECT, so do not leak early data */
+    if (s->state == SESS_VLESS_RESP &&
+        (s->proto == VL_PROTO_SOCKS5 || s->proto == VL_PROTO_HTTP ||
+         s->proto == VL_PROTO_HTTPS)) {
+        *consumed = q_append(s->client_stage, &s->client_stage_len,
+                             sizeof s->client_stage, in, len);
+    } else {
+        *consumed = push_app(s, in, len);
+    }
     if (s->state == SESS_ERROR) return SESS_ERR;
     return SESS_OK;
 }
@@ -621,18 +759,31 @@ sess_status_t session_pump_remote(session_t *s) {
     if (s->state == SESS_ERROR) return SESS_ERR;
 
     if (s->state == SESS_VISION_FIRST) {
-        if (now_ms() < s->vision_first_deadline_ms) return SESS_OK;
+        if (senko_now_ms() < s->vision_first_deadline_ms) return SESS_OK;
         fprintf(stderr, "senkod: vision first bootstrap timeout fired\n");
         if (send_vision_first(s, NULL, 0, NULL) != SESS_OK) return SESS_ERR;
     }
 
     flush_remote(s);
     if (s->state == SESS_ERROR) return SESS_ERR;
-/* nudge reality so accepted plaintext can flush pending ciphertext */
+/* nudge reality so accepted plaintext can flush pending ciphertext. only a
+   transport that says it holds output gets the empty write: a blind one also
+   landed on sockets whose write side the relay had already shut after the
+   client's fin, and failed there with EPIPE */
     if (s->to_remote_len == 0 && s->vt && s->vt->write && s->th &&
+        s->vt->want_write && s->vt->want_write(s->th) &&
         (s->state == SESS_RELAY || s->state == SESS_VLESS_RESP)) {
         int nw = s->vt->write(s->th, (const uint8_t *)"", 0);
-        (void)nw; /* empty writes only trigger the internal flush */
+        /* an empty write still reports a pending socket error, and it also
+           consumes it: ignored here, a server's reset turned the next read
+           into a plain eof, and the app got a clean close for a cut stream */
+        if (nw == TRANSPORT_ERR) {
+            fprintf(stderr, "senkod: transport write error in session state=%d\n",
+                    (int)s->state);
+            fail_pending_socks(s);
+            s->state = SESS_ERROR;
+            return SESS_ERR;
+        }
     }
     push_staged_client(s);
     if (s->state == SESS_ERROR) return SESS_ERR;
@@ -651,12 +802,16 @@ sess_status_t session_pump_remote(session_t *s) {
             fprintf(stderr, "senkod: transport eof in session state=%d queued=%zu\n",
                     (int)s->state, s->to_client_len);
             fail_pending_socks(s);
+            if (s->state == SESS_VLESS_RESP) {
+                s->state = SESS_ERROR;
+                return SESS_ERR;
+            }
             s->state = SESS_CLOSED;
             return SESS_OK;
         }
         if (n < 0) {
-            fprintf(stderr, "senkod: transport read error in session state=%d rc=%d\n",
-                    (int)s->state, n);
+            fprintf(stderr, "senkod: transport read error in session state=%d rc=%d host=%s\n",
+                    (int)s->state, n, s->trace_host[0] ? s->trace_host : "-");
             fail_pending_socks(s);
             s->state = SESS_ERROR;
             return SESS_ERR;
@@ -688,51 +843,22 @@ sess_status_t session_pump_remote(session_t *s) {
                 deliver_client(s, tmp + app_off, (size_t)n - app_off);
                 if (s->state == SESS_ERROR) return SESS_ERR;
             } else if (s->proto == VL_PROTO_SOCKS5) {
-                size_t consumed = 0;
-                uint8_t out[1024];
-                size_t out_len = 0;
-                int rs = s5c_feed(&s->u.s5c, tmp, (size_t)n, &consumed, out, sizeof out, &out_len);
-                if (rs == S5C_NEED_MORE) return SESS_OK;
-                if (rs != S5C_OK) {
-                    uint8_t rep[10]; size_t rn = 0;
-                    socks5_build_reply(SOCKS5_REP_GENERAL_FAIL, rep, sizeof rep, &rn);
-                    q_append(s->to_client, &s->to_client_len, sizeof s->to_client, rep, rn);
-                    s->state = SESS_ERROR;
+                if (feed_socks_response(s, tmp, (size_t)n) != SESS_OK)
                     return SESS_ERR;
-                }
-
-                if (out_len > 0) {
-                    push_remote(s, out, out_len);
-                    if (s->state == SESS_ERROR) return SESS_ERR;
-                }
-
-                if (s->u.s5c.state == S5C_ST_OPEN) {
-                    uint8_t rep[10]; size_t rn = 0;
-                    socks5_build_reply(SOCKS5_REP_OK, rep, sizeof rep, &rn);
-                    q_append(s->to_client, &s->to_client_len, sizeof s->to_client, rep, rn);
-                    s->state = SESS_RELAY;
-
-                    if (consumed < (size_t)n) {
-                        q_append(s->to_client, &s->to_client_len, sizeof s->to_client,
-                                 tmp + consumed, (size_t)n - consumed);
-                    }
-                }
             } else if (s->proto == VL_PROTO_HTTP || s->proto == VL_PROTO_HTTPS) {
                 size_t consumed = 0;
                 int rs = hc_feed(&s->u.hc, tmp, (size_t)n, &consumed);
                 if (rs == HC_NEED_MORE) return SESS_OK;
                 if (rs != HC_OK) {
-                    uint8_t rep[10]; size_t rn = 0;
-                    socks5_build_reply(SOCKS5_REP_GENERAL_FAIL, rep, sizeof rep, &rn);
-                    q_append(s->to_client, &s->to_client_len, sizeof s->to_client, rep, rn);
+                    if (!s->transparent_client)
+                        queue_socks_reply(s, SOCKS5_REP_GENERAL_FAIL);
                     s->state = SESS_ERROR;
                     return SESS_ERR;
                 }
 
                 if (s->u.hc.state == HC_ST_OPEN) {
-                    uint8_t rep[10]; size_t rn = 0;
-                    socks5_build_reply(SOCKS5_REP_OK, rep, sizeof rep, &rn);
-                    q_append(s->to_client, &s->to_client_len, sizeof s->to_client, rep, rn);
+                    if (!s->transparent_client)
+                        queue_socks_reply(s, SOCKS5_REP_OK);
                     s->state = SESS_RELAY;
 
                     if (consumed < (size_t)n) {
@@ -747,6 +873,9 @@ sess_status_t session_pump_remote(session_t *s) {
                 push_staged_client(s);
                 if (s->state == SESS_ERROR) return SESS_ERR;
             }
+            /* let the tunnel owner observe the handshake before a later reset */
+            if (s->transparent_client && s->state == SESS_RELAY)
+                return SESS_OK;
             continue;
         }
 

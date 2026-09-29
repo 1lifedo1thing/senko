@@ -2,6 +2,7 @@
 
 #include "reality_handshake.h"
 #include "senko_trace.h"
+#include "senko_time.h"
 
 #include "reality_crypto.h"
 #include "reality_auth.h"
@@ -145,27 +146,45 @@ typedef struct {
 #define RH_HS_IO_POLL_MS  2000
 #define RH_HS_IO_BUDGET_MS 5000
 
+/* 1 ready, 0 budget spent, -1 poll failure */
+static int rh_wait_io(int fd, short events, int64_t deadline) {
+    for (;;) {
+        int64_t now = senko_now_ms();
+        if (now >= deadline) return 0;
+        int slice = (int)(deadline - now);
+        if (slice > RH_HS_IO_POLL_MS) slice = RH_HS_IO_POLL_MS;
+        struct pollfd pfd;
+        pfd.fd = fd;
+        pfd.events = events;
+        pfd.revents = 0;
+        int pr = poll(&pfd, 1, slice);
+        if (pr > 0) return 1;
+        if (pr == 0) continue; /* slice expired, the deadline above decides */
+        if (errno == EINTR) continue; /* a delivered signal is not a transport failure */
+        return -1;
+    }
+}
+
+/* the budget bounds a stall, not the transfer: a server flight arriving in
+   many small reads over an edge/3g link used to be charged a full poll slice
+   per successful wait and died as "io" while bytes were still flowing */
 static int read_full(int fd, uint8_t *buf, size_t n, int *want_read) {
     size_t off = 0;
-    int waited = 0;
+    int64_t idle_deadline = senko_now_ms() + RH_HS_IO_BUDGET_MS;
     while (off < n) {
         ssize_t r = read(fd, buf + off, n - off);
-        if (r > 0) { off += (size_t)r; continue; }
-        if (r < 0 && errno == EINTR) continue;
-        if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            if (waited >= RH_HS_IO_BUDGET_MS) {
-                if (want_read && off == 0) *want_read = 1;
-                return -1;
-            }
-            struct pollfd pfd;
-            pfd.fd = fd;
-            pfd.events = POLLIN;
-            int slice = RH_HS_IO_POLL_MS;
-            if (slice > RH_HS_IO_BUDGET_MS - waited)
-                slice = RH_HS_IO_BUDGET_MS - waited;
-            int pr = poll(&pfd, 1, slice);
-            if (pr > 0) { waited += slice; continue; }
-            if (pr == 0) { waited += slice; continue; }
+        if (r > 0) {
+            off += (size_t)r;
+            idle_deadline = senko_now_ms() + RH_HS_IO_BUDGET_MS;
+            continue;
+        }
+        if (r == 0) return -1; /* peer closed mid-record */
+        if (errno == EINTR) continue;
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            int w = rh_wait_io(fd, POLLIN, idle_deadline);
+            if (w == 1) continue;
+            if (w == 0 && want_read && off == 0) *want_read = 1;
+            return -1;
         }
         return -1;
     }
@@ -174,22 +193,18 @@ static int read_full(int fd, uint8_t *buf, size_t n, int *want_read) {
 
 static int write_full(int fd, const uint8_t *buf, size_t n) {
     size_t off = 0;
-    int waited = 0;
+    int64_t idle_deadline = senko_now_ms() + RH_HS_IO_BUDGET_MS;
     while (off < n) {
         ssize_t w = write(fd, buf + off, n - off);
-        if (w > 0) { off += (size_t)w; continue; }
+        if (w > 0) {
+            off += (size_t)w;
+            idle_deadline = senko_now_ms() + RH_HS_IO_BUDGET_MS;
+            continue;
+        }
         if (w < 0 && errno == EINTR) continue;
         if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            if (waited >= RH_HS_IO_BUDGET_MS) return -1;
-            struct pollfd pfd;
-            pfd.fd = fd;
-            pfd.events = POLLOUT;
-            int slice = RH_HS_IO_POLL_MS;
-            if (slice > RH_HS_IO_BUDGET_MS - waited)
-                slice = RH_HS_IO_BUDGET_MS - waited;
-            int pr = poll(&pfd, 1, slice);
-            if (pr > 0) { waited += slice; continue; }
-            if (pr == 0) { waited += slice; continue; }
+            if (rh_wait_io(fd, POLLOUT, idle_deadline) == 1) continue;
+            return -1;
         }
         return -1;
     }
@@ -278,33 +293,61 @@ static int flight_next_msg(flight_t *f, size_t *consumed_base,
     }
 }
 
+/* which half of the handshake went wrong is only visible in the leaf: a real
+   chain means reality never recognized the token and proxied us to the
+   camouflage site, an unreadable key means this build cannot decode ed25519 */
+typedef enum {
+    CERT_PROOF_OK       =  0,
+    CERT_MALFORMED      = -1, /* the Certificate message itself did not parse */
+    CERT_NOT_PROOF      = -2, /* a genuine leaf, so the server fronted us */
+    CERT_KEY_UNREADABLE = -3 /* openssl here cannot decode the leaf public key */
+} cert_proof_t;
+
+/* name the leaf once so a log reader can tell a fronting site from a build
+   that cannot read the proof key */
+static void log_leaf(const char *why, X509 *x) {
+    char subject[128];
+    subject[0] = '\0';
+    X509_NAME *nm = X509_get_subject_name(x);
+    if (nm) X509_NAME_oneline(nm, subject, (int)sizeof subject);
+    int nid = X509_get_signature_nid(x);
+    const char *alg = OBJ_nid2sn(nid);
+    fprintf(stderr, "senkod: REALITY %s: leaf sig=%s subject=%s\n",
+            why, alg ? alg : "unknown", subject[0] ? subject : "(none)");
+}
+
 /* use openssl for the leaf because an in-house x509 parser would add risk */
-static int cert_extract(const uint8_t *msg, size_t msg_len,
-                        uint8_t pub_out[32], uint8_t *sig_out, size_t sig_cap,
-                        size_t *sig_len) {
-    if (msg_len < 4) return -1;
+static cert_proof_t cert_extract(const uint8_t *msg, size_t msg_len,
+                                 uint8_t pub_out[32], uint8_t *sig_out, size_t sig_cap,
+                                 size_t *sig_len) {
+    if (msg_len < 4) return CERT_MALFORMED;
     const uint8_t *p = msg + 4;
     size_t left = msg_len - 4;
-    if (left < 1) return -1;
+    if (left < 1) return CERT_MALFORMED;
     size_t ctx_len = p[0];
-    if (1 + ctx_len + 3 > left) return -1;
+    if (1 + ctx_len + 3 > left) return CERT_MALFORMED;
     p += 1 + ctx_len; left -= 1 + ctx_len;
     size_t list_len = ((size_t)p[0] << 16) | ((size_t)p[1] << 8) | p[2];
     p += 3; left -= 3;
-    if (list_len > left) return -1;
-    if (list_len < 3) return -1;
+    if (list_len > left) return CERT_MALFORMED;
+    if (list_len < 3) return CERT_MALFORMED;
     size_t cert_len = ((size_t)p[0] << 16) | ((size_t)p[1] << 8) | p[2];
     p += 3;
-    if (cert_len + 2 > list_len - 0) return -1; /* need cert + ext len */
+    if (cert_len + 2 > list_len - 0) return CERT_MALFORMED; /* need cert + ext len */
     const uint8_t *der = p;
 
     const unsigned char *dp = der;
     X509 *x = d2i_X509(NULL, &dp, (long)cert_len);
-    if (!x) return -1;
+    if (!x) return CERT_MALFORMED;
 
-    int rc = -1;
+    cert_proof_t rc = CERT_NOT_PROOF;
     EVP_PKEY *pk = X509_get0_pubkey(x);
-    if (pk) {
+    if (!pk) {
+/* a leaf this build cannot decode is a local capability gap, not a fronting
+   site, and the two used to reach the caller as the same "proto" failure */
+        rc = CERT_KEY_UNREADABLE;
+        log_leaf("cannot read the leaf public key", x);
+    } else {
         size_t plen = 32;
         if (EVP_PKEY_get_raw_public_key(pk, pub_out, &plen) == 1 && plen == 32) {
             const ASN1_BIT_STRING *psig = NULL;
@@ -313,9 +356,11 @@ static int cert_extract(const uint8_t *msg, size_t msg_len,
             if (psig && psig->data && (size_t)psig->length <= sig_cap) {
                 memcpy(sig_out, psig->data, (size_t)psig->length);
                 *sig_len = (size_t)psig->length;
-                rc = 0;
+                rc = CERT_PROOF_OK;
             }
         }
+        if (rc == CERT_NOT_PROOF)
+            log_leaf("server presented a real certificate, not the reality proof", x);
     }
     X509_free(x);
     return rc;
@@ -418,7 +463,7 @@ void *reality_handshake_open(int fd, const rh_params_t *p, rh_status_t *err) {
 
     int saw_ee = 0, saw_cert = 0, saw_cv = 0;
     uint8_t cert_pub[32]; uint8_t cert_sig[128]; size_t cert_sig_len = 0;
-    int have_cert = 0;
+    cert_proof_t cert_rc = CERT_MALFORMED;
     uint8_t th_before_fin[TLS13_TRANSCRIPT_LEN]; /* hash up to cert verify */
 
     stage = "encrypted server flight";
@@ -442,18 +487,23 @@ void *reality_handshake_open(int fd, const rh_params_t *p, rh_status_t *err) {
         if (mtype == HS_ENCRYPTED_EXTS) saw_ee = 1;
         else if (mtype == HS_CERTIFICATE) {
             saw_cert = 1;
-            if (cert_extract(msg, mlen, cert_pub, cert_sig, sizeof cert_sig,
-                             &cert_sig_len) == 0)
-                have_cert = 1;
+            cert_rc = cert_extract(msg, mlen, cert_pub, cert_sig,
+                                   sizeof cert_sig, &cert_sig_len);
         }
         else if (mtype == HS_CERT_VERIFY) saw_cv = 1;
         tls13_transcript_update(&tr, msg, mlen);
     }
     (void)saw_ee; (void)saw_cv;
     stage = "server certificate";
-    if (!saw_cert || !have_cert) FAIL(RH_ERR_PROTO);
+    if (!saw_cert) FAIL(RH_ERR_PROTO);
+    if (cert_rc == CERT_KEY_UNREADABLE) FAIL(RH_ERR_CRYPTO);
+/* a parsable leaf that is not the proof means the token was refused and we
+   are talking to the camouflage site, which is an auth result, not a parse
+   error: report it as such so the log names the real cause */
+    if (cert_rc == CERT_NOT_PROOF) FAIL(RH_ERR_NOT_REALITY);
+    if (cert_rc != CERT_PROOF_OK) FAIL(RH_ERR_PROTO);
 
-    stage = "REALITY certificate proof";
+    stage = "certificate proof";
     if (reality_verify_server(authkey, cert_pub, 32, cert_sig, cert_sig_len) != RA_OK)
         FAIL(RH_ERR_NOT_REALITY);
 
@@ -837,6 +887,36 @@ static int rh_want_write(void *handle) {
     return c->wpend_len > c->wpend_off;
 }
 
+/* every preset name xray accepts, mapped onto the five hellos this core can
+   build. safari, ios, android and 360 have no profile here, so they are served
+   a chromium-shaped hello on purpose: saying "unknown" about a name the go
+   backend resolves fine sent testers hunting a typo that was not there */
+static tls_fp_t fp_from_name(const char *name, const char **substituted_for) {
+    static const struct { const char *name; tls_fp_t fp; int exact; } map[] = {
+        { "chrome",           TLS_FP_CHROME,     1 },
+        { "chrome_auto",      TLS_FP_CHROME,     1 },
+        { "firefox",          TLS_FP_FIREFOX,    1 },
+        { "edge",             TLS_FP_EDGE,       1 },
+        { "qq",               TLS_FP_QQ,         1 },
+        { "random",           TLS_FP_RANDOMIZED, 1 },
+        { "randomized",       TLS_FP_RANDOMIZED, 1 },
+        { "randomizednoalpn", TLS_FP_RANDOMIZED, 0 },
+        { "safari",           TLS_FP_CHROME,     0 },
+        { "ios",              TLS_FP_CHROME,     0 },
+        { "android",          TLS_FP_CHROME,     0 },
+        { "360",              TLS_FP_CHROME,     0 },
+        { "unsafe",           TLS_FP_CHROME,     0 },
+    };
+    *substituted_for = NULL;
+    for (size_t i = 0; i < sizeof map / sizeof map[0]; ++i) {
+        if (strcmp(name, map[i].name) != 0) continue;
+        if (!map[i].exact) *substituted_for = map[i].name;
+        return map[i].fp;
+    }
+    *substituted_for = "";  /* genuinely unrecognized */
+    return TLS_FP_CHROME;
+}
+
 static void *rh_open(int fd, const transport_tls_cfg_t *cfg) {
     if (fd < 0 || !cfg) return NULL;
     if (!cfg->reality_pbk || !cfg->reality_pbk[0]) return NULL;
@@ -873,20 +953,13 @@ static void *rh_open(int fd, const transport_tls_cfg_t *cfg) {
 /* map the fingerprint and generate firefox's decoy point in crypto code */
     p.fp = TLS_FP_CHROME;
     if (cfg->fingerprint && cfg->fingerprint[0]) {
-        if      (strcmp(cfg->fingerprint, "chrome") == 0 ||
-                 strcmp(cfg->fingerprint, "chrome_auto") == 0)
-            p.fp = TLS_FP_CHROME;
-        else if (strcmp(cfg->fingerprint, "firefox") == 0) p.fp = TLS_FP_FIREFOX;
-        else if (strcmp(cfg->fingerprint, "edge") == 0)    p.fp = TLS_FP_EDGE;
-        else if (strcmp(cfg->fingerprint, "qq") == 0)      p.fp = TLS_FP_QQ;
-        else if (strcmp(cfg->fingerprint, "random") == 0 ||
-                 strcmp(cfg->fingerprint, "randomized") == 0) p.fp = TLS_FP_RANDOMIZED;
-        else {
-/* silent fallback hid broken fp= values; log once per open */
+        const char *subst = NULL;
+        p.fp = fp_from_name(cfg->fingerprint, &subst);
+        if (subst && !subst[0])
             fprintf(stderr, "senkod: unknown fp=%s, using chrome\n",
                     cfg->fingerprint);
-            p.fp = TLS_FP_CHROME;
-        }
+        else if (subst)
+            fprintf(stderr, "senkod: no %s hello here, using chrome\n", subst);
     }
     if (p.fp == TLS_FP_FIREFOX) {
         EC_GROUP *grp = EC_GROUP_new_by_curve_name(NID_X9_62_prime256v1);

@@ -43,10 +43,19 @@ int main(void) {
         "vless://22222222-2222-4222-8222-222222222222@distinct.example:443?security=tls&sni=distinct.example&type=tcp&flow=xtls-rprx-vision#different-profile\n"
         "vless://33333333-3333-4333-8333-333333333333@bad.example:443?security=reality&type=tcp&flow=xtls-rprx-vision#bad\n";
     size_t added = 0;
-    ok("refresh filters unsupported",
+    ok("refresh accepts a feed with an unusable node",
        store_refresh_sub(&st, sub, blob, sizeof blob - 1, &added) == STORE_OK);
-    ok("subscription keeps mirrored routes as separate fallback endpoints", added == 3);
-    ok("store count after filter", st.n == 4);
+    ok("subscription keeps mirrored routes and the unusable node", added == 4);
+    ok("store count after refresh", st.n == 5);
+    ok("unusable node stays as a placeholder row",
+       st.servers[4].proto == VL_PROTO_UNSUPPORTED &&
+       strcmp(st.servers[4].remark, "bad") == 0 &&
+       strcmp(st.servers[4].host, "bad.example") == 0 && st.servers[4].port == 443 &&
+       st.servers[4].unsupported[0] && !cfg_validate_server(&st.servers[4], NULL, 0));
+    {
+        char link[256];
+        ok("placeholder has no share link", store_link_at(&st, 4, link, sizeof link) != 0);
+    }
 
     ok("select subscription server", store_select(&st, 1) == STORE_OK);
     const char renamed[] =
@@ -98,7 +107,7 @@ int main(void) {
        "direct domain-suffix Example.COM", 32, &rule_index) == STORE_OK &&
        rule_index == 0);
     ok("add stored block", store_add_rule(&st,
-       "block ip-cidr 192.0.2.129/24", 30, NULL) == STORE_OK);
+       "block ip-cidr 192.0.2.129/24", 28, NULL) == STORE_OK);
     char saved[8192];
     size_t saved_len = 0;
     ok("serialize order and expiry",
@@ -204,6 +213,125 @@ int main(void) {
            store_replace_sub(&ts, t, "Chosen Name", "https://sub.example/list", "") == STORE_OK &&
            store_set_sub_title(&ts, t, "Panel Rename", "sub.example") == STORE_OK &&
            strcmp(ts.subs[t].name, "Chosen Name") == 0);
+    }
+
+    {
+/* an xray json feed lists its single-server profiles again inside its
+   auto-select profile. each name is its own row, so a node shared by two rows
+   stays in both, and only a repeat inside one row collapses */
+#define NODE(host) "{\"protocol\":\"vless\",\"settings\":{\"vnext\":[{\"address\":\"" host \
+        "\",\"port\":443,\"users\":[{\"id\":\"44444444-4444-4444-8444-444444444444\"," \
+        "\"flow\":\"xtls-rprx-vision\",\"encryption\":\"none\"}]}]},\"streamSettings\":" \
+        "{\"network\":\"tcp\",\"security\":\"tls\",\"tlsSettings\":{\"serverName\":\"" host "\"}}}"
+        static const char feed[] =
+            "[{\"remarks\":\"Auto\",\"outbounds\":[" NODE("n1.example") "," NODE("n2.example") ","
+            NODE("n1.example") "]},"
+            "{\"remarks\":\"N1\",\"outbounds\":[" NODE("n1.example") "]},"
+            "{\"remarks\":\"N2\",\"outbounds\":[" NODE("n2.example") "]}]";
+#undef NODE
+        static store_t js;
+        size_t jsub = 0, jadded = 0;
+        store_init(&js);
+        ok("json sub", store_add_sub(&js, "Json", "https://json.example/sub", &jsub) == STORE_OK);
+        ok("json refresh", store_refresh_sub(&js, jsub, feed, sizeof feed - 1, &jadded) == STORE_OK);
+        ok("a node shared by two named rows stays in both, a repeat in one row does not",
+           jadded == 4 && js.n == 4);
+        int n2_row = -1;
+        for (size_t i = 0; i < js.n; ++i)
+            if (strcmp(js.servers[i].remark, "N2") == 0) n2_row = (int)i;
+        ok("the single-server profile keeps its row", n2_row >= 0 &&
+           strcmp(js.servers[n2_row].host, "n2.example") == 0);
+        ok("select the single-server row", store_select(&js, n2_row) == STORE_OK);
+        ok("json refresh again", store_refresh_sub(&js, jsub, feed, sizeof feed - 1, &jadded) == STORE_OK);
+        ok("a refresh keeps the selection in its own row, not the auto row sharing its node",
+           js.selected >= 0 && strcmp(js.servers[js.selected].remark, "N2") == 0);
+    }
+
+    {
+/* a feed keeps every entry: what senko cannot run becomes a red placeholder
+   row that survives a restart and moves pings with the other rows */
+        static store_t ps, back;
+        static char saved_ps[16384];
+        size_t psub = 0, padded = 0, plen = 0;
+        int moved[STORE_MAX_SERVERS];
+        const char feed[] =
+            "vless://44444444-4444-4444-8444-444444444444@a.example:443?security=tls&type=tcp#A\n"
+            /* vmess {"ps":"VM node","add":"vm.example","port":"8443"} */
+            "vmess://eyJwcyI6IlZNIG5vZGUiLCJhZGQiOiJ2bS5leGFtcGxlIiwicG9ydCI6Ijg0NDMifQ==\n"
+            "tuic://uuid:pw@[2001:db8::1]:9443?alpn=h3#T%20one\n"
+            "vless://44444444-4444-4444-8444-444444444444@b.example:443?security=tls&type=tcp#B\n";
+        store_init(&ps);
+        ok("placeholder sub", store_add_sub(&ps, "P", "https://p.example/sub", &psub) == STORE_OK);
+        ok("manual row before the subscription",
+           store_add_manual(&ps, "vless://55555555-5555-4555-8555-555555555555@m.example:443?security=tls&type=tcp#M", NULL) == STORE_OK);
+        cfg_import_stats_t stats;
+        ok("refresh keeps unsupported links",
+           store_refresh_sub_ex(&ps, psub, feed, sizeof feed - 1, &padded, &stats, moved) == STORE_OK &&
+           padded == 4 && ps.n == 5 && stats.skipped == 2);
+        ok("vmess placeholder reads its json body",
+           ps.servers[2].proto == VL_PROTO_UNSUPPORTED &&
+           strcmp(ps.servers[2].remark, "VM node") == 0 &&
+           strcmp(ps.servers[2].host, "vm.example") == 0 && ps.servers[2].port == 8443 &&
+           strcmp(ps.servers[2].unsupported, "vmess") == 0);
+        ok("tuic placeholder reads the authority and fragment",
+           ps.servers[3].proto == VL_PROTO_UNSUPPORTED &&
+           strcmp(ps.servers[3].remark, "T one") == 0 &&
+           strcmp(ps.servers[3].host, "2001:db8::1") == 0 && ps.servers[3].port == 9443);
+        ok("placeholders keep the feed order",
+           strcmp(ps.servers[1].remark, "A") == 0 && strcmp(ps.servers[4].remark, "B") == 0);
+        ok("placeholder survives serialize",
+           store_serialize(&ps, saved_ps, sizeof saved_ps, &plen) == STORE_OK &&
+           strstr(saved_ps, "USRV ") != NULL &&
+           store_deserialize(&back, saved_ps, plen) == STORE_OK && back.n == 5 &&
+           back.servers[3].proto == VL_PROTO_UNSUPPORTED && back.group[3] == (int)psub &&
+           strcmp(back.servers[3].remark, "T one") == 0 &&
+           strcmp(back.servers[3].host, "2001:db8::1") == 0 &&
+           back.servers[3].port == 9443 &&
+           strcmp(back.servers[3].unsupported, ps.servers[3].unsupported) == 0);
+
+        const char shorter[] =
+            "vless://44444444-4444-4444-8444-444444444444@b.example:443?security=tls&type=tcp#B\n";
+        ok("second refresh", store_refresh_sub_ex(&ps, psub, shorter, sizeof shorter - 1,
+                                                  &padded, &stats, moved) == STORE_OK &&
+           ps.n == 2);
+        ok("moved keeps the manual row and follows B to its new index",
+           moved[0] == 0 && moved[1] == -1 && moved[2] == -1 && moved[3] == -1 &&
+           moved[4] == 1 && strcmp(ps.servers[1].remark, "B") == 0);
+
+        const char only_vmess[] =
+            "vmess://eyJwcyI6IlZNIG5vZGUiLCJhZGQiOiJ2bS5leGFtcGxlIiwicG9ydCI6Ijg0NDMifQ==\n";
+        size_t madded = 0;
+        ok("manual import still skips what it cannot run",
+           cfg_parse_subscription(only_vmess, sizeof only_vmess - 1, back.servers, 4, &madded) == CFG_OK &&
+           madded == 0);
+
+        const char xray[] =
+            "[{\"remarks\":\"VM\",\"outbounds\":[{\"protocol\":\"vmess\",\"settings\":"
+            "{\"vnext\":[{\"address\":\"x.example\",\"port\":443}]}}]}]";
+        ok("xray json keeps an unknown outbound",
+           store_refresh_sub_ex(&ps, psub, xray, sizeof xray - 1, &padded, &stats, NULL) == STORE_OK &&
+           padded == 1 && ps.servers[ps.n - 1].proto == VL_PROTO_UNSUPPORTED &&
+           strcmp(ps.servers[ps.n - 1].remark, "VM") == 0 &&
+           strcmp(ps.servers[ps.n - 1].host, "x.example") == 0 &&
+           ps.servers[ps.n - 1].port == 443);
+    }
+
+    {
+/* a json array cut at the fetch cap keeps the profiles that arrived whole */
+        char cut[] = "[{\"remarks\":\"a]\\\"}\",\"o\":[1]},{\"remarks\":\"b\"},{\"remarks\":\"c";
+        size_t cut_len = strlen(cut);
+        ok("cut json array keeps whole items",
+           cfg_subscription_prefix(cut, &cut_len) == 0 &&
+           cut_len == strlen("[{\"remarks\":\"a]\\\"}\",\"o\":[1]},{\"remarks\":\"b\"}]") &&
+           memcmp(cut, "[{\"remarks\":\"a]\\\"}\",\"o\":[1]},{\"remarks\":\"b\"}]", cut_len) == 0);
+        char first_cut[] = "[{\"remarks\":\"a\"";
+        size_t first_len = strlen(first_cut);
+        ok("cut inside the first item keeps nothing",
+           cfg_subscription_prefix(first_cut, &first_len) == -1);
+        char object_cut[] = "{\"outbounds\":[{\"a\":1},{\"b\"";
+        size_t object_len = strlen(object_cut);
+        ok("a cut json object cannot be salvaged",
+           cfg_subscription_prefix(object_cut, &object_len) == -1);
     }
 
     if (g_fail) {

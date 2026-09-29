@@ -41,7 +41,7 @@ typedef struct {
 
 /* http/2 response header assembly and failure reporting */
     int                   hdr_wait; /* expecting CONTINUATION */
-    uint8_t               hdr_blk[1024];
+    uint8_t               hdr_blk[4096];
     size_t                hdr_len;
     int                   we_end; /* our END_STREAM queued */
     int                   saw_status;
@@ -136,14 +136,34 @@ static int frame_append(xh_t *h, uint8_t type, uint8_t flags,
     return 0;
 }
 
+static int hpack_len(uint8_t *out, size_t cap, size_t *off, size_t value) {
+    if (*off >= cap) return -1;
+    if (value < 127) {
+        out[(*off)++] = (uint8_t)value;
+        return 0;
+    }
+    out[(*off)++] = 127;
+    value -= 127;
+    while (value >= 128) {
+        if (*off >= cap) return -1;
+        out[(*off)++] = (uint8_t)((value & 127) | 128);
+        value >>= 7;
+    }
+    if (*off >= cap) return -1;
+    out[(*off)++] = (uint8_t)value;
+    return 0;
+}
+
 static int hpack_lit(uint8_t *out, size_t cap, size_t *off,
                      const char *name, const char *val) {
     size_t nl = strlen(name), vl = strlen(val);
-    if (*off + 3 + nl + vl > cap || nl > 127 || vl > 127) return -1;
+    if (*off >= cap) return -1;
     out[(*off)++] = 0x00;
-    out[(*off)++] = (uint8_t)nl;
+    if (hpack_len(out, cap, off, nl) != 0) return -1;
+    if (*off + nl > cap) return -1;
     memcpy(out + *off, name, nl); *off += nl;
-    out[(*off)++] = (uint8_t)vl;
+    if (hpack_len(out, cap, off, vl) != 0) return -1;
+    if (*off + vl > cap) return -1;
     memcpy(out + *off, val, vl); *off += vl;
     return 0;
 }
@@ -151,20 +171,21 @@ static int hpack_lit(uint8_t *out, size_t cap, size_t *off,
 static int hpack_idx_name(uint8_t *out, size_t cap, size_t *off,
                           uint8_t name_idx, const char *val) {
     size_t vl = strlen(val);
-    if (*off + 2 + vl > cap || vl > 127 || name_idx >= 15) return -1;
+    if (*off >= cap || name_idx >= 15) return -1;
     out[(*off)++] = name_idx; /* literal without indexing, 4-bit idx */
-    out[(*off)++] = (uint8_t)vl;
+    if (hpack_len(out, cap, off, vl) != 0) return -1;
+    if (*off + vl > cap) return -1;
     memcpy(out + *off, val, vl); *off += vl;
     return 0;
 }
 
-static void rand_pad16(char out[17]) {
+static void rand_pad(char out[129]) {
     static const char b62[] =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    uint8_t rb[16];
-    if (RAND_bytes(rb, 16) != 1) memset(rb, 0x41, 16);
-    for (int i = 0; i < 16; i++) out[i] = b62[rb[i] % 62];
-    out[16] = 0;
+    uint8_t rb[128];
+    if (RAND_bytes(rb, sizeof rb) != 1) memset(rb, 0x41, sizeof rb);
+    for (size_t i = 0; i < sizeof rb; i++) out[i] = b62[rb[i] % 62];
+    out[sizeof rb] = 0;
 }
 
 static void gen_session_id(char out[48]) {
@@ -227,13 +248,15 @@ static int build_headers(uint8_t *out, size_t cap, size_t *n,
     return 0;
 }
 
-static void path_with_padding(const char *base, char *out, size_t cap) {
-    char pad[17];
-    rand_pad16(pad);
+static int path_with_padding(const char *base, char *out, size_t cap) {
+    char pad[129];
+    int n;
+    rand_pad(pad);
     if (strchr(base, '?'))
-        snprintf(out, cap, "%s&x_padding=%s", base, pad);
+        n = snprintf(out, cap, "%s&x_padding=%s", base, pad);
     else
-        snprintf(out, cap, "%s?x_padding=%s", base, pad);
+        n = snprintf(out, cap, "%s?x_padding=%s", base, pad);
+    return n < 0 || (size_t)n >= cap ? -1 : 0;
 }
 
 static int flush_tx(xh_t *h) {
@@ -478,6 +501,11 @@ static int process_frames(xh_t *h) {
                 return h2_fail(h, "short rst stream");
 /* rst for a finished packet-up stream can still be in flight */
             if (stream == h->up_stream || stream == h->dn_stream) {
+                /* rfc 9113 8.1: after a complete response the server may reset
+                   with NO_ERROR to stop our upload. xray does this at the end of
+                   every stream-one response, and taking it as a failure turned
+                   each clean close into a reset for the app */
+                if (h2_u32(pay) == 0 && h->peer_end) continue;
                 char msg[96];
                 snprintf(msg, sizeof msg, "rst stream: %s",
                          h2_error_name(h2_u32(pay)));
@@ -587,7 +615,8 @@ static int queue_boot(xh_t *h, const transport_tls_cfg_t *cfg, int is_sec) {
     }
     snprintf(h->host, sizeof h->host, "%s", authority);
 
-    int trail = (h->mode != XH_MODE_ONE);
+/* xray routes stream-one requests through the normalized path with a slash */
+    int trail = 1;
     normalize_base_path(cfg && cfg->path ? cfg->path : "/",
                         h->base_path, sizeof h->base_path, trail);
     if (h->mode != XH_MODE_ONE)
@@ -607,13 +636,14 @@ static int queue_boot(xh_t *h, const transport_tls_cfg_t *cfg, int is_sec) {
 
     uint8_t block[512];
     size_t blen = 0;
-    char path[400];
+    char path[768];
 
     if (h->mode == XH_MODE_ONE) {
         if (h->grpc)
             snprintf(path, sizeof path, "%s", h->base_path);
         else
-            path_with_padding(h->base_path, path, sizeof path);
+            if (path_with_padding(h->base_path, path, sizeof path) != 0)
+                return -1;
         if (build_headers(block, sizeof block, &blen, 1, path, h->host, 1, 0, 0,
                           h->security_tls) != 0)
             return -1;
@@ -623,8 +653,9 @@ static int queue_boot(xh_t *h, const transport_tls_cfg_t *cfg, int is_sec) {
     } else if (h->mode == XH_MODE_UP) {
 /* open the long-lived download stream first */
         snprintf(path, sizeof path, "%s%s/", h->base_path, h->session);
-        char path_pad[420];
-        path_with_padding(path, path_pad, sizeof path_pad);
+        char path_pad[768];
+        if (path_with_padding(path, path_pad, sizeof path_pad) != 0)
+            return -1;
         if (build_headers(block, sizeof block, &blen, 0, path_pad, h->host, 0, 0, 0,
                           h->security_tls) != 0)
             return -1;
@@ -635,7 +666,8 @@ static int queue_boot(xh_t *h, const transport_tls_cfg_t *cfg, int is_sec) {
 /* keep upload on its own stream for stream-up mode */
         blen = 0;
         snprintf(path, sizeof path, "%s%s/", h->base_path, h->session);
-        path_with_padding(path, path_pad, sizeof path_pad);
+        if (path_with_padding(path, path_pad, sizeof path_pad) != 0)
+            return -1;
         if (build_headers(block, sizeof block, &blen, 1, path_pad, h->host, 1, 0, 0,
                           h->security_tls) != 0)
             return -1;
@@ -644,8 +676,9 @@ static int queue_boot(xh_t *h, const transport_tls_cfg_t *cfg, int is_sec) {
             return -1;
     } else { /* packet-up opens download first and posts per write */
         snprintf(path, sizeof path, "%s%s/", h->base_path, h->session);
-        char path_pad[420];
-        path_with_padding(path, path_pad, sizeof path_pad);
+        char path_pad[768];
+        if (path_with_padding(path, path_pad, sizeof path_pad) != 0)
+            return -1;
         if (build_headers(block, sizeof block, &blen, 0, path_pad, h->host, 0, 0, 0,
                           h->security_tls) != 0)
             return -1;
@@ -661,11 +694,12 @@ static int queue_boot(xh_t *h, const transport_tls_cfg_t *cfg, int is_sec) {
 
 static int send_packet(xh_t *h, const uint8_t *buf, size_t len) {
     if (len == 0 || len > XH_PKT) return -1;
-    char path[420], path_pad[440];
+    char path[768], path_pad[768];
     snprintf(path, sizeof path, "%s%s/%lld",
              h->base_path, h->session, (long long)h->seq);
     h->seq++;
-    path_with_padding(path, path_pad, sizeof path_pad);
+    if (path_with_padding(path, path_pad, sizeof path_pad) != 0)
+        return -1;
 
     uint8_t block[512];
     size_t blen = 0;

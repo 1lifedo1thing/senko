@@ -35,7 +35,8 @@ typedef struct {
     size_t client_len;
 } grpc_test_t;
 
-static int start(grpc_test_t *t, const uint8_t *fx, size_t fx_len) {
+static int start_mode(grpc_test_t *t, const uint8_t *fx, size_t fx_len,
+                      const char *mode) {
     memset(t, 0, sizeof *t);
     t->sv[0] = t->sv[1] = -1;
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, t->sv) != 0) return -1;
@@ -46,7 +47,7 @@ static int start(grpc_test_t *t, const uint8_t *fx, size_t fx_len) {
     memset(&cfg, 0, sizeof cfg);
     cfg.path = g_path;
     cfg.ws_host = g_host;
-    cfg.xhttp_mode = "grpc";
+    cfg.xhttp_mode = mode;
     cfg.peer_host = g_peer;
 
     t->th = transport_xhttp_tcp.open(t->sv[0], &cfg);
@@ -79,6 +80,10 @@ static int start(grpc_test_t *t, const uint8_t *fx, size_t fx_len) {
     return 0;
 }
 
+static int start(grpc_test_t *t, const uint8_t *fx, size_t fx_len) {
+    return start_mode(t, fx, fx_len, "grpc");
+}
+
 static void stop(grpc_test_t *t) {
     if (t->th) transport_xhttp_tcp.close(t->th);
     if (t->sv[0] >= 0) close(t->sv[0]);
@@ -104,6 +109,24 @@ static int client_contains(grpc_test_t *t, const char *needle) {
     size_t n = strlen(needle);
     for (size_t i = 0; i + n <= t->client_len; ++i)
         if (memcmp(t->client_out + i, needle, n) == 0) return 1;
+    return 0;
+}
+
+static int client_padding_at_least(grpc_test_t *t, const char *prefix,
+                                   size_t minimum) {
+    size_t n = strlen(prefix);
+    for (size_t i = 0; i + n < t->client_len; i++) {
+        if (memcmp(t->client_out + i, prefix, n) != 0) continue;
+        size_t j = i + n;
+        while (j < t->client_len) {
+            unsigned char c = t->client_out[j];
+            if (!((c >= 'A' && c <= 'Z') ||
+                  (c >= 'a' && c <= 'z') ||
+                  (c >= '0' && c <= '9'))) break;
+            j++;
+        }
+        return j - (i + n) >= minimum;
+    }
     return 0;
 }
 
@@ -145,6 +168,18 @@ int main(void) {
         stop(&t);
     }
 
+/* stream-one uses the same normalized slash as the XHTTP server route */
+    {
+        grpc_test_t t;
+        ok("stream-one start",
+           start_mode(&t, fx_happy, sizeof fx_happy, "stream-one") == 0);
+        ok("stream-one path has trailing slash",
+           client_contains(&t, "/Tun/Tun/?x_padding="));
+        ok("stream-one padding meets server minimum",
+           client_padding_at_least(&t, "/Tun/Tun/?x_padding=", 100));
+        stop(&t);
+    }
+
     run("http status 404 rejected", fx_status404, sizeof fx_status404,
         TRANSPORT_ERR, NULL);
     run("grpc status 12 rejected", fx_grpc12, sizeof fx_grpc12,
@@ -157,6 +192,42 @@ int main(void) {
         TRANSPORT_ERR, NULL);
     run("missing status rejected", fx_no_status, sizeof fx_no_status,
         TRANSPORT_ERR, NULL);
+
+/* xray ends every stream-one response with END_STREAM and then RST_STREAM
+   NO_ERROR to stop the upload; that is a clean end, a bare NO_ERROR reset
+   before the response finished is still a truncation */
+    {
+        static const uint8_t fx_one_done[] = {
+            0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x01, 0x01, 0x04, 0x00, 0x00, 0x00, 0x01, 0x88,
+            0x00, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 'h', 'i',
+            0x00, 0x00, 0x04, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x00,
+        };
+        static const uint8_t fx_one_cut[] = {
+            0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x01, 0x01, 0x04, 0x00, 0x00, 0x00, 0x01, 0x88,
+            0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 'h', 'i',
+            0x00, 0x00, 0x04, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x00,
+        };
+        grpc_test_t t;
+        uint8_t buf[64];
+        size_t total = 0;
+        ok("stream-one finished start",
+           start_mode(&t, fx_one_done, sizeof fx_one_done, "stream-one") == 0);
+        int rc = drain(&t, buf, sizeof buf, &total);
+        ok("reset after a complete response is a clean end",
+           rc == TRANSPORT_EOF && total == 2 && memcmp(buf, "hi", 2) == 0);
+        stop(&t);
+        ok("stream-one cut start",
+           start_mode(&t, fx_one_cut, sizeof fx_one_cut, "stream-one") == 0);
+        rc = drain(&t, buf, sizeof buf, &total);
+        ok("reset before the response ended is an error", rc == TRANSPORT_ERR);
+        stop(&t);
+    }
 
 /* half close ends the upload stream after a clean relay */
     {

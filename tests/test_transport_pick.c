@@ -55,7 +55,7 @@ int main(void) {
     check_link("trojan://password@1.2.3.4:443?security=tls&type=ws&sni=ex.com&path=%2F#t", 1);
     check_link("socks5://u:p@1.2.3.4:1080#s", 1);
     check_link("http://1.2.3.4:8080#h", 1);
-/* quic only: the link is valid and connectable, but only the go core's own
+/* quic only: the link is valid and connectable, but only senko-core's own
    bundled client speaks it, so no senko transport_vt_t exists for it */
     check_link("hysteria2://pw@1.2.3.4:443?sni=ex.com#h", 0);
     check_link("hy2://pw@1.2.3.4:443?sni=ex.com#h", 0);

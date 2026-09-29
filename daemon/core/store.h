@@ -89,6 +89,15 @@ store_status_t store_refresh_sub(store_t *st, size_t sub_index,
                                  const char *blob, size_t blob_len,
                                  size_t *out_added);
 
+/* the same, with what the feed held that senko cannot run counted in stats and
+   kept as VL_PROTO_UNSUPPORTED rows. moved (STORE_MAX_SERVERS entries, may be
+   NULL) receives each old row's new index, -1 for a row that is gone, so
+   state keyed by index survives the renumbering */
+store_status_t store_refresh_sub_ex(store_t *st, size_t sub_index,
+                                    const char *blob, size_t blob_len,
+                                    size_t *out_added, cfg_import_stats_t *stats,
+                                    int *moved);
+
 store_status_t store_remove(store_t *st, size_t index);
 store_status_t store_move_manual(store_t *st, size_t index, size_t to_pos);
 

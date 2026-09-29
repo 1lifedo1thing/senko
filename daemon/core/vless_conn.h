@@ -32,6 +32,7 @@ typedef struct {
 
     uint8_t     uuid[VLESS_UUID_LEN];
     vless_dest_t dest;
+    vless_cmd_t cmd;
     const char *flow; /* borrow the flow from the server configuration */
 
     uint8_t     rbuf[VC_RESP_HDR_MAX];

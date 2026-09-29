@@ -13,6 +13,8 @@ extern "C" {
 #define TRANSPORT_EOF         (-3) /* close after the peer ends the stream */
 #define TRANSPORT_ERR         (-4) /* close after an unrecoverable failure */
 
+typedef struct transport_tls_shared transport_tls_shared_t;
+
 /* borrow config strings so transport opens can outlive the caller stack */
 typedef struct {
     const char *sni; /* preserve the tls server name */
@@ -24,7 +26,11 @@ typedef struct {
     const char *xhttp_mode; /* preserve the xhttp stream mode */
     const char *peer_host; /* dial target host, last authority fallback */
     int insecure; /* skip certificate and hostname verification (allowInsecure) */
+    transport_tls_shared_t *shared_ctx; /* borrowed trust store for one backend run */
 } transport_tls_cfg_t;
+
+transport_tls_shared_t *transport_tls_shared_create(const transport_tls_cfg_t *cfg);
+void transport_tls_shared_destroy(transport_tls_shared_t *shared);
 
 typedef struct transport_vt {
 /* open from a connected fd without blocking the shared loop */

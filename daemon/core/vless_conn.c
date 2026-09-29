@@ -11,6 +11,7 @@ vc_status_t vless_conn_init(vless_conn_t *c,
     memset(c, 0, sizeof *c);
     memcpy(c->uuid, uuid, VLESS_UUID_LEN);
     c->dest  = *dest;
+    c->cmd = VLESS_CMD_TCP;
     c->flow  = (flow && flow[0]) ? flow : NULL;
     c->state = VC_ST_INIT;
     return VC_OK;
@@ -26,7 +27,7 @@ vc_status_t vless_conn_make_request(vless_conn_t *c,
     vless_request_t req;
     memset(&req, 0, sizeof req);
     memcpy(req.uuid, c->uuid, VLESS_UUID_LEN);
-    req.cmd  = VLESS_CMD_TCP; /* tun2socks only ever connects tcp here */
+    req.cmd  = c->cmd;
     req.dest = c->dest;
     req.flow = c->flow; /* advertise flow so vision servers accept us */
 

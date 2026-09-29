@@ -121,10 +121,11 @@ int main(void) {
                   "SET trace 1\n"
                   "SET socks_public 1\n"
                   "SET block_response nxdomain\n") == 0);
+    /* a config saved while pf existed pins "c" and a pf variant: the pin now
+       means the utun tunnel, and the variant is dropped instead of failing */
     ok("every override comes back as it was written",
        storefile_load(&loaded, &loaded_settings, cfg) == STOREFILE_OK &&
-       loaded_settings.force_backend == SENKO_BACKEND_C &&
-       loaded_settings.force_pf_mode == 5 &&
+       loaded_settings.force_backend == SENKO_BACKEND_UTUN &&
        loaded_settings.sub_ignore_gating == 1 &&
        loaded_settings.trace == 1 &&
        loaded_settings.socks_public == 1 &&
@@ -134,22 +135,31 @@ int main(void) {
         daemon_settings_t probe;
         daemon_settings_defaults(&probe);
         ok("the defaults pin nothing",
-           probe.force_backend == SENKO_BACKEND_AUTO &&
-           probe.force_pf_mode == SENKO_PF_MODE_AUTO &&
-           probe.trace == 0);
-        ok("auto restores the ladder",
-           daemon_settings_set(&probe, "force_pf_mode", 13, "auto", 4) == SETTINGS_OK &&
-           probe.force_pf_mode == SENKO_PF_MODE_AUTO);
-        ok("a pf variant this build does not have is refused",
-           daemon_settings_set(&probe, "force_pf_mode", 13, "8", 1) == SETTINGS_ERR_VALUE);
+           probe.force_backend == SENKO_BACKEND_AUTO && probe.trace == 0);
+        ok("retired pf keys are accepted and dropped",
+           daemon_settings_set(&probe, "force_pf_mode", 13, "8", 1) == SETTINGS_OK &&
+           daemon_settings_set(&probe, "dns_local_port", 14, "10053", 5) == SETTINGS_OK);
         ok("a backend name this build does not have is refused",
            daemon_settings_set(&probe, "force_backend", 13, "rust", 4) == SETTINGS_ERR_VALUE);
+        ok("the old backend pin loads and writes the senko-core name",
+           daemon_settings_set(&probe, "force_backend", 13, "go", 2) == SETTINGS_OK &&
+           probe.force_backend == SENKO_BACKEND_CORE &&
+           strcmp(daemon_settings_backend_name(probe.force_backend), "senko-core") == 0);
+        ok("the senko-core pin round trips",
+           daemon_settings_set(&probe, "force_backend", 13, "senko-core", 10) == SETTINGS_OK &&
+           probe.force_backend == SENKO_BACKEND_CORE);
+        ok("embedded utun is a round-trippable backend pin",
+           daemon_settings_set(&probe, "force_backend", 13, "utun", 4) == SETTINGS_OK &&
+           probe.force_backend == SENKO_BACKEND_UTUN &&
+           strcmp(daemon_settings_backend_name(probe.force_backend), "utun") == 0);
+        ok("auto clears the embedded utun pin",
+           daemon_settings_set(&probe, "force_backend", 13, "auto", 4) == SETTINGS_OK);
         char dump[1024];
         size_t dump_len = 0;
         ok("the dump emits every override in the words SET takes back",
            daemon_settings_serialize(&probe, dump, sizeof dump, &dump_len) == 0 &&
            strstr(dump, "SET force_backend auto\n") != NULL &&
-           strstr(dump, "SET force_pf_mode auto\n") != NULL &&
+           strstr(dump, "force_pf_mode") == NULL && strstr(dump, "dns_local_port") == NULL &&
            strstr(dump, "SET sub_ignore_gating 0\n") != NULL &&
            strstr(dump, "SET trace 0\n") != NULL);
     }

@@ -46,8 +46,8 @@ typedef struct {
     vless_dest_t dest;
     int          handshake_done;
 
-    /* Staging buffer for partial incoming AEAD frames */
-    uint8_t      dec_stage[68 * 1024];
+    /* one max aead frame plus the next bounded socket read */
+    uint8_t      dec_stage[33 * 1024];
     size_t       dec_stage_len;
 } shadowsocks_client_t;
 

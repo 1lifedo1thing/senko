@@ -31,7 +31,20 @@ static int same_server(const vl_server_t *a, const vl_server_t *b) {
         && strcmp(a->path, b->path) == 0
         && strcmp(a->ws_host, b->ws_host) == 0
         && strcmp(a->mode, b->mode) == 0
-        && strcmp(a->encryption, b->encryption) == 0;
+        && strcmp(a->encryption, b->encryption) == 0
+        && strcmp(a->unsupported, b->unsupported) == 0;
+}
+
+/* the row a selection lived in: one node can sit in several named rows, so
+   the name decides first, and a renamed row still finds its node */
+static int find_selection(const store_t *st, const vl_server_t *prev) {
+    int fallback = -1;
+    for (size_t i = 0; i < st->n; ++i) {
+        if (!same_server(&st->servers[i], prev)) continue;
+        if (strcmp(st->servers[i].remark, prev->remark) == 0) return (int)i;
+        if (fallback < 0) fallback = (int)i;
+    }
+    return fallback;
 }
 
 static int section_seen(const int *order, size_t n, int id) {
@@ -280,13 +293,17 @@ static void drop_group(store_t *st, int grp) {
    host) so users behind ISPs that block a given IP still have a working
    route; collapsing those onto "the first" left most users with exactly one,
    arbitrarily-chosen endpoint per profile and no fallback when it was the
-   blocked or unstable one. */
+   blocked or unstable one. the name is part of the identity: the app folds a
+   name into one row, and an xray json feed repeats single-server profiles
+   inside its auto-select profile, so matching on the wire config alone
+   dropped every row after the first that shared a node */
 static size_t unique_servers(vl_server_t *servers, size_t count) {
     size_t unique = 0;
     for (size_t i = 0; i < count; ++i) {
         int duplicate = 0;
         for (size_t j = 0; j < unique; ++j) {
-            if (same_server(&servers[i], &servers[j])) {
+            if (same_server(&servers[i], &servers[j]) &&
+                strcmp(servers[i].remark, servers[j].remark) == 0) {
                 duplicate = 1;
                 break;
             }
@@ -299,6 +316,27 @@ static size_t unique_servers(vl_server_t *servers, size_t count) {
 store_status_t store_refresh_sub(store_t *st, size_t sub_index,
                                  const char *blob, size_t blob_len,
                                  size_t *out_added) {
+    return store_refresh_sub_ex(st, sub_index, blob, blob_len, out_added, NULL, NULL);
+}
+
+/* where a row of the refreshed subscription went: the fresh row with the same
+   wire identity and name, else the first with the same identity */
+static int refreshed_row(const vl_server_t *old, const vl_server_t *fresh,
+                         size_t added, size_t base) {
+    int fallback = -1;
+    for (size_t j = 0; j < added; ++j) {
+        if (!same_server(&fresh[j], old)) continue;
+        if (strcmp(fresh[j].remark, old->remark) == 0) return (int)(base + j);
+        if (fallback < 0) fallback = (int)(base + j);
+    }
+    return fallback;
+}
+
+store_status_t store_refresh_sub_ex(store_t *st, size_t sub_index,
+                                    const char *blob, size_t blob_len,
+                                    size_t *out_added, cfg_import_stats_t *stats,
+                                    int *moved) {
+    if (stats) memset(stats, 0, sizeof *stats);
     if (!st || !blob) return STORE_ERR_ARG;
     if (sub_index >= STORE_MAX_SUBS || !st->subs[sub_index].used)
         return STORE_ERR_RANGE;
@@ -316,11 +354,19 @@ store_status_t store_refresh_sub(store_t *st, size_t sub_index,
     vl_server_t *fresh = (vl_server_t *)calloc(room, sizeof *fresh);
     if (!fresh) return STORE_ERR_FULL;
     size_t added = 0;
-    cfg_parse_subscription(blob, blob_len, fresh, room, &added);
+    cfg_parse_subscription_rows(blob, blob_len, fresh, room, &added, stats);
     added = unique_servers(fresh, added);
     if (added == 0) {
         free(fresh);
         return STORE_ERR_PARSE;
+    }
+    if (moved) {
+        size_t kept = 0, base = st->n - old_group_count;
+        for (size_t i = 0; i < STORE_MAX_SERVERS; ++i) moved[i] = -1;
+        for (size_t i = 0; i < st->n; ++i)
+            moved[i] = st->group[i] == (int)sub_index
+                ? refreshed_row(&st->servers[i], fresh, added, base)
+                : (int)kept++;
     }
     drop_group(st, (int)sub_index);
     memcpy(&st->servers[st->n], fresh, added * sizeof *fresh);
@@ -329,12 +375,7 @@ store_status_t store_refresh_sub(store_t *st, size_t sub_index,
     free(fresh);
     if (out_added) *out_added = added;
 
-    if (had_sel) {
-        st->selected = -1;
-        for (size_t i = 0; i < st->n; ++i) {
-            if (same_server(&st->servers[i], &prev_sel)) { st->selected = (int)i; break; }
-        }
-    }
+    if (had_sel) st->selected = find_selection(st, &prev_sel);
     return STORE_OK;
 }
 
@@ -393,15 +434,7 @@ store_status_t store_move_manual(store_t *st, size_t index, size_t to_pos) {
     memcpy(st->servers, next, out * sizeof next[0]);
     memcpy(st->group, next_group, out * sizeof next_group[0]);
     st->n = out;
-    st->selected = -1;
-    if (had_selected) {
-        for (size_t i = 0; i < st->n; ++i) {
-            if (same_server(&st->servers[i], &selected)) {
-                st->selected = (int)i;
-                break;
-            }
-        }
-    }
+    st->selected = had_selected ? find_selection(st, &selected) : -1;
     return STORE_OK;
 }
 
@@ -424,15 +457,7 @@ store_status_t store_remove_sub(store_t *st, size_t sub_index) {
         break;
     }
 
-    st->selected = -1;
-    if (had_sel) {
-        for (size_t i = 0; i < st->n; ++i) {
-            if (same_server(&st->servers[i], &prev_sel)) {
-                st->selected = (int)i;
-                break;
-            }
-        }
-    }
+    st->selected = had_sel ? find_selection(st, &prev_sel) : -1;
     return STORE_OK;
 }
 
@@ -575,16 +600,48 @@ static int pct_encode(const char *src, char *dst, size_t cap) {
     return (int)o;
 }
 
+/* userinfo also loses its meaning to '@', ':' and '/' */
+static int pct_encode_user(const char *src, char *dst, size_t cap) {
+    static const char hex[] = "0123456789ABCDEF";
+    size_t o = 0;
+    for (const unsigned char *p = (const unsigned char *)src; *p; ++p) {
+        unsigned char c = *p;
+        int special = (c <= 0x20 || c == '%' || c == '#' || c == '&' ||
+                       c == '?' || c == '=' || c == '+' ||
+                       c == '@' || c == ':' || c == '/');
+        if (special) {
+            if (o + 3 >= cap) return -1;
+            dst[o++] = '%';
+            dst[o++] = hex[c >> 4];
+            dst[o++] = hex[c & 0xf];
+        } else {
+            if (o + 1 >= cap) return -1;
+            dst[o++] = (char)c;
+        }
+    }
+    if (o >= cap) return -1;
+    dst[o] = '\0';
+    return (int)o;
+}
+
 static int build_link(const vl_server_t *s, char *buf, size_t cap) {
+    /* a placeholder has no link; store_serialize writes it as USRV */
+    if (s->proto == VL_PROTO_UNSUPPORTED) return -1;
     if (s->proto == VL_PROTO_SOCKS5 || s->proto == VL_PROTO_HTTP || s->proto == VL_PROTO_HTTPS) {
         const char *scheme = (s->proto == VL_PROTO_SOCKS5) ? "socks5" :
                              (s->proto == VL_PROTO_HTTPS) ? "https" : "http";
         int n;
+        /* '@', ':' and '#' in a login would otherwise cut the saved link apart */
+        char enc_user[3 * sizeof s->user];
+        char enc_pass[3 * sizeof s->pass];
+        if (pct_encode_user(s->user, enc_user, sizeof enc_user) < 0 ||
+            pct_encode_user(s->pass, enc_pass, sizeof enc_pass) < 0)
+            return -1;
         if (s->user[0]) {
             if (s->pass[0]) {
-                n = snprintf(buf, cap, "%s://%s:%s@%s:%u", scheme, s->user, s->pass, s->host, s->port);
+                n = snprintf(buf, cap, "%s://%s:%s@%s:%u", scheme, enc_user, enc_pass, s->host, s->port);
             } else {
-                n = snprintf(buf, cap, "%s://%s@%s:%u", scheme, s->user, s->host, s->port);
+                n = snprintf(buf, cap, "%s://%s@%s:%u", scheme, enc_user, s->host, s->port);
             }
         } else {
             n = snprintf(buf, cap, "%s://%s:%u", scheme, s->host, s->port);
@@ -602,8 +659,10 @@ static int build_link(const vl_server_t *s, char *buf, size_t cap) {
     }
 
     if (s->proto == VL_PROTO_TROJAN) {
+        char enc_pass[3 * sizeof s->pass];
+        if (pct_encode_user(s->pass, enc_pass, sizeof enc_pass) < 0) return -1;
         int n = snprintf(buf, cap, "trojan://%s@%s:%u?security=%s&type=%s",
-                         s->pass, s->host, s->port,
+                         enc_pass, s->host, s->port,
                          security_name(s->security), net_name(s->net));
         if (n < 0 || (size_t)n >= cap) return -1;
         size_t off = (size_t)n;
@@ -652,9 +711,9 @@ static int build_link(const vl_server_t *s, char *buf, size_t cap) {
     }
 
     if (s->proto == VL_PROTO_SHADOWSOCKS) {
-        char userinfo[256];
+        char userinfo[sizeof s->user + sizeof s->pass + 2];
         snprintf(userinfo, sizeof userinfo, "%s:%s", s->user, s->pass);
-        char b64_userinfo[512];
+        char b64_userinfo[4 * sizeof userinfo / 3 + 8];
         size_t elen = 0;
         b64_encode((const unsigned char *)userinfo, strlen(userinfo), b64_userinfo, sizeof b64_userinfo, &elen);
         int n = snprintf(buf, cap, "ss://%s@%s:%u", b64_userinfo, s->host, s->port);
@@ -671,10 +730,10 @@ static int build_link(const vl_server_t *s, char *buf, size_t cap) {
     }
 
     if (s->proto == VL_PROTO_HYSTERIA2) {
-        char enc_pass[192];
-        char enc_sni[512];
+        char enc_pass[3 * sizeof s->pass];
+        char enc_sni[3 * sizeof s->sni];
         char port_part[136];
-        if (pct_encode(s->pass, enc_pass, sizeof enc_pass) < 0) return -1;
+        if (pct_encode_user(s->pass, enc_pass, sizeof enc_pass) < 0) return -1;
         if (pct_encode(s->sni, enc_sni, sizeof enc_sni) < 0) return -1;
         if (s->port_hop[0])
             snprintf(port_part, sizeof port_part, "%s", s->port_hop);
@@ -707,8 +766,10 @@ static int build_link(const vl_server_t *s, char *buf, size_t cap) {
         return (int)off;
     }
 
+    char enc_id[3 * sizeof s->uuid];
+    if (pct_encode_user(s->uuid, enc_id, sizeof enc_id) < 0) return -1;
     int n = snprintf(buf, cap, "vless://%s@%s:%u?security=%s&type=%s",
-                     s->uuid, s->host, s->port,
+                     enc_id, s->host, s->port,
                      security_name(s->security), net_name(s->net));
     if (n < 0 || (size_t)n >= cap) return -1;
     size_t off = (size_t)n;
@@ -817,8 +878,25 @@ store_status_t store_serialize(const store_t *st, char *buf, size_t cap, size_t 
     off += (size_t)n;
 
     for (size_t i = 0; i < st->n; ++i) {
-        char link[2048];
-        if (build_link(&st->servers[i], link, sizeof link) < 0) return STORE_ERR_FULL;
+        char link[8192]; /* the parser takes links this long */
+        const vl_server_t *sv = &st->servers[i];
+        if (sv->proto == VL_PROTO_UNSUPPORTED) {
+/* its own verb, so an older senkod skips the row instead of misreading it.
+   "-" stands for an empty field */
+            char host[3 * sizeof sv->host], why[3 * sizeof sv->unsupported];
+            char remark[3 * sizeof sv->remark];
+            if (pct_encode(sv->host, host, sizeof host) < 0 ||
+                pct_encode(sv->unsupported, why, sizeof why) < 0 ||
+                pct_encode(sv->remark, remark, sizeof remark) < 0)
+                return STORE_ERR_FULL;
+            n = snprintf(buf + off, cap - off, "USRV %d %u %s %s %s\n", st->group[i],
+                         (unsigned)sv->port, host[0] ? host : "-",
+                         why[0] ? why : "-", remark[0] ? remark : "-");
+            if (n < 0 || (size_t)n >= cap - off) return STORE_ERR_FULL;
+            off += (size_t)n;
+            continue;
+        }
+        if (build_link(sv, link, sizeof link) < 0) return STORE_ERR_FULL;
         n = snprintf(buf + off, cap - off, "SRV %d %s\n", st->group[i], link);
         if (n < 0 || (size_t)n >= cap - off) return STORE_ERR_FULL;
         off += (size_t)n;
@@ -843,6 +921,43 @@ static int parse_int(const char *s, const char *end, int *out) {
     }
     if (!any) return -1;
     *out = neg ? (int)-v : (int)v;
+    return 0;
+}
+
+/* one space separated, percent encoded USRV field; "-" is empty */
+static int placeholder_field(const char **p, const char *end, int last,
+                             char *out, size_t cap) {
+    const char *s = *p;
+    const char *e = last ? end : memchr(s, ' ', (size_t)(end - s));
+    if (!e || e == s) return -1;
+    *p = e < end ? e + 1 : e;
+    if (e - s == 1 && *s == '-') {
+        out[0] = '\0';
+        return 0;
+    }
+    return url_percent_decode(s, (size_t)(e - s), out, cap) < 0 ? -1 : 0;
+}
+
+/* "<group> <port> <host> <why> <remark>" as store_serialize writes it */
+static int parse_placeholder(const char *p, const char *end, vl_server_t *sv,
+                             int *group) {
+    char port_text[8];
+    const char *sp = memchr(p, ' ', (size_t)(end - p));
+    int grp = 0, port = 0;
+    if (!sp || parse_int(p, sp, &grp) != 0) return -1;
+    p = sp + 1;
+    memset(sv, 0, sizeof *sv);
+    if (placeholder_field(&p, end, 0, port_text, sizeof port_text) != 0 ||
+        parse_int(port_text, port_text + strlen(port_text), &port) != 0 ||
+        port < 0 || port > 65535 ||
+        placeholder_field(&p, end, 0, sv->host, sizeof sv->host) != 0 ||
+        placeholder_field(&p, end, 0, sv->unsupported, sizeof sv->unsupported) != 0 ||
+        placeholder_field(&p, end, 1, sv->remark, sizeof sv->remark) != 0 ||
+        (!sv->host[0] && !sv->remark[0]))
+        return -1;
+    sv->proto = VL_PROTO_UNSUPPORTED;
+    sv->port = (uint16_t)port;
+    *group = grp;
     return 0;
 }
 
@@ -1014,7 +1129,7 @@ store_status_t store_deserialize(store_t *st, const char *buf, size_t len) {
             if (sp) {
                 int grp;
                 if (parse_int(rest, sp, &grp) == 0) {
-                    char link[2048];
+                    char link[8192];
                     size_t ll = (size_t)(le - sp - 1);
                     if (ll < sizeof link && st->n < STORE_MAX_SERVERS) {
                         memcpy(link, sp + 1, ll); link[ll] = '\0';
@@ -1025,6 +1140,9 @@ store_status_t store_deserialize(store_t *st, const char *buf, size_t len) {
                     }
                 }
             }
+        } else if (llen >= 5 && memcmp(p, "USRV ", 5) == 0 && st->n < STORE_MAX_SERVERS) {
+            if (parse_placeholder(p + 5, le, &st->servers[st->n], &st->group[st->n]) == 0)
+                st->n++;
         } else if (llen >= 4 && memcmp(p, "SEL ", 4) == 0) {
             parse_int(p + 4, le, &want_sel);
         }

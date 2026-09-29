@@ -4,7 +4,7 @@
 const transport_vt_t *transport_for_server(const vl_server_t *s) {
     if (!s) return NULL;
 
-/* quic/udp only. the go backend dials it with its own bundled hysteria
+/* quic/udp only. senko-core dials it with its own bundled hysteria
    client; no senko transport speaks this wire format */
     if (s->proto == VL_PROTO_HYSTERIA2) return NULL;
 

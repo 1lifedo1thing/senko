@@ -30,7 +30,9 @@ typedef struct {
     uint8_t address[16];
     uint8_t prefix;
     uint8_t address_len;
-    uint64_t hits;
+    /* the counters are atomic, and armv7 ldrexd faults (EXC_ARM_DA_ALIGN) on
+       the 4 byte alignment its abi gives a uint64_t inside a struct */
+    uint64_t hits __attribute__((aligned(8)));
 } rule_t;
 
 typedef struct {

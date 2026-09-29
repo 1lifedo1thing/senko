@@ -58,6 +58,14 @@ static uint16_t prng_grease(prng_t *p) {
     return v[prng_next(p) & 15];
 }
 
+/* go's tls parser rejects a hello that repeats an extension, so one hello in
+   sixteen failed reality auth; chrome keeps its two grease extensions apart
+   the same way */
+static uint16_t distinct_grease(prng_t *p, uint16_t other) {
+    uint16_t value = prng_grease(p);
+    return value == other ? (uint16_t)(value ^ 0x1010) : value;
+}
+
 static void ext_sni(w_t *w, const char *sni) {
     size_t sl = strlen(sni);
     w_u16(w, 0x0000);
@@ -213,8 +221,12 @@ static void ciphers_firefox(w_t *w) {
       for (size_t i = 0; i < sizeof c / sizeof c[0]; i++) w_u16(w, c[i]);
     w_patch_u16(w, at);
 }
+/* edge really does offer 0x1302, but the reality handshake rides a sha-256
+   only key schedule and fails RH_ERR_SUITE on anything but 0x1301 and 0x1303.
+   a fronted server mirrors whatever suite its dest picked, so any dest that
+   prefers aes-256-gcm-sha384 turned every edge connection into "suite (-5)" */
 static void ciphers_edge(w_t *w, uint16_t grease) {
-    static const uint16_t c[] = {0x1301,0x1302,0x1303,0xc02b,0xc02f,0xc02c,
+    static const uint16_t c[] = {0x1301,0x1303,0xc02b,0xc02f,0xc02c,
         0xc030,0xcca9,0xcca8,0xc013,0xc014,0x002f,0x0035};
     size_t at = w_mark_u16(w);
       w_u16(w, grease);
@@ -231,7 +243,7 @@ static void ciphers_min(w_t *w) { /* randomized: 1301 + 1303 (our two) */
 
 static void exts_chrome(w_t *w, const tls_ch_params_t *p, prng_t *pr, int edge) {
     (void)edge; /* edge == chrome here */
-    uint16_t g1 = prng_grease(pr), g2 = prng_grease(pr);
+    uint16_t g1 = prng_grease(pr), g2 = distinct_grease(pr, g1);
     uint16_t gg = prng_grease(pr), gv = prng_grease(pr);
     size_t exts = w_mark_u16(w);
       ext_grease_empty(w, g1);
@@ -258,7 +270,7 @@ static void exts_qq(w_t *w, const tls_ch_params_t *p, prng_t *pr) {
 }
 
 static void exts_edge(w_t *w, const tls_ch_params_t *p, prng_t *pr) {
-    uint16_t g1 = prng_grease(pr), g2 = prng_grease(pr);
+    uint16_t g1 = prng_grease(pr), g2 = distinct_grease(pr, g1);
     uint16_t gg = prng_grease(pr), gv = prng_grease(pr);
     size_t exts = w_mark_u16(w);
       ext_grease_empty(w, g1);

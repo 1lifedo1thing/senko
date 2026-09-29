@@ -34,8 +34,8 @@ typedef enum {
     SESS_ERR     = -2 /* move the session to the terminal error state */
 } sess_status_t;
 
-/* keep enough client output queued to avoid truncating package downloads */
-#define SESS_BUF  (64 * 1024)
+/* backpressure keeps large transfers intact without reserving 128 kib per flow */
+#define SESS_BUF  (16 * 1024)
 
 typedef struct {
     sess_state_t state;
@@ -44,6 +44,7 @@ typedef struct {
     void                 *th; /* borrow the loop-owned transport handle */
 
     vl_proto_t            proto;
+    int                   transparent_client;
     union {
         vless_conn_t         vc;
         socks5_client_t      s5c;
@@ -54,6 +55,8 @@ typedef struct {
 
     uint8_t client_stage[512];
     size_t  client_stage_len;
+    uint8_t remote_stage[512];
+    size_t  remote_stage_len;
 
 /* queue local output because socket writes can apply backpressure */
     uint8_t to_client[SESS_BUF];
@@ -63,6 +66,7 @@ typedef struct {
     uint8_t to_remote[SESS_BUF];
     size_t  to_remote_len;
     int     to_remote_raw;
+    int     to_remote_wait_read;
 
 /* track vision framing so direct mode can splice raw bytes safely */
     int            vision_on;
@@ -134,12 +138,20 @@ sess_status_t session_start_from_socks_dest(session_t *s,
                                             const uint8_t *payload,
                                             size_t payload_len);
 
-/* pf-transparent clients: no socks5 reply on the local socket */
+/* captured clients never receive a socks5 control reply */
 sess_status_t session_start_from_transparent_dest(session_t *s,
                                                   const vless_dest_t *dest,
                                                   const uint8_t *payload,
                                                   size_t payload_len,
                                                   size_t *payload_used_out);
+
+/* VLESS UDP carries datagram frames as the session's byte stream. Vision
+   requires MUX/XUDP, while ordinary VLESS uses its UDP command */
+sess_status_t session_start_from_transparent_udp(session_t *s,
+                                                const vless_dest_t *dest,
+                                                const uint8_t *first_frame,
+                                                size_t frame_len,
+                                                size_t *frame_used_out);
 
 /* feed local bytes and report consumed input under backpressure */
 sess_status_t session_feed_client(session_t *s,

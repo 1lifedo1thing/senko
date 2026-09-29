@@ -35,20 +35,20 @@ int main(void) {
     ok("hit winning rule", rules.entries[1].hits == 2 && rules.entries[2].hits == 0);
 
     ok("ipv4 add", ruleset_add_text(&rules,
-       "direct ip-cidr 192.0.2.129/24", 31, &index) == RULES_OK);
+       "direct ip-cidr 192.0.2.129/24", 29, &index) == RULES_OK);
     ok("ipv4 canonical", strcmp(rules.entries[index].value, "192.0.2.0/24") == 0);
     ok("ipv4 match", ruleset_match_ip(&rules, "192.0.2.240", &index) ==
        RULE_ACTION_DIRECT);
     ok("ipv4 miss", ruleset_match_ip(&rules, "192.0.3.1", &index) ==
        RULE_ACTION_PROXY && index == SIZE_MAX);
     ok("ipv6 add", ruleset_add_text(&rules,
-       "block ip-cidr 2001:db8:1::f/48", 31, NULL) == RULES_OK);
+       "block ip-cidr 2001:db8:1::f/48", 30, NULL) == RULES_OK);
     ok("ipv6 match", ruleset_match_ip(&rules, "2001:db8:1::123", &index) ==
        RULE_ACTION_BLOCK);
 
     size_t before = rules.count;
     ok("duplicate changes action", ruleset_add_text(&rules,
-       "block ip-cidr 192.0.2.5/24", 28, &index) == RULES_OK &&
+       "block ip-cidr 192.0.2.5/24", 26, &index) == RULES_OK &&
        rules.count == before && rules.entries[index].action == RULE_ACTION_BLOCK);
     ok("ip block priority", ruleset_match_ip(&rules, "192.0.2.2", NULL) ==
        RULE_ACTION_BLOCK);
