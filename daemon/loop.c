@@ -1,6 +1,6 @@
 #define _DEFAULT_SOURCE
 #include "loop.h"
-#include "pf_natlook.h"
+#include "senko_time.h"
 #include "senko_trace.h"
 #include "socks5.h"
 #include <stdio.h>
@@ -86,9 +86,18 @@ loop_status_t loop_init(loop_t *lp, uint16_t listen_port, int bind_public,
                         const char *user, const char *pass) {
     if (!lp || !vt || !dial) return LOOP_ERR_ARG;
     if (proto == VL_PROTO_VLESS && !uuid) return LOOP_ERR_ARG;
-    memset(lp, 0, sizeof *lp);
+    /* the 96 connection slots are 14 MB. clearing them here dirtied every page
+       before the first connection and alone pushed senkod past the 18 MB
+       jetsam limit ios 16 gives a launchd daemon. alloc_conn clears a slot when
+       it takes it, so only used has to read as free, and reading an untouched
+       zero page leaves it clean */
+    const size_t conns_at = offsetof(loop_t, conns);
+    const size_t tail_at = conns_at + sizeof lp->conns;
+    memset(lp, 0, conns_at);
+    memset((uint8_t *)lp + tail_at, 0, sizeof *lp - tail_at);
+    for (size_t i = 0; i < LOOP_MAX_CONNS; ++i)
+        if (lp->conns[i].used) lp->conns[i].used = 0;
     lp->listen_fd = -1;
-    lp->tproxy_fd = -1;
     lp->wake_rd = -1;
     lp->wake_wr = -1;
     lp->vt = vt;
@@ -303,7 +312,7 @@ static void service_opening_local(loop_t *lp, loop_conn_t *c, short local_re) {
         }
     }
 
-    if (!c->transparent && !c->socks_greet_done && c->prebuf_len > 0) {
+    if (!c->socks_greet_done && c->prebuf_len > 0) {
         size_t used = 0;
         s5_status_t gr = socks5_parse_greeting(c->prebuf, c->prebuf_len, &used);
         if (gr == S5_OK) {
@@ -399,8 +408,7 @@ static void reap_opening_conns(loop_t *lp) {
 
         if (cancelled || !th) {
             if (!cancelled && !th)
-                fprintf(stderr, "senkod: transport open failed (tproxy=%d)\n",
-                        c->transparent);
+                fprintf(stderr, "senkod: transport open failed\n");
             if (c->local_fd >= 0) close(c->local_fd);
             if (th && c->open_vt) c->open_vt->close(th);
             if (c->remote_fd >= 0) close(c->remote_fd);
@@ -410,22 +418,7 @@ static void reap_opening_conns(loop_t *lp) {
 
         c->th = th;
         sess_status_t ir;
-        if (c->transparent) {
-            ir = session_init(&c->sess, c->open_vt, th, c->open_proto,
-                              c->open_proto == VL_PROTO_VLESS ? c->open_uuid : NULL,
-                              c->open_flow[0] ? c->open_flow : NULL,
-                              c->open_user[0] ? c->open_user : NULL,
-                              c->open_pass[0] ? c->open_pass : NULL);
-            if (ir == SESS_OK) {
-                size_t pu = 0;
-                ir = session_start_from_transparent_dest(&c->sess, &c->tproxy_dest,
-                                                         c->prebuf, c->prebuf_len, &pu);
-                if (ir == SESS_OK && pu > 0) {
-                    memmove(c->prebuf, c->prebuf + pu, c->prebuf_len - pu);
-                    c->prebuf_len -= pu;
-                }
-            }
-        } else if (c->socks_greet_done) {
+        if (c->socks_greet_done) {
             ir = session_init_after_greet(&c->sess, c->open_vt, th, c->open_proto,
                                           c->open_proto == VL_PROTO_VLESS ? c->open_uuid : NULL,
                                           c->open_flow[0] ? c->open_flow : NULL,
@@ -513,54 +506,6 @@ void loop_stop(loop_t *lp) {
     lp->active = 0; /* refuse new clients until a server is selected again */
 }
 
-static loop_status_t loop_enable_tproxy_mode(loop_t *lp, uint16_t port,
-                                             int sockname_dest) {
-    if (!lp || port == 0) return LOOP_ERR_ARG;
-    loop_disable_tproxy(lp);
-
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) return LOOP_ERR_BIND;
-
-    int yes = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes);
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof addr);
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = sockname_dest ? htonl(INADDR_ANY)
-                                          : htonl(INADDR_LOOPBACK);
-    addr.sin_port = htons(port);
-    if (bind(fd, (struct sockaddr *)&addr, sizeof addr) != 0 ||
-        listen(fd, 32) != 0) {
-        close(fd);
-        return LOOP_ERR_BIND;
-    }
-    set_nonblock(fd);
-    lp->tproxy_fd = fd;
-    lp->tproxy_port = port;
-    lp->tproxy_sockname = sockname_dest;
-    return LOOP_OK;
-}
-
-loop_status_t loop_enable_tproxy(loop_t *lp, uint16_t port) {
-    return loop_enable_tproxy_mode(lp, port, 0);
-}
-
-loop_status_t loop_enable_tproxy_sockname(loop_t *lp, uint16_t port) {
-    return loop_enable_tproxy_mode(lp, port, 1);
-}
-
-void loop_disable_tproxy(loop_t *lp) {
-    if (!lp) return;
-    if (lp->tproxy_fd >= 0) {
-        close(lp->tproxy_fd);
-        lp->tproxy_fd = -1;
-        lp->tproxy_port = 0;
-        lp->tproxy_sockname = 0;
-    }
-    pf_natlook_close();
-}
-
 static void fill_open_fields(loop_t *lp, loop_conn_t *c) {
     c->open_vt = lp->vt;
     c->open_proto = lp->proto;
@@ -640,73 +585,6 @@ static void accept_one(loop_t *lp) {
         close(cfd);
 }
 
-static void accept_tproxy_one(loop_t *lp) {
-    struct sockaddr_in clientaddr;
-    socklen_t addrlen = sizeof clientaddr;
-    int cfd = accept(lp->tproxy_fd, (struct sockaddr *)&clientaddr, &addrlen);
-    if (cfd < 0) return;
-
-    if (!lp->active || !lp->vt || !lp->dial) { close(cfd); return; }
-
-    char host[INET_ADDRSTRLEN];
-    uint16_t dport = 0;
-    if (lp->tproxy_sockname) {
-        struct sockaddr_in dest;
-        socklen_t destlen = sizeof dest;
-        if (getsockname(cfd, (struct sockaddr *)&dest, &destlen) != 0 ||
-            dest.sin_family != AF_INET ||
-            !inet_ntop(AF_INET, &dest.sin_addr, host, sizeof host)) {
-            close(cfd);
-            return;
-        }
-        dport = ntohs(dest.sin_port);
-        /* the wildcard bind that ipfw fwd needs is reachable from the network,
-           and a direct connection to it carries no original destination, so it
-           would either relay to this listener forever or hand a stranger an
-           open proxy */
-        if (dport == lp->tproxy_port) {
-            close(cfd);
-            return;
-        }
-    } else if (pf_natlook_dest(cfd, &clientaddr, lp->tproxy_port,
-                               host, sizeof host, &dport) != 0) {
-        close(cfd);
-        return;
-    }
-
-    lp->tproxy_accept_generation++;
-    snprintf(lp->tproxy_last_host, sizeof lp->tproxy_last_host, "%s", host);
-    lp->tproxy_last_port = dport;
-
-    loop_conn_t *c = alloc_conn(lp);
-    if (!c) {
-        fprintf(stderr, "senkod: drop tproxy: conn cap\n");
-        close(cfd);
-        return;
-    }
-    if (lp->nopening >= LOOP_MAX_OPENING) {
-        fprintf(stderr, "senkod: drop tproxy: opening cap %zu\n", lp->nopening);
-        clear_conn_slot(c);
-        close(cfd);
-        return;
-    }
-
-    memset(&c->tproxy_dest, 0, sizeof c->tproxy_dest);
-    c->tproxy_dest.port = dport;
-    struct in_addr ia;
-    if (inet_pton(AF_INET, host, &ia) == 1) {
-        c->tproxy_dest.atyp = VLESS_ADDR_IPV4;
-        memcpy(c->tproxy_dest.host_addr, &ia, sizeof ia);
-    } else {
-        c->tproxy_dest.atyp = VLESS_ADDR_DOMAIN;
-        snprintf(c->tproxy_dest.domain, sizeof c->tproxy_dest.domain, "%s", host);
-    }
-    c->transparent = 1;
-
-    if (start_opening(lp, c, cfd) != 0)
-        close(cfd);
-}
-
 /* flush queued bytes without blocking */
 static int flush_pend_local(loop_conn_t *c) {
     while (c->pend_off < c->pend_len) {
@@ -761,6 +639,31 @@ static int flush_to_local(loop_conn_t *c) {
     }
 }
 
+/* hand the session what it refused last time. bytes read from the app socket
+   are already gone from the kernel, so whatever the session could not take
+   has to wait here; dropping it lost uploads whenever the server was slower
+   than the app */
+#define LOOP_RELAY_READ 8192
+/* a relay read has to fit the prebuf whole, or its rest could not be kept */
+typedef char loop_relay_read_fits_prebuf[LOOP_PREBUF_CAP >= LOOP_RELAY_READ ? 1 : -1];
+
+static int feed_prebuf(loop_conn_t *c) {
+    size_t off = 0;
+    while (off < c->prebuf_len) {
+        size_t consumed = 0;
+        if (session_feed_client(&c->sess, c->prebuf + off, c->prebuf_len - off,
+                                &consumed) != SESS_OK)
+            return c->sess.state == SESS_ERROR ? -1 : 0;
+        if (consumed == 0) break;
+        off += consumed;
+    }
+    if (off > 0) {
+        memmove(c->prebuf, c->prebuf + off, c->prebuf_len - off);
+        c->prebuf_len -= off;
+    }
+    return 0;
+}
+
 static void service_conn(loop_t *lp, loop_conn_t *c,
                          short local_re, short remote_re) {
 /* pump remote output when it is ready */
@@ -768,8 +671,18 @@ static void service_conn(loop_t *lp, loop_conn_t *c,
         session_pump_remote(&c->sess);
     }
 
-    if (local_re & POLLIN) {
-        uint8_t buf[8192];
+    if (c->prebuf_len > 0) {
+        if (feed_prebuf(c) != 0) {
+            drop_conn(lp, c);
+            return;
+        }
+        if (c->prebuf_len > 0) session_pump_remote(&c->sess);
+    }
+
+/* the socket is read only once nothing is waiting, so a slow server backs
+   the app off through its own socket buffer */
+    if ((local_re & POLLIN) && c->prebuf_len == 0) {
+        uint8_t buf[LOOP_RELAY_READ];
         ssize_t n = read(c->local_fd, buf, sizeof buf);
         if (n > 0) {
             lp->bytes_up += (uint64_t)n;
@@ -790,6 +703,11 @@ static void service_conn(loop_t *lp, loop_conn_t *c,
                     break;
                 }
                 off += consumed;
+            }
+            /* the prebuf is empty here and holds a whole read */
+            if (off < (size_t)n && c->sess.state != SESS_CLOSED) {
+                memcpy(c->prebuf, buf + off, (size_t)n - off);
+                c->prebuf_len = (size_t)n - off;
             }
         } else if (n == 0) {
             c->sess.state = (c->sess.state == SESS_RELAY) ? SESS_CLOSED : c->sess.state;
@@ -813,36 +731,30 @@ static void service_conn(loop_t *lp, loop_conn_t *c,
     }
 }
 
-loop_status_t loop_step(loop_t *lp, int timeout_ms) {
-    if (!lp) return LOOP_ERR_ARG;
+/* a vision session holds its first write until the app speaks or its
+   deadline passes, and nothing but the clock ends that wait */
+static void lower_to_vision_deadline(const loop_conn_t *c, int *timeout_ms) {
+    int64_t left = (int64_t)c->sess.vision_first_deadline_ms - senko_now_ms();
+    if (left < 0) left = 0;
+    if (*timeout_ms < 0 || left < *timeout_ms) *timeout_ms = (int)left;
+}
+
+size_t loop_prepare(loop_t *lp, struct pollfd *pfd, size_t cap, int *timeout_ms) {
+    if (!lp || !pfd || !timeout_ms || cap < LOOP_POLL_MAX) return 0;
     reap_opening_conns(lp);
 
-    struct pollfd pfd[3 + 2 * LOOP_MAX_CONNS];
-    loop_conn_t *map[3 + 2 * LOOP_MAX_CONNS]; /* fd to conn map */
-    int is_remote[3 + 2 * LOOP_MAX_CONNS];
-
-    nfds_t nf = 0;
+    size_t nf = 0;
     pfd[nf].fd = lp->listen_fd;
     pfd[nf].events = POLLIN;
-    map[nf] = NULL; is_remote[nf] = 0;
+    pfd[nf].revents = 0;
+    lp->poll_conn[nf] = NULL; lp->poll_remote[nf] = 0;
     nf++;
 
-    int tproxy_idx = -1;
-    if (lp->tproxy_fd >= 0) {
-        tproxy_idx = (int)nf;
-        pfd[nf].fd = lp->tproxy_fd;
-        pfd[nf].events = POLLIN;
-        map[nf] = NULL; is_remote[nf] = 0;
-        nf++;
-    }
-
-    nfds_t wake_idx = nf;
     pfd[nf].fd = lp->wake_rd;
     pfd[nf].events = POLLIN;
-    map[nf] = NULL; is_remote[nf] = 0;
+    pfd[nf].revents = 0;
+    lp->poll_conn[nf] = NULL; lp->poll_remote[nf] = 0;
     nf++;
-
-    nfds_t conn_base = nf;
 
     for (size_t i = 0; i < LOOP_MAX_CONNS; ++i) {
         loop_conn_t *c = &lp->conns[i];
@@ -855,20 +767,27 @@ loop_status_t loop_step(loop_t *lp, int timeout_ms) {
             if (c->pend_off < c->pend_len) lev |= POLLOUT;
             pfd[nf].fd = c->local_fd;
             pfd[nf].events = lev;
-            map[nf] = c; is_remote[nf] = 0;
+            pfd[nf].revents = 0;
+            lp->poll_conn[nf] = c; lp->poll_remote[nf] = 0;
             nf++;
             continue;
         }
 
-        if (c->sess.state == SESS_VISION_FIRST)
+        if (c->sess.state == SESS_VISION_FIRST) {
             session_pump_remote(&c->sess);
+            if (c->sess.state == SESS_VISION_FIRST)
+                lower_to_vision_deadline(c, timeout_ms);
+        }
 
-/* poll the local socket and pending output */
-        short lev = POLLIN;
+/* poll the local socket and pending output. while refused bytes wait in the
+   prebuf the socket is not read, so asking for POLLIN would only spin; the
+   remote side's POLLOUT is what makes room */
+        short lev = c->prebuf_len ? 0 : POLLIN;
         if (c->pend_off < c->pend_len) lev |= POLLOUT;
         pfd[nf].fd = c->local_fd;
         pfd[nf].events = lev;
-        map[nf] = c; is_remote[nf] = 0;
+        pfd[nf].revents = 0;
+        lp->poll_conn[nf] = c; lp->poll_remote[nf] = 0;
         nf++;
 
         /* poll remote writes only when needed */
@@ -879,28 +798,27 @@ loop_status_t loop_step(loop_t *lp, int timeout_ms) {
             ev |= POLLOUT;
         pfd[nf].fd = c->remote_fd;
         pfd[nf].events = ev;
-        map[nf] = c; is_remote[nf] = 1;
+        pfd[nf].revents = 0;
+        lp->poll_conn[nf] = c; lp->poll_remote[nf] = 1;
         nf++;
     }
+    lp->poll_count = nf;
+    return nf;
+}
 
-    int r = poll(pfd, nf, timeout_ms);
-    if (r < 0) {
-        if (errno == EINTR) return LOOP_OK;
-        return LOOP_ERR;
-    }
-    if (r == 0) return LOOP_OK; /* timeout, nothing to do */
+void loop_dispatch(loop_t *lp, const struct pollfd *pfd, size_t count) {
+    if (!lp || !pfd || count != lp->poll_count || count < 2) return;
+    lp->poll_count = 0;
 
     if (pfd[0].revents & POLLIN) accept_one(lp);
-    if (tproxy_idx >= 0 && (pfd[tproxy_idx].revents & POLLIN))
-        accept_tproxy_one(lp);
-    if (pfd[wake_idx].revents & POLLIN) {
+    if (pfd[1].revents & POLLIN) {
         drain_wake(lp);
         reap_opening_conns(lp);
     }
 
     /* process connections after accepting new clients */
-    for (nfds_t i = conn_base; i < nf; ++i) {
-        loop_conn_t *c = map[i];
+    for (size_t i = 2; i < count; ++i) {
+        loop_conn_t *c = lp->poll_conn[i];
         if (!c || !c->used) continue;
 
         if (c->opening) {
@@ -909,38 +827,45 @@ loop_status_t loop_step(loop_t *lp, int timeout_ms) {
         }
 
         short local_re = 0, remote_re = 0;
-        if (is_remote[i]) remote_re = pfd[i].revents;
-        else              local_re  = pfd[i].revents;
-        for (nfds_t j = conn_base; j < nf; ++j) {
-            if (j == i || map[j] != c) continue;
-            if (is_remote[j]) remote_re |= pfd[j].revents;
-            else              local_re  |= pfd[j].revents;
+        if (lp->poll_remote[i]) remote_re = pfd[i].revents;
+        else                    local_re  = pfd[i].revents;
+        for (size_t j = 2; j < count; ++j) {
+            if (j == i || lp->poll_conn[j] != c) continue;
+            if (lp->poll_remote[j]) remote_re |= pfd[j].revents;
+            else                    local_re  |= pfd[j].revents;
         }
 
         service_conn(lp, c, local_re, remote_re);
 
-        for (nfds_t j = conn_base; j < nf; ++j) {
-            if (map[j] == c) map[j] = NULL;
+        for (size_t j = 2; j < count; ++j) {
+            if (lp->poll_conn[j] == c) lp->poll_conn[j] = NULL;
         }
     }
     reap_opening_conns(lp);
+}
+
+loop_status_t loop_step(loop_t *lp, int timeout_ms) {
+    if (!lp) return LOOP_ERR_ARG;
+    struct pollfd pfd[LOOP_POLL_MAX];
+    size_t nf = loop_prepare(lp, pfd, LOOP_POLL_MAX, &timeout_ms);
+    if (nf == 0) return LOOP_ERR;
+
+    int r = poll(pfd, (nfds_t)nf, timeout_ms);
+    if (r < 0) {
+        lp->poll_count = 0;
+        if (errno == EINTR) return LOOP_OK;
+        return LOOP_ERR;
+    }
+    if (r == 0) { /* timeout, nothing to do */
+        lp->poll_count = 0;
+        return LOOP_OK;
+    }
+    loop_dispatch(lp, pfd, nf);
     return LOOP_OK;
 }
 
 size_t loop_conn_count(const loop_t *lp) {
     return lp ? lp->nconns : 0;
-}
-
-uint64_t loop_tproxy_generation(const loop_t *lp) {
-    return lp ? lp->tproxy_accept_generation : 0;
-}
-
-int loop_tproxy_seen(const loop_t *lp, uint64_t after_generation,
-                     const char *host, uint16_t port) {
-    if (!lp || !host || lp->tproxy_accept_generation == after_generation)
-        return 0;
-    return lp->tproxy_last_port == port &&
-           strcmp(lp->tproxy_last_host, host) == 0;
 }
 
 void loop_close(loop_t *lp) {
@@ -958,7 +883,6 @@ void loop_close(loop_t *lp) {
         if (lp->nopening > 0) lp->nopening--;
         clear_conn_slot(c);
     }
-    loop_disable_tproxy(lp);
     if (lp->listen_fd >= 0) close(lp->listen_fd);
     if (lp->wake_rd >= 0) close(lp->wake_rd);
     if (lp->wake_wr >= 0) close(lp->wake_wr);

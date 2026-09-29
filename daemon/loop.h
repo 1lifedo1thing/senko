@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <poll.h>
 #include <pthread.h>
 
 #include "session.h"
@@ -17,6 +18,8 @@ extern "C" {
 /* allow safari bursts so connection drops do not force page reloads */
 #define LOOP_MAX_OPENING 48
 #define LOOP_PREBUF_CAP (16 * 1024)
+/* the listener, the wake pipe and both sockets of every connection */
+#define LOOP_POLL_MAX (2 + 2 * LOOP_MAX_CONNS)
 
 typedef int (*loop_dialer_fn)(void *ctx);
 
@@ -51,10 +54,6 @@ typedef struct {
     transport_tls_cfg_t open_tls_cfg;
     void      *open_th;
 
-/* preserve the destination captured before the transparent handshake */
-    int        transparent;
-    vless_dest_t tproxy_dest;
-
 /* retain early client bytes until the remote transport is ready */
     int        socks_greet_done;
     uint8_t    prebuf[LOOP_PREBUF_CAP];
@@ -71,12 +70,6 @@ typedef struct {
 
 typedef struct loop {
     int                   listen_fd; /* local socks listener */
-    int                   tproxy_fd; /* transparent listener, -1 means off */
-    uint16_t              tproxy_port; /* redirect port used by natlook */
-    int                   tproxy_sockname; /* ipfw retains original destination */
-    uint64_t              tproxy_accept_generation;
-    char                  tproxy_last_host[64];
-    uint16_t              tproxy_last_port;
     const transport_vt_t *vt; /* active remote transport */
     loop_dialer_fn        dial;
     void                 *dial_ctx;
@@ -112,6 +105,11 @@ typedef struct loop {
     int         wake_wr;
     pthread_mutex_t open_lock;
     int         open_lock_ready;
+
+/* which connection and side each slot loop_prepare filled belongs to */
+    loop_conn_t *poll_conn[LOOP_POLL_MAX];
+    uint8_t      poll_remote[LOOP_POLL_MAX];
+    size_t       poll_count;
 } loop_t;
 
 typedef enum {
@@ -151,20 +149,16 @@ loop_status_t loop_set_server(loop_t *lp, const transport_vt_t *vt,
 /* stop traffic while keeping the listener ready for the next selection */
 void loop_stop(loop_t *lp);
 
-/* enable the listener used by full-device transparent routing. pf rewrites
-   the destination, so that mode asks pf for it; every ipfw fwd mode keeps the
-   destination on the accepted socket and reads it with getsockname */
-loop_status_t loop_enable_tproxy(loop_t *lp, uint16_t port);
-loop_status_t loop_enable_tproxy_sockname(loop_t *lp, uint16_t port);
-void loop_disable_tproxy(loop_t *lp);
+/* one poll() can serve the loop beside other owners: loop_prepare fills at
+   most LOOP_POLL_MAX slots and lowers *timeout_ms (-1 waits forever) to the
+   loop's own nearest deadline, loop_dispatch services those slots after the
+   poll. returns the slots used, 0 when cap is too small */
+size_t loop_prepare(loop_t *lp, struct pollfd *pfd, size_t cap, int *timeout_ms);
+void loop_dispatch(loop_t *lp, const struct pollfd *pfd, size_t count);
 
 loop_status_t loop_step(loop_t *lp, int timeout_ms);
 
 size_t loop_conn_count(const loop_t *lp);
-
-uint64_t loop_tproxy_generation(const loop_t *lp);
-int loop_tproxy_seen(const loop_t *lp, uint64_t after_generation,
-                     const char *host, uint16_t port);
 
 void loop_close(loop_t *lp);
 
