@@ -2,7 +2,6 @@
 
 #import "app_common.h"
 #import "ui_theme.h"
-#import "home_layout.h"
 
 @implementation SenkoEmptyStateView {
     NSString *_hwid;
@@ -209,6 +208,10 @@ static void StyleActionButton(UIButton *button) {
 }
 
 - (void)setHWID:(NSString *)hwid {
+    /* ios 5 re-enters the controller layout pass after setNeedsLayout. the
+       empty-state sync runs from that pass, so an unchanged id must not dirty
+       the view again or the launch watchdog sees an endless layout loop */
+    if (_hwid == hwid || [_hwid isEqualToString:hwid]) return;
     NSString *copied = [hwid copy];
     [_hwid release];
     _hwid = copied;

@@ -94,19 +94,86 @@ static UIImage *SenkoCellCachedImage(NSString *name) {
     return img;
 }
 
-static UIImage *SenkoCellServerIcon(NSString *raw) {
-    NSString *flag = SenkoCellFlag(raw);
-    NSString *code = SenkoCellFlagCode(flag);
-    UIImage *image = [code length]
-        ? SenkoCellCachedImage([NSString stringWithFormat:@"flag-%@.png", code])
-        : nil;
-    return image ? image : SenkoCellCachedImage(@"server-placeholder.png");
-}
-
 static BOOL SenkoCellHasFlag(NSString *raw) {
     NSString *code = SenkoCellFlagCode(SenkoCellFlag(raw));
     return [code length] &&
            SenkoCellCachedImage([NSString stringWithFormat:@"flag-%@.png", code]) != nil;
+}
+
+static const CGFloat kSenkoBadgeRadius = 8.0f;
+static NSCache *gBadgeCache = nil;
+
+/* the sheen and the rim are baked into one bitmap: a row keeps a single image
+   layer, and scrolling on an armv7 device composites nothing extra */
+static UIImage *SenkoGlossyTile(UIImage *src, CGFloat side) {
+    if (!src || side < 1.0f || src.size.width < 1.0f || src.size.height < 1.0f)
+        return src;
+    CGRect r = CGRectMake(0.0f, 0.0f, side, side);
+    UIGraphicsBeginImageContextWithOptions(r.size, NO, 0.0f);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    UIBezierPath *tile = [UIBezierPath bezierPathWithRoundedRect:r
+                                                    cornerRadius:kSenkoBadgeRadius];
+    CGContextSaveGState(ctx);
+    [tile addClip];
+    CGFloat scale = MAX(side / src.size.width, side / src.size.height);
+    CGFloat w = src.size.width * scale;
+    CGFloat h = src.size.height * scale;
+    [src drawInRect:CGRectMake((side - w) * 0.5f, (side - h) * 0.5f, w, h)];
+
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGFloat colors[8] = { 1.0f, 1.0f, 1.0f, 0.42f, 1.0f, 1.0f, 1.0f, 0.03f };
+    CGFloat stops[2] = { 0.0f, 1.0f };
+    CGGradientRef sheen = CGGradientCreateWithColorComponents(space, colors, stops, 2);
+    CGColorSpaceRelease(space);
+    if (sheen) {
+        CGContextSaveGState(ctx);
+        CGContextClipToRect(ctx, CGRectMake(0.0f, 0.0f, side, floorf(side * 0.5f)));
+        CGContextDrawLinearGradient(ctx, sheen, CGPointMake(0.0f, 0.0f),
+                                    CGPointMake(0.0f, side * 0.5f), 0);
+        CGContextRestoreGState(ctx);
+        CGGradientRelease(sheen);
+    }
+    CGContextRestoreGState(ctx);
+
+    UIBezierPath *rim = [UIBezierPath bezierPathWithRoundedRect:CGRectInset(r, 0.5f, 0.5f)
+                                                   cornerRadius:kSenkoBadgeRadius - 0.5f];
+    rim.lineWidth = 1.0f;
+    [[UIColor colorWithWhite:0.0f alpha:0.18f] setStroke];
+    [rim stroke];
+    UIImage *out = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return out ? out : src;
+}
+
+UIImage *SenkoServerBadgeImage(NSString *remark, CGFloat side) {
+    NSString *code = SenkoCellHasFlag(remark) ? SenkoCellFlagCode(SenkoCellFlag(remark)) : nil;
+    NSString *name = [code length] ? [NSString stringWithFormat:@"flag-%@.png", code]
+                                   : @"server-placeholder.png";
+    NSString *key = [NSString stringWithFormat:@"%@@%.0f", name, side];
+    if (!gBadgeCache) {
+        gBadgeCache = [[NSCache alloc] init];
+        [gBadgeCache setCountLimit:96];
+    }
+    UIImage *hit = [gBadgeCache objectForKey:key];
+    if (hit) return hit;
+    UIImage *tile = SenkoGlossyTile(SenkoCellCachedImage(name), side);
+    if (tile) [gBadgeCache setObject:tile forKey:key];
+    return tile;
+}
+
+void SenkoStyleBadgeShadow(UIView *view, CGFloat radius) {
+    view.clipsToBounds = NO;
+    view.layer.masksToBounds = NO;
+    view.layer.cornerRadius = 0.0f;
+    view.backgroundColor = [UIColor clearColor];
+    view.layer.borderWidth = 0.0f;
+    view.layer.shadowColor = [UIColor blackColor].CGColor;
+    view.layer.shadowOpacity = 0.35f;
+    view.layer.shadowRadius = 2.0f;
+    view.layer.shadowOffset = CGSizeMake(0.0f, 1.0f);
+    if (view.bounds.size.width > 1.0f)
+        view.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:view.bounds
+                                                           cornerRadius:radius].CGPath;
 }
 
 static NSString *SenkoCellRemark(NSString *raw) {
@@ -179,7 +246,16 @@ static NSString *ServerProtocolLabel(SenkoServer *server) {
                 server->security ? server->security : @"aead"];
     if ([server->proto isEqualToString:@"hysteria2"])
         return @"hysteria2/quic";
+    /* senkod sends a placeholder's reason with spaces turned into dashes */
+    if (!server->supported && server->proto)
+        return [server->proto stringByReplacingOccurrencesOfString:@"-" withString:@" "];
     return server->proto ? server->proto : @"unknown";
+}
+
+static UIColor *SenkoUnsupportedTint(void) {
+    return SenkoThemeIsLight()
+        ? [UIColor colorWithRed:0.72 green:0.10 blue:0.08 alpha:1.0]
+        : [UIColor colorWithRed:1.0 green:0.45 blue:0.36 alpha:1.0];
 }
 
 /* the row itself no longer shows this: a named server already carries its
@@ -199,6 +275,123 @@ static void SenkoSetRowChecking(UIActivityIndicatorView *activity, BOOL checking
     if (checking) [activity startAnimating];
     else [activity stopAnimating];
 }
+
+@implementation SenkoRadioView
+
+- (id)initWithFrame:(CGRect)frame {
+    if ((self = [super initWithFrame:frame])) {
+        self.backgroundColor = [UIColor clearColor];
+        self.userInteractionEnabled = NO;
+        _ring = [[CAShapeLayer alloc] init];
+        _ring.fillColor = [UIColor clearColor].CGColor;
+        _ring.lineWidth = 1.5f;
+        [self.layer addSublayer:_ring];
+        _dot = [[CAShapeLayer alloc] init];
+        [self.layer addSublayer:_dot];
+        [self applyTheme];
+    }
+    return self;
+}
+
+- (void)dealloc {
+    [_ring release];
+    [_dot release];
+    [super dealloc];
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGRect b = self.bounds;
+    CGFloat side = MIN(b.size.width, b.size.height);
+    CGPoint c = CGPointMake(CGRectGetMidX(b), CGRectGetMidY(b));
+    SenkoBeginSilentLayers();
+    _ring.frame = b;
+    _dot.frame = b;
+    _ring.path = [UIBezierPath bezierPathWithArcCenter:c radius:side * 0.5f - 1.0f
+        startAngle:0.0f endAngle:(CGFloat)(M_PI * 2.0) clockwise:YES].CGPath;
+    _dot.path = [UIBezierPath bezierPathWithArcCenter:c radius:side * 0.25f
+        startAngle:0.0f endAngle:(CGFloat)(M_PI * 2.0) clockwise:YES].CGPath;
+    SenkoEndSilentLayers();
+}
+
+- (void)applyTheme {
+    SenkoBeginSilentLayers();
+    _ring.strokeColor = (_checked ? kAccentBlue
+                                  : [kInkMuted colorWithAlphaComponent:0.55f]).CGColor;
+    _ring.lineWidth = _checked ? 2.0f : 1.5f;
+    _dot.fillColor = kAccentBlue.CGColor;
+    _dot.hidden = !_checked;
+    SenkoEndSilentLayers();
+}
+
+- (void)setChecked:(BOOL)checked {
+    _checked = checked;
+    [self applyTheme];
+}
+
+@end
+
+@implementation SenkoSignalBars
+
+- (id)initWithFrame:(CGRect)frame {
+    if ((self = [super initWithFrame:frame])) {
+        self.backgroundColor = [UIColor clearColor];
+        self.userInteractionEnabled = NO;
+        for (int i = 0; i < 4; ++i) {
+            _bars[i] = [[CALayer alloc] init];
+            _bars[i].cornerRadius = 1.0f;
+            [self.layer addSublayer:_bars[i]];
+        }
+    }
+    return self;
+}
+
+- (void)dealloc {
+    for (int i = 0; i < 4; ++i) [_bars[i] release];
+    [_tint release];
+    [super dealloc];
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGRect b = self.bounds;
+    CGFloat gap = 2.0f;
+    CGFloat w = floorf((b.size.width - gap * 3.0f) / 4.0f);
+    if (w < 2.0f) w = 2.0f;
+    SenkoBeginSilentLayers();
+    for (int i = 0; i < 4; ++i) {
+        CGFloat h = floorf(b.size.height * (0.4f + 0.2f * (CGFloat)i));
+        _bars[i].frame = CGRectMake((w + gap) * (CGFloat)i, b.size.height - h, w, h);
+    }
+    SenkoEndSilentLayers();
+}
+
+/* the thresholds follow what a proxied page load feels like, not raw tcp: past
+   350 ms a handshake plus a request is already a visible wait */
+- (void)setLatency:(NSNumber *)ms {
+    int value = ms ? [ms intValue] : -1;
+    UIColor *tint;
+    if (value < 0) {
+        _level = 0;
+        tint = [UIColor colorWithRed:0.95 green:0.30 blue:0.26 alpha:1.0];
+    } else if (value < 350) {
+        _level = value < 100 ? 4 : (value < 200 ? 3 : 2);
+        tint = value < 200 ? kConnOn
+                           : [UIColor colorWithRed:1.0 green:0.62 blue:0.16 alpha:1.0];
+    } else {
+        _level = 1;
+        tint = [UIColor colorWithRed:1.0 green:0.45 blue:0.20 alpha:1.0];
+    }
+    [_tint release];
+    _tint = [tint retain];
+    SenkoBeginSilentLayers();
+    for (int i = 0; i < 4; ++i)
+        _bars[i].backgroundColor = (i < _level ? _tint
+                                   : [_tint colorWithAlphaComponent:0.22f]).CGColor;
+    SenkoEndSilentLayers();
+}
+
+@end
 
 @implementation ServerCell {
     BOOL _picked;
@@ -236,23 +429,23 @@ static void SenkoSetRowChecking(UIActivityIndicatorView *activity, BOOL checking
                               [NSNull null], @"bounds",
                               [NSNull null], @"position", nil];
         [_plate.layer insertSublayer:_plateGrad atIndex:0];
+        _plate.layer.cornerRadius = 0.0f;
+        _plate.layer.masksToBounds = NO;
+        _plate.layer.borderWidth = 0.0f;
+        _corners = [[CAShapeLayer alloc] init];
+        _plate.layer.mask = _corners;
+        _rule = [[CALayer alloc] init];
+        _rule.actions = [NSDictionary dictionaryWithObjectsAndKeys:
+                         [NSNull null], @"bounds", [NSNull null], @"position",
+                         [NSNull null], @"hidden", [NSNull null], @"backgroundColor", nil];
+        [_plate.layer addSublayer:_rule];
+        _groupFirst = YES;
+        _groupLast = YES;
         [self.contentView addSubview:_plate];
 
-        _accent = [[UIView alloc] initWithFrame:CGRectZero];
-        _accent.layer.cornerRadius = 3;
-        _accent.layer.borderWidth = 1;
-        _accent.layer.borderColor = [UIColor colorWithWhite:0 alpha:0.25].CGColor;
-        [_plate addSubview:_accent];
-
         _serverIcon = [[UIImageView alloc] initWithFrame:CGRectZero];
-        _serverIcon.backgroundColor = [UIColor colorWithWhite:1.0f alpha:0.94f];
-        _serverIcon.contentMode = UIViewContentModeScaleAspectFill;
-        _serverIcon.clipsToBounds = YES;
-        _serverIcon.layer.masksToBounds = YES;
-        _serverIcon.layer.cornerRadius = 8.0f;
-        _serverIcon.layer.borderWidth = 0.7f;
-        _serverIcon.layer.borderColor = [UIColor colorWithWhite:0 alpha:0.16f].CGColor;
-        _serverIcon.image = [UIImage imageNamed:@"server-placeholder.png"];
+        _serverIcon.contentMode = UIViewContentModeScaleToFill;
+        _serverIcon.image = SenkoServerBadgeImage(nil, 32.0f);
         [_plate addSubview:_serverIcon];
 
         _title = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -319,11 +512,12 @@ static void SenkoSetRowChecking(UIActivityIndicatorView *activity, BOOL checking
             _pingActivity.color = kAccentBlue;
         [_plate addSubview:_pingActivity];
 
-        _chevron = [[UIImageView alloc] initWithFrame:CGRectZero];
-        _chevron.contentMode = UIViewContentModeScaleAspectFit;
-        _chevron.userInteractionEnabled = NO;
-        _chevron.alpha = 0.45f;
-        [_plate addSubview:_chevron];
+        _bars = [[SenkoSignalBars alloc] initWithFrame:CGRectZero];
+        _bars.hidden = YES;
+        [_plate addSubview:_bars];
+
+        _radio = [[SenkoRadioView alloc] initWithFrame:CGRectZero];
+        [_plate addSubview:_radio];
 
         _pingButton = [[UIButton alloc] initWithFrame:CGRectZero];
         _pingButton.backgroundColor = [UIColor clearColor];
@@ -338,7 +532,8 @@ static void SenkoSetRowChecking(UIActivityIndicatorView *activity, BOOL checking
 
 - (void)dealloc {
     [_plate release];
-    [_accent release];
+    [_rule release];
+    [_corners release];
     [_title release];
     [_detail release];
     [_transport release];
@@ -347,70 +542,58 @@ static void SenkoSetRowChecking(UIActivityIndicatorView *activity, BOOL checking
     [_pingActivity release];
     [_pingButton release];
     [_serverIcon release];
-    [_chevron release];
+    [_bars release];
+    [_radio release];
     [super dealloc];
 }
 
 - (void)layoutSubviews {
     [super layoutSubviews];
-    CGRect bounds = self.contentView.bounds;
-    CGFloat pad = SENKO_LIST_PLATE_INSET;
-    CGFloat vpad = 3.0f;
-    CGRect plate = CGRectInset(bounds, pad, vpad);
+    CGRect plate = self.contentView.bounds;
     BOOL sizeChanged = !_plateSized || !CGSizeEqualToSize(_plate.bounds.size, plate.size);
-    /* the press pop and the row reveal both leave a transform on the plate, and
-       writing a frame through one of those folds the animation into the layout */
     _plate.bounds = CGRectMake(0, 0, plate.size.width, plate.size.height);
     _plate.center = CGPointMake(CGRectGetMidX(plate), CGRectGetMidY(plate));
-    CGFloat cr = SenkoThemeCardRadius();
     SenkoBeginSilentLayers();
     if (sizeChanged) {
         _plateGrad.frame = _plate.bounds;
-        _plateGrad.cornerRadius = cr;
-        _plate.layer.cornerRadius = cr;
-        if (_plate.layer.shadowOpacity > 0.0f)
-            _plate.layer.shadowPath = [UIBezierPath
-                bezierPathWithRoundedRect:_plate.bounds cornerRadius:cr].CGPath;
-        else
-            _plate.layer.shadowPath = nil;
         _plateSized = YES;
     }
+    [self layoutGroupCorners];
     SenkoEndSilentLayers();
-    _accent.frame = CGRectMake(9, 8, SenkoThemeIsIos16() ? 3 : 4,
-                               MAX(8.0f, _plate.bounds.size.height - 16));
-    _accent.layer.cornerRadius = SenkoThemeIsIos16() ? 2 : 3;
     CGFloat iconSize = SenkoThemeIsIos16() ? 34.0f : 32.0f;
     CGFloat iconY = floorf((_plate.bounds.size.height - iconSize) * 0.5f);
-    _serverIcon.frame = CGRectMake(18.0f, iconY, iconSize, iconSize);
-    _serverIcon.layer.cornerRadius = SenkoThemeIsIos16() ? 9.0f : 8.0f;
-    _serverIcon.layer.masksToBounds = YES;
-    _serverIcon.layer.borderColor = (SenkoThemeIsLight()
-        ? [UIColor colorWithWhite:0 alpha:0.16f]
-        : [UIColor colorWithWhite:1 alpha:0.20f]).CGColor;
+    CGRect iconFrame = CGRectMake(12.0f, iconY, iconSize, iconSize);
+    if (!CGRectEqualToRect(_serverIcon.frame, iconFrame)) {
+        _serverIcon.frame = iconFrame;
+        SenkoStyleBadgeShadow(_serverIcon, 8.0f);
+    }
     CGFloat plateW = _plate.bounds.size.width;
     CGFloat plateH = _plate.bounds.size.height;
-    CGFloat textX = 58.0f;
-    /* the right cluster is chevron, then reading, then bars, and the title has
+    CGFloat textX = 12.0f + iconSize + 12.0f;
+    CGFloat hair = 1.0f / [UIScreen mainScreen].scale;
+    SenkoBeginSilentLayers();
+    _rule.frame = CGRectMake(textX, _plate.bounds.size.height - hair,
+                             _plate.bounds.size.width - textX, hair);
+    _rule.hidden = _groupLast;
+    SenkoEndSilentLayers();
+    /* the right cluster is the reading, its bars and the radio. the title has
        to stop before all three or it overprints them on a 320pt screen */
-    /* reading then chevron, both centred on the row so the pair reads as one
-       control */
     CGFloat rowMid = floorf(plateH * 0.5f);
-    CGFloat chevronW = 9.0f;
-    CGFloat chevronH = 14.0f;
-    CGFloat chevronX = plateW - 16.0f - chevronW;
-    _chevron.frame = CGRectMake(chevronX, rowMid - chevronH * 0.5f, chevronW, chevronH);
-    CGFloat pingW = 62.0f;
+    CGFloat radioSide = 22.0f;
+    CGFloat radioX = plateW - 14.0f - radioSide;
+    _radio.frame = CGRectMake(radioX, rowMid - radioSide * 0.5f, radioSide, radioSide);
+    CGFloat barsW = 16.0f;
+    CGFloat barsX = radioX - 12.0f - barsW;
+    _bars.frame = CGRectMake(barsX, rowMid - 7.0f, barsW, 14.0f);
+    CGFloat pingW = 58.0f;
     CGFloat pingH = 20.0f;
-    CGFloat pingX = chevronX - 8.0f - pingW;
+    CGFloat pingX = barsX - 6.0f - pingW;
     _ping.frame = CGRectMake(pingX, rowMid - pingH * 0.5f, pingW, pingH);
-    /* match the gauge's right-aligned image position. centring this in the
-       reading field put the live spinner 18pt left of the resting ping glyph */
-    _pingActivity.frame = CGRectMake(chevronX - 30.0f, rowMid - 9.0f,
-                                     18.0f, 18.0f);
+    _pingActivity.frame = CGRectMake(barsX - 2.0f, rowMid - 9.0f, 18.0f, 18.0f);
     _pingButton.frame = CGRectMake(pingX - 6.0f, rowMid - 15.0f,
-                                   chevronX - pingX + 6.0f, 30.0f);
+                                   radioX - pingX, 30.0f);
     CGFloat textW = pingX - textX - 8.0f;
-    CGFloat detailW = chevronX - textX - 10.0f;
+    CGFloat detailW = textW;
     if (textW < 42.0f) textW = 42.0f;
     if (detailW < 42.0f) detailW = 42.0f;
     if (plateW >= 520.0f) {
@@ -430,112 +613,77 @@ static void SenkoSetRowChecking(UIActivityIndicatorView *activity, BOOL checking
         _unsupported.frame = CGRectMake(textX, top + 41.0f, detailW, 12);
         return;
     }
-    _title.frame = CGRectMake(textX, 2, textW, 22);
-    _detail.frame = CGRectMake(textX, 24, detailW, 14);
-    _transport.frame = CGRectMake(textX, 24, detailW, 16);
-    _unsupported.frame = CGRectMake(textX, 42, detailW, 12);
+    CGFloat block = 22.0f + 17.0f + (_unsupported.hidden ? 0.0f : 13.0f);
+    CGFloat top = floorf((plateH - block) * 0.5f);
+    if (top < 2.0f) top = 2.0f;
+    _title.frame = CGRectMake(textX, top, textW, 22);
+    _detail.frame = CGRectMake(textX, top + 22.0f, detailW, 16);
+    _transport.frame = CGRectMake(textX, top + 22.0f, detailW, 17);
+    _unsupported.frame = CGRectMake(textX, top + 39.0f, detailW, 12);
+}
+
+/* one cut of the rounded card per position, rebuilt only when the row size or
+   its place in the group changes. the plate is rasterized, so the mask costs
+   nothing while the list scrolls */
+- (void)layoutGroupCorners {
+    CGSize size = _plate.bounds.size;
+    if (size.width < 1.0f || size.height < 1.0f) return;
+    if (CGSizeEqualToSize(size, _cornersSize) && _corners.path) return;
+    _cornersSize = size;
+    UIRectCorner round = 0;
+    if (_groupFirst) round |= UIRectCornerTopLeft | UIRectCornerTopRight;
+    if (_groupLast) round |= UIRectCornerBottomLeft | UIRectCornerBottomRight;
+    CGFloat r = SenkoThemeCardRadius();
+    if (r < 12.0f) r = 12.0f;
+    _corners.frame = _plate.bounds;
+    _corners.path = [UIBezierPath bezierPathWithRoundedRect:_plate.bounds
+                                          byRoundingCorners:round
+                                                cornerRadii:CGSizeMake(r, r)].CGPath;
+}
+
+- (void)setGroupFirst:(BOOL)first last:(BOOL)last {
+    if (_groupFirst == first && _groupLast == last) return;
+    _groupFirst = first;
+    _groupLast = last;
+    _corners.path = NULL;
+    [self setNeedsLayout];
+}
+
+/* every row of a group shares one fill, so the group reads as one card and
+   selection is left to the radio */
+- (UIColor *)plateFill:(BOOL)pressed {
+    BOOL light = SenkoThemeIsLight();
+    UIColor *fill;
+    if (SenkoThemeIsIos26()) {
+        fill = [UIColor colorWithWhite:1.0f alpha:light ? 0.34f : 0.12f];
+    } else {
+        UIColor *card = kCellHi;
+        if (SenkoThemeIsMiside() || SenkoThemeIsFrutigeraero() || SenkoThemeIsBoykisser())
+            card = [kCellHi colorWithAlphaComponent:0.86f];
+        fill = SenkoShadeColor(card, light ? -0.02f : -0.05f);
+    }
+    return pressed ? SenkoShadeColor(fill, light ? -0.06f : 0.06f) : fill;
 }
 
 - (void)applyPicked:(BOOL)picked {
     _picked = picked;
-/* take one theme snapshot while the cell is being restyled */
-    BOOL flat = SenkoThemeIsFlat();
-    BOOL boy = SenkoThemeIsBoykisser();
     BOOL light = SenkoThemeIsLight();
-    BOOL ios26 = SenkoThemeIsIos26();
-    BOOL ios16 = SenkoThemeIsIos16() && !ios26;
-    BOOL frutiger = SenkoThemeIsFrutigeraero();
-
-/* the plate keeps the theme's own card colour in every state: selection is one
-   restrained outline, so nothing here may depend on picked */
     SenkoBeginSilentLayers();
-    _plate.layer.shadowOpacity = 0.0f;
-    _plate.layer.shadowRadius = 0;
-    _plate.layer.shadowPath = nil;
-    _plate.layer.masksToBounds = YES;
-    _plateGrad.colors = [NSArray arrayWithObjects:
-        (id)kCellHi.CGColor, (id)kCellLo.CGColor, nil];
-
-    if (boy) {
-        _plate.layer.borderWidth = 0.5f;
-        _plate.layer.borderColor =
-            [UIColor colorWithRed:1.0 green:0.55 blue:0.75 alpha:0.35].CGColor;
-    } else if (frutiger) {
-        _plate.layer.borderWidth = 0.5f;
-        _plate.layer.borderColor =
-            [UIColor colorWithRed:0.20 green:0.75 blue:0.95 alpha:0.40].CGColor;
-    } else if (flat) {
-        _plate.layer.borderWidth = ios16 ? 0.0f : 0.5f;
-        _plate.layer.borderColor = light
-            ? [UIColor colorWithRed:0.70 green:0.74 blue:0.82 alpha:0.50].CGColor
-            : [UIColor colorWithWhite:1 alpha:0.12].CGColor;
-    } else {
-        _plate.layer.borderWidth = 0.5f;
-        _plate.layer.borderColor = light
-            ? [UIColor colorWithWhite:0 alpha:0.10].CGColor
-            : [UIColor colorWithWhite:1 alpha:0.08].CGColor;
-    }
     SenkoRemoveFrost(_plate);
-
-    if (ios26) {
-/* glass is an alpha gradient only; a frost uiview per cell would overdraw the
-   wallpaper once per visible row */
-        _plateGrad.colors = light
-            ? [NSArray arrayWithObjects:
-                (id)[UIColor colorWithWhite:1.0 alpha:0.36].CGColor,
-                (id)[UIColor colorWithWhite:1.0 alpha:0.14].CGColor, nil]
-            : [NSArray arrayWithObjects:
-                (id)[UIColor colorWithWhite:1.0 alpha:0.18].CGColor,
-                (id)[UIColor colorWithWhite:1.0 alpha:0.06].CGColor, nil];
-        _plate.backgroundColor = [UIColor clearColor];
-        _plate.opaque = NO;
-        _plateGrad.opaque = NO;
-        _plate.layer.borderWidth = 0.5f;
-        _plate.layer.borderColor = light
-            ? [UIColor colorWithWhite:1 alpha:0.70].CGColor
-            : [UIColor colorWithWhite:1 alpha:0.26].CGColor;
-        _plate.layer.masksToBounds = NO;
-        _plate.layer.shadowColor = [UIColor colorWithWhite:0 alpha:1].CGColor;
-        _plate.layer.shadowOpacity = light ? 0.10f : 0.28f;
-        _plate.layer.shadowRadius = 6.0f;
-        _plate.layer.shadowOffset = CGSizeMake(0, 3);
-        if (_plate.bounds.size.width > 1.0f)
-            _plate.layer.shadowPath = [UIBezierPath
-                bezierPathWithRoundedRect:_plate.bounds
-                             cornerRadius:SenkoThemeCardRadius()].CGPath;
-        _plateGrad.masksToBounds = YES;
-    } else if (ios16) {
-        _plateGrad.colors = light
-            ? [NSArray arrayWithObjects:
-                (id)[UIColor colorWithWhite:1.0 alpha:0.94].CGColor,
-                (id)[UIColor colorWithWhite:1.0 alpha:0.88].CGColor, nil]
-            : [NSArray arrayWithObjects:
-                (id)[UIColor colorWithWhite:1.0 alpha:0.14].CGColor,
-                (id)[UIColor colorWithWhite:1.0 alpha:0.08].CGColor, nil];
-        _plate.layer.borderWidth = 0.0f;
-        _plate.layer.masksToBounds = NO;
-        _plate.layer.shadowColor = [UIColor blackColor].CGColor;
-        _plate.layer.shadowOpacity = light ? 0.12f : 0.35f;
-        _plate.layer.shadowRadius = 8.0f;
-        _plate.layer.shadowOffset = CGSizeMake(0, 3);
-        if (_plate.bounds.size.width > 1.0f)
-            _plate.layer.shadowPath = [UIBezierPath
-                bezierPathWithRoundedRect:_plate.bounds
-                             cornerRadius:SenkoThemeCardRadius()].CGPath;
-    } else if (flat) {
-        _plate.backgroundColor = [UIColor clearColor];
-    }
-
-    if (picked) {
-/* selection stays quiet: keep the theme card and outline it in the accent */
-        _plate.layer.borderWidth = 0.75f;
-        _plate.layer.borderColor = [kAccentBlue colorWithAlphaComponent:0.58f].CGColor;
-    }
+    _plate.layer.borderWidth = 0.0f;
+    _plate.layer.shadowOpacity = 0.0f;
+    _plate.layer.shadowPath = nil;
+    _plate.backgroundColor = [UIColor clearColor];
+    UIColor *fill = [self plateFill:NO];
+    _plateGrad.colors = [NSArray arrayWithObjects:(id)fill.CGColor, (id)fill.CGColor, nil];
+    _rule.backgroundColor = (light ? [UIColor colorWithWhite:0.0f alpha:0.10f]
+                                   : [UIColor colorWithWhite:1.0f alpha:0.08f]).CGColor;
+    [_radio setChecked:picked];
 /* the classic plate has a gradient, three labels and embossed ink. redrawing
    that stack for each scroll tick is slower than keeping one bounded tile on
-   armv7, just as the ios 16 plate already does. glass stays unrasterized
-   because its translucent material must sample the wallpaper behind it. */
-    _plate.layer.shouldRasterize = !ios26;
+   armv7. glass stays unrasterized because its translucent material must
+   sample the wallpaper behind it */
+    _plate.layer.shouldRasterize = !SenkoThemeIsIos26();
     if (_plate.layer.shouldRasterize)
         _plate.layer.rasterizationScale = [UIScreen mainScreen].scale;
     SenkoEndSilentLayers();
@@ -550,13 +698,14 @@ static void SenkoSetRowChecking(UIActivityIndicatorView *activity, BOOL checking
     SenkoStyleMutedLabel(_transport);
 }
 
-- (void)revealAtIndex:(NSUInteger)index {
-    SenkoRevealView(_plate, index);
-}
-
+/* a press darkens the row in place. scaling one row of a grouped card pulled
+   it out of line with its neighbours, which is what read as a shaky list */
 - (void)setHighlighted:(BOOL)highlighted animated:(BOOL)animated {
     [super setHighlighted:highlighted animated:animated];
-    SenkoPressPop(_plate, highlighted);
+    UIColor *fill = [self plateFill:highlighted];
+    SenkoBeginSilentLayers();
+    _plateGrad.colors = [NSArray arrayWithObjects:(id)fill.CGColor, (id)fill.CGColor, nil];
+    SenkoEndSilentLayers();
 }
 
 - (void)configureWithServer:(SenkoServer *)server
@@ -566,15 +715,8 @@ static void SenkoSetRowChecking(UIActivityIndicatorView *activity, BOOL checking
     [self applyPicked:picked];
 /* restyle each bind; reuse may outlive theme switch */
     [self styleLabels];
-    _accent.backgroundColor = server->supported
-        ? kAccentBlue
-        : [UIColor colorWithRed:0.92 green:0.16 blue:0.12 alpha:1.0];
-    BOOL hasFlag = SenkoCellHasFlag(server->remark);
-    _serverIcon.image = SenkoCellServerIcon(server->remark);
-    _serverIcon.contentMode = hasFlag
-        ? UIViewContentModeScaleAspectFill : UIViewContentModeScaleAspectFit;
-    _serverIcon.backgroundColor = hasFlag
-        ? [UIColor clearColor] : [UIColor colorWithWhite:1.0f alpha:0.94f];
+    _serverIcon.image = SenkoServerBadgeImage(server->remark,
+                                              SenkoThemeIsIos16() ? 34.0f : 32.0f);
     NSString *title = [displayName length] ? displayName
         : ([server->remark length] ? SenkoCellRemark(server->remark)
                                    : ServerEndpointLabel(server));
@@ -583,14 +725,14 @@ static void SenkoSetRowChecking(UIActivityIndicatorView *activity, BOOL checking
     _transport.text = ServerProtocolLabel(server);
     _unsupported.hidden = server->supported;
     if (!server->supported) {
-        _unsupported.textColor = SenkoThemeIsLight()
-            ? [UIColor colorWithRed:0.72 green:0.10 blue:0.08 alpha:1.0]
-            : [UIColor colorWithRed:1.0 green:0.45 blue:0.36 alpha:1.0];
+        _unsupported.textColor = SenkoUnsupportedTint();
+        _title.textColor = SenkoUnsupportedTint();
+        _transport.textColor = SenkoUnsupportedTint();
     }
 
-    _chevron.image = SenkoIconChevron(14.0f, kInkMuted);
-    _chevron.hidden = NO;
     BOOL checking = ping && [ping intValue] == -3;
+    _bars.hidden = !ping || checking;
+    if (!_bars.hidden) [_bars setLatency:ping];
     if ([_pingActivity respondsToSelector:@selector(setColor:)])
         _pingActivity.color = kAccentBlue;
     SenkoSetRowChecking(_pingActivity, checking);
@@ -598,8 +740,8 @@ static void SenkoSetRowChecking(UIActivityIndicatorView *activity, BOOL checking
         _ping.text = picked ? @"   " : @"";
         SenkoStyleAccentLabel(_ping);
     } else if ([ping intValue] >= 0) {
-        _ping.text = [NSString stringWithFormat:@"%d ms", [ping intValue]];
-        SenkoStyleAccentLabel(_ping);
+        _ping.text = [NSString stringWithFormat:SenkoLocalizedText(@"%d ms"), [ping intValue]];
+        SenkoStyleMutedLabel(_ping);
     } else if ([ping intValue] == -3) {
         _ping.text = @"";
         SenkoStyleAccentLabel(_ping);
@@ -640,18 +782,14 @@ static void SenkoSetRowChecking(UIActivityIndicatorView *activity, BOOL checking
                      status:(NSString *)status {
     [self applyPicked:picked];
     [self styleLabels];
-    _accent.backgroundColor = kAccentBlue;
-    _serverIcon.image = [UIImage imageNamed:@"server-placeholder.png"];
-    _serverIcon.contentMode = UIViewContentModeScaleAspectFit;
-    _serverIcon.backgroundColor = [UIColor colorWithWhite:1.0f alpha:0.94f];
+    _serverIcon.image = SenkoServerBadgeImage(nil, SenkoThemeIsIos16() ? 34.0f : 32.0f);
     _title.text = title;
     _detail.text = detail;
     _transport.text = nil;
     _unsupported.hidden = YES;
     _ping.text = status ? status : (picked ? @"   " : @"");
     SenkoSetRowChecking(_pingActivity, NO);
-    /* the amneziawg row has no per-server card of its own */
-    _chevron.hidden = YES;
+    _bars.hidden = YES;
     [self setPingTarget:nil action:NULL serverIndex:-1];
     SenkoStyleAccentLabel(_ping);
 }
@@ -670,7 +808,7 @@ static void SenkoSetRowChecking(UIActivityIndicatorView *activity, BOOL checking
     _pingButton.enabled = NO;
     _pingButton.hidden = YES;
     _unsupported.hidden = YES;
-    _chevron.hidden = NO;
+    _bars.hidden = YES;
     [_plate.layer removeAllAnimations];
     [self.contentView.layer removeAllAnimations];
     _plate.transform = CGAffineTransformIdentity;
@@ -678,9 +816,6 @@ static void SenkoSetRowChecking(UIActivityIndicatorView *activity, BOOL checking
        next binding inherits the offset */
     self.contentView.transform = CGAffineTransformIdentity;
     self.contentView.alpha = 1.0f;
-    _serverIcon.image = [UIImage imageNamed:@"server-placeholder.png"];
-    _serverIcon.contentMode = UIViewContentModeScaleAspectFit;
-    _serverIcon.backgroundColor = [UIColor colorWithWhite:1.0f alpha:0.94f];
 }
 
 @end

@@ -101,26 +101,6 @@ UIFont *SenkoFontBody(CGFloat size, BOOL semibold) {
 }
 
 
-void SenkoStyleIos16ListWell(UIView *well) {
-    if (!well) return;
-    SenkoRemoveFrost(well);
-    well.backgroundColor = [UIColor clearColor];
-    well.layer.borderWidth = 0;
-    well.layer.borderColor = [UIColor clearColor].CGColor;
-    well.layer.cornerRadius = 0;
-    well.layer.shadowOpacity = 0;
-    well.clipsToBounds = NO;
-    for (CALayer *layer in well.layer.sublayers) {
-        if ([layer.name isEqualToString:@"wellGrad"] &&
-            [layer isKindOfClass:[CAGradientLayer class]]) {
-            ((CAGradientLayer *)layer).hidden = YES;
-            ((CAGradientLayer *)layer).colors = [NSArray arrayWithObjects:
-                (id)[UIColor clearColor].CGColor,
-                (id)[UIColor clearColor].CGColor, nil];
-        }
-    }
-}
-
 void SenkoRemoveFrost(UIView *host) {
     if (!host) return;
     UIView *old = [host viewWithTag:kSenkoFrostTag];
@@ -550,24 +530,6 @@ void SenkoStyleSectionPlate(UIView *plate) {
     }
 }
 
-/* the on-dark pair is the fixed ios6 cream, which fights the pink plate, so the
-   boykisser header takes its own palette ink */
-void SenkoStyleSectionTitle(UILabel *label) {
-    if (!label) return;
-    if (SenkoThemeIsFlat() || SenkoThemeIsLight() || SenkoThemeIsBoykisser())
-        SenkoStyleInkLabel(label);
-    else
-        SenkoStyleInkOnDark(label);
-}
-
-void SenkoStyleSectionMeta(UILabel *label) {
-    if (!label) return;
-    if (SenkoThemeIsFlat() || SenkoThemeIsLight() || SenkoThemeIsBoykisser())
-        SenkoStyleMutedLabel(label);
-    else
-        SenkoStyleMutedOnDark(label);
-}
-
 void SenkoStyleSectionGlyph(UIButton *button) {
     if (!button) return;
     if (SenkoThemeIsMiside() || SenkoThemeIsBoykisser()) {
@@ -687,6 +649,15 @@ CGRect SenkoViewBounds(UIView *view) {
     return b;
 }
 
+void SenkoClearTableBackground(UITableView *table) {
+    if (!table) return;
+    table.backgroundColor = [UIColor clearColor];
+/* grouped tables on ios 5 and 6 paint their own pinstripe view over the
+   screen gradient unless it is removed */
+    if ([table respondsToSelector:@selector(setBackgroundView:)])
+        table.backgroundView = nil;
+}
+
 void SenkoApplyScreenChrome(UIView *root) {
     if (!root) return;
     UIView *old = [root viewWithTag:kSenkoScreenBgTag];
@@ -702,7 +673,7 @@ void SenkoApplyScreenChrome(UIView *root) {
     if (!SenkoThemeIsIos26()) {
         if (old) [old removeFromSuperview];
         root.backgroundColor = kBG;
-        AddVGradient(root, kBG, kBGBot);
+        SenkoApplyBackgroundGradient(AddVGradient(root, kBG, kBGBot));
         return;
     }
     [[root viewWithTag:kSenkoBackdropTag] removeFromSuperview];
@@ -830,16 +801,36 @@ void SenkoStyleSelectableCell(UITableViewCell *cell) {
 }
 
 /* a fixed accent prevents status color jumps while refresh changes state */
+UIColor *SenkoPillLabelColor(UIColor *fill) {
+    CGFloat r = 0, g = 0, b = 0, a = 1;
+/* on a dark theme every filled control carries white, whatever its own fill
+   does: a bright accent under dark text was the one thing on the screen reading
+   as a light control, and the screen is not a light one */
+    if (!SenkoThemeIsLight()) return [UIColor whiteColor];
+    if (![fill respondsToSelector:@selector(getRed:green:blue:alpha:)] ||
+        ![fill getRed:&r green:&g blue:&b alpha:&a]) {
+        CGFloat w = 0;
+        if ([fill respondsToSelector:@selector(getWhite:alpha:)] &&
+            [fill getWhite:&w alpha:&a])
+            r = g = b = w;
+    }
+/* a light theme still picks by the fill, because a pale pill there needs dark
+   text and a saturated one does not */
+    CGFloat luma = 0.299f * r + 0.587f * g + 0.114f * b;
+    return luma > 0.62f ? [UIColor colorWithWhite:0.10f alpha:1.0f]
+                        : [UIColor whiteColor];
+}
+
+/* the home screen's line under the tunnel state. a resting line reads as a
+   caption, a line reporting work in progress takes the accent */
 void SetStatusDefault(UILabel *label, NSString *text) {
-    if (SenkoThemeIsIos26())
+    if (SenkoThemeIsIos26() || SenkoThemeIsIos16())
         label.font = SenkoFontBody(13, NO);
-    else if (SenkoThemeIsIos16())
-        label.font = SenkoFontBody(13, NO);
-    else if (SenkoThemeIsFlat())
-        label.font = [UIFont systemFontOfSize:14];
     else
-        label.font = [UIFont boldSystemFontOfSize:14];
-    SenkoStyleAccentLabel(label);
+        label.font = [UIFont systemFontOfSize:14];
+    SenkoStyleMutedLabel(label);
+    label.shadowColor = nil;
+    label.shadowOffset = CGSizeZero;
     label.text = text;
 }
 
@@ -853,6 +844,8 @@ void SetStatusRefresh(UILabel *label, NSString *text) {
     else
         label.font = [UIFont boldSystemFontOfSize:13];
     SenkoStyleAccentLabel(label);
+    label.shadowColor = nil;
+    label.shadowOffset = CGSizeZero;
     label.text = text;
 }
 
@@ -948,34 +941,6 @@ void SenkoPressPop(UIView *view, BOOL pressed) {
                 RestoreRasterization(view);
         });
     }
-}
-
-void SenkoRevealView(UIView *view, NSUInteger index) {
-    if (!view) return;
-    if (![UIView respondsToSelector:@selector(animateWithDuration:delay:options:animations:completion:)]) {
-        view.alpha = 1.0f;
-        return;
-    }
-    /* the stagger is capped so a long list does not delay its last row by a
-       visible pause after the first paint */
-    NSTimeInterval delay = index > 7 ? 0.28 : index * 0.04;
-    CGAffineTransform rest = view.transform;
-    SuspendRasterization(view);
-    view.alpha = 0.0f;
-    view.transform = CGAffineTransformConcat(CGAffineTransformMakeTranslation(0, 14.0f), rest);
-    [UIView animateWithDuration:0.34
-                          delay:delay
-                        options:UIViewAnimationOptionBeginFromCurrentState |
-                                UIViewAnimationOptionCurveEaseOut
-                     animations:^{
-                         view.alpha = 1.0f;
-                         view.transform = rest;
-                     }
-                     completion:^(BOOL done) {
-                         (void)done;
-                         if (CGAffineTransformEqualToTransform(view.transform, rest))
-                             RestoreRasterization(view);
-                     }];
 }
 
 /* the header wordmark wants a geometric bold close to Rubik. no ios ships that

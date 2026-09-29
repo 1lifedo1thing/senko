@@ -43,11 +43,14 @@
 }
 
 - (void)actionSheet:(UIActionSheet *)sheet didDismissWithButtonIndex:(NSInteger)idx {
-    (void)idx;
+    [sheet retain];
     if (sheet == _actionSheet) {
         [_actionSheet release];
         _actionSheet = nil;
     }
+    if (idx != sheet.cancelButtonIndex)
+        [self handleActionSheetSelection:sheet index:idx];
+    [sheet release];
 }
 
 - (SenkoSub *)subscriptionByIndex:(int)subIdx {
@@ -152,9 +155,12 @@
     }];
 }
 
-- (void)actionSheet:(UIActionSheet *)sheet clickedButtonAtIndex:(NSInteger)idx {
-    if (idx == sheet.cancelButtonIndex) return;
+- (void)handleActionSheetSelection:(UIActionSheet *)sheet index:(NSInteger)idx {
     NSInteger first = sheet.firstOtherButtonIndex;
+    if (sheet.tag == 43) {
+        [self sortMenuPicked:idx];
+        return;
+    }
     if (sheet.tag == 42) {
         if (idx == sheet.destructiveButtonIndex) {
             [self confirmClearManual];
@@ -354,17 +360,6 @@ static BOOL SenkoLooksLikeSubscriptionURL(NSString *s) {
         return;
     }
     SetStatusDefault(_statusLabel, @"reading content...");
-#if SENKO_STOCK_NATIVE
-    NSString *error = nil;
-    NSArray *servers = SenkoNativeServersFromContent(data, &error);
-    if (!servers) {
-        [self setLastErr:error ? error : @"could not parse native import"];
-        [self applyState];
-        return;
-    }
-    [self addNativeServers:servers successText:@"servers added"];
-    return;
-#else
     [_ctl ensureDaemon:^(BOOL up, NSString *detail) {
         if (!up) {
             [self setLastErr:detail ? detail : @"daemon offline: cannot import"];
@@ -390,30 +385,8 @@ static BOOL SenkoLooksLikeSubscriptionURL(NSString *s) {
             [self applyState];
         }];
     }];
-#endif
 }
 
-#if SENKO_STOCK_NATIVE
-- (void)addNativeServers:(NSArray *)servers successText:(NSString *)successText {
-    int next = SenkoNativeNextServerIndex(_servers);
-    for (SenkoServer *server in servers) {
-        server->index = next++;
-        server->group = -1;
-        server->selected = (_selectedSrvIdx < 0 && [_servers count] == 0);
-        [_servers addObject:server];
-        if (server->selected) _selectedSrvIdx = server->index;
-    }
-    if (![servers count]) {
-        [self setLastErr:@"no native-compatible servers found"];
-        [self applyState];
-        return;
-    }
-    SenkoNativeSaveServers(_servers);
-    [self setLastErr:nil];
-    SetStatusRefresh(_statusLabel, successText ? successText : @"servers added");
-    [self refreshNativeCatalog];
-}
-#endif
 
 - (void)importText:(NSString *)s {
     s = [s stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -458,19 +431,6 @@ static BOOL SenkoLooksLikeSubscriptionURL(NSString *s) {
 }
 
 - (void)addServerLink:(NSString *)link {
-#if SENKO_STOCK_NATIVE
-    NSString *error = nil;
-    SenkoServer *server = SenkoNativeServerFromLink(
-        link, SenkoNativeNextServerIndex(_servers), &error);
-    if (!server) {
-        [self setLastErr:error ? error : @"invalid server link"];
-        [self applyState];
-        return;
-    }
-    [self addNativeServers:[NSArray arrayWithObject:server]
-               successText:@"server added"];
-    return;
-#else
     [_ctl ensureDaemon:^(BOOL up, NSString *detail) {
         if (!up) {
             [self setLastErr:detail ? detail : @"daemon offline: cannot add"];
@@ -493,7 +453,6 @@ static BOOL SenkoLooksLikeSubscriptionURL(NSString *s) {
             }
         }];
     }];
-#endif
 }
 
 - (void)importFileAtPath:(NSString *)path {
@@ -545,35 +504,6 @@ static BOOL SenkoLooksLikeSubscriptionURL(NSString *s) {
 }
 
 - (void)addSubscriptionURL:(NSString *)url name:(NSString *)name {
-#if SENKO_STOCK_NATIVE
-    (void)name;
-    SetStatusDefault(_statusLabel, @"fetching subscription...");
-    NSURLRequest *request = [NSURLRequest requestWithURL:[NSURL URLWithString:url]
-                                              cachePolicy:NSURLRequestReloadIgnoringCacheData
-                                          timeoutInterval:20.0];
-    [NSURLConnection sendAsynchronousRequest:request
-                                       queue:[NSOperationQueue mainQueue]
-                           completionHandler:^(NSURLResponse *response, NSData *data,
-                                               NSError *error) {
-        (void)response;
-        if (error || !data) {
-            [self setLastErr:error ? [error localizedDescription] :
-                @"subscription download failed"];
-            [self applyState];
-            return;
-        }
-        NSString *parseError = nil;
-        NSArray *servers = SenkoNativeServersFromContent(data, &parseError);
-        if (!servers) {
-            [self setLastErr:parseError ? parseError :
-                @"subscription has no supported servers"];
-            [self applyState];
-            return;
-        }
-        [self addNativeServers:servers successText:@"subscription added"];
-    }];
-    return;
-#else
     SetStatusDefault(_statusLabel, @"checking daemon...");
     [_ctl ensureDaemon:^(BOOL up, NSString *detail) {
         if (!up) {
@@ -610,15 +540,16 @@ static BOOL SenkoLooksLikeSubscriptionURL(NSString *s) {
                     [self setLastErr:nil];
                     SetStatusRefresh(_statusLabel, @"subscription added");
                 } else {
-                    [self setLastErr:[r2 stringByTrimmingCharactersInSet:
-                          [NSCharacterSet whitespaceAndNewlineCharacterSet]]];
+                    NSString *why = [r2 stringByTrimmingCharactersInSet:
+                                     [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                    if ([why hasPrefix:@"ERR "]) why = [why substringFromIndex:4];
+                    [self setLastErr:why];
                     [self applyState];
                 }
                 [self refresh];
             }];
         }];
     }];
-#endif
 }
 
 - (int)trailingIntOf:(NSString *)reply {
@@ -654,9 +585,7 @@ static BOOL SenkoLooksLikeSubscriptionURL(NSString *s) {
     if (![controllerCls respondsToSelector:make] ||
         ![actionCls respondsToSelector:makeAction])
         return NO;
-/* __block keeps the controller out of the action block's retain set, which
-   would otherwise hold the alert alive after it is dismissed */
-    __block id alert = ((id (*)(id, SEL, id, id, NSInteger))objc_msgSend)
+    id alert = ((id (*)(id, SEL, id, id, NSInteger))objc_msgSend)
         (controllerCls, make, title, message, 1 /* UIAlertControllerStyleAlert */);
     if (!alert || ![alert respondsToSelector:addField]) return NO;
     ((void (*)(id, SEL, id))objc_msgSend)(alert, addField, ^(UITextField *field) {
@@ -665,15 +594,18 @@ static BOOL SenkoLooksLikeSubscriptionURL(NSString *s) {
         field.autocapitalizationType = UITextAutocapitalizationTypeNone;
         field.clearButtonMode = UITextFieldViewModeWhileEditing;
     });
+    NSArray *fields = ((id (*)(id, SEL))objc_msgSend)(alert, @selector(textFields));
+    UITextField *input = [fields count] ? [fields objectAtIndex:0] : nil;
+    if (!input) return NO;
     id cancel = ((id (*)(id, SEL, id, NSInteger, id))objc_msgSend)
         (actionCls, makeAction, SenkoLocalizedText(@"Cancel"),
          1 /* UIAlertActionStyleCancel */, nil);
     id confirm = ((id (*)(id, SEL, id, NSInteger, id))objc_msgSend)
         (actionCls, makeAction, SenkoLocalizedText(@"Add"), 0, ^(id action) {
             (void)action;
-            NSArray *fields = ((id (*)(id, SEL))objc_msgSend)(alert, @selector(textFields));
-            UITextField *field = [fields count] ? [fields objectAtIndex:0] : nil;
-            NSString *text = field.text ? field.text : @"";
+            /* the action runs after this method returns, so retain the field
+               through the copied block instead of capturing a stack byref */
+            NSString *text = input.text ? input.text : @"";
             if ([text length] && handler) handler(text);
         });
     if (!cancel || !confirm) return NO;

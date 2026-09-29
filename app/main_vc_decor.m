@@ -1,5 +1,36 @@
 #import "main_vc_priv.h"
 
+/* ios 5 has no blur view, so soften the wallpaper at reduced size and mix
+   it at half strength without keeping a full-size decoded blur bitmap */
+static UIImage *SenkoSoftWallpaperImage(UIImage *source) {
+    if (!source || source.size.width < 1.0f || source.size.height < 1.0f) return nil;
+    CGSize small = CGSizeMake(MAX(1.0f, floorf(source.size.width / 16.0f)),
+                              MAX(1.0f, floorf(source.size.height / 16.0f)));
+    UIGraphicsBeginImageContextWithOptions(small, YES, 1.0f);
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    if (!ctx) {
+        UIGraphicsEndImageContext();
+        return nil;
+    }
+    CGContextSetInterpolationQuality(ctx, kCGInterpolationHigh);
+    [source drawInRect:CGRectMake(0.0f, 0.0f, small.width, small.height)];
+    UIImage *soft = [UIGraphicsGetImageFromCurrentImageContext() retain];
+    UIGraphicsEndImageContext();
+    return [soft autorelease];
+}
+
+static void SenkoAddSoftWallpaperOverlay(UIImageView *wallpaper, UIImage *source) {
+    UIImage *soft = SenkoSoftWallpaperImage(source);
+    if (!soft) return;
+    UIImageView *blur = [[[UIImageView alloc] initWithFrame:wallpaper.bounds] autorelease];
+    blur.image = soft;
+    blur.contentMode = UIViewContentModeScaleAspectFill;
+    blur.autoresizingMask = UIViewAutoresizingFlexibleWidth |
+                            UIViewAutoresizingFlexibleHeight;
+    blur.alpha = 0.5f;
+    [wallpaper addSubview:blur];
+}
+
 /* the theme gradient is the ground everything else stands on, so wallpaper goes
    directly above it rather than at index 0 */
 static NSUInteger SenkoWallpaperIndex(UIView *root) {
@@ -24,31 +55,20 @@ static void SenkoPlaceBehind(UIView *view, UIView *root) {
 @implementation MainVC (Decor)
 
 - (void)bringMainChromeToFront {
-    /* the connect pill, the check pill, and the detail line live inside the
-       status card, so raising the card raises all three at once. the classic
-       hero hides the card and owns the three itself, so they are raised
-       individually there */
-    if (SenkoClassicHomeEnabled()) {
-        if (_connectBtn) [self.view bringSubviewToFront:_connectBtn];
-        if (_pingAllBtn) [self.view bringSubviewToFront:_pingAllBtn];
-        if (_statusLabel) [self.view bringSubviewToFront:_statusLabel];
-    } else if (_statusCard) {
-        [self.view bringSubviewToFront:_statusCard];
-    }
-    /* particle fields do not receive touches, so they can cross the status card
-       without taking the connect and ping controls out of the responder chain */
-    if (_boyField && !_boyField.hidden) [self.view bringSubviewToFront:_boyField];
-    if (_bubbleField && !_bubbleField.hidden) [self.view bringSubviewToFront:_bubbleField];
-    if (_ui.title) [self.view bringSubviewToFront:_ui.title];
-    if (_ui.gear) [self.view bringSubviewToFront:_ui.gear];
-    if (_ui.plus) [self.view bringSubviewToFront:_ui.plus];
+    /* particle fields do not receive touches and sit under the controls, so
+       the home screen and the picker stay tappable through them */
+    if (_home && _boyField) [self.view insertSubview:_boyField belowSubview:_home];
+    if (_home && _bubbleField)
+        [self.view insertSubview:_bubbleField belowSubview:_home];
+    if (_home) [self.view bringSubviewToFront:_home];
+    if (_picker) [self.view bringSubviewToFront:_picker];
     /* the detail sheet is modal over everything the screen draws */
     if (_sheet.superview == self.view) [self.view bringSubviewToFront:_sheet];
     if (_busyOverlay.superview == self.view && _busyOverlay.alpha > 0.0f)
         [self.view bringSubviewToFront:_busyOverlay];
 }
 
-/* wallpaper only (glow is laid out with the connect button) */
+/* wallpaper views behind every control */
 - (void)layoutWallpaperStack {
     CGRect b = self.view.bounds;
     if (b.size.width < 1.0f || b.size.height < 1.0f)
@@ -75,47 +95,6 @@ static void SenkoPlaceBehind(UIView *view, UIView *root) {
     }
 }
 
-- (void)layoutStatusGlow {
-    if (!_statusWashHost || !_statusCard || !_statusCard->orb)
-        return;
-    if (_statusWashHost.superview != _statusCard) {
-        if (_statusCard->ring)
-            [_statusCard insertSubview:_statusWashHost belowSubview:_statusCard->ring];
-        else
-            [_statusCard insertSubview:_statusWashHost atIndex:0];
-    }
-    CGFloat orbSide = _statusCard->orb.bounds.size.width;
-    if (orbSide < 1.0f) orbSide = 44.0f;
-    CGFloat d = orbSide * 2.8f;
-    if (d < 100.0f) d = 100.0f;
-    if (fabsf((float)(_statusWashHost.bounds.size.width - d)) > 0.5f) {
-        _statusWashHost.bounds = CGRectMake(0, 0, d, d);
-/* the wash is a bare layer, so a plain frame write starts core animation's
-   default quarter second action. the orb resizes on every frame of the card
-   collapse, which restarted that action on every frame and left the glow
-   trailing the icon for as long as the list kept moving */
-        SenkoSetLayerFrame(_statusWash, _statusWashHost.bounds);
-    }
-    _statusWashHost.center = _statusCard->orb.center;
-}
-
-- (void)ensureStatusWash {
-    if (_statusWashHost) return;
-    _statusWashHost = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 200, 200)];
-    _statusWashHost.userInteractionEnabled = NO;
-    _statusWashHost.backgroundColor = [UIColor clearColor];
-    _statusWashHost.opaque = NO;
-    _statusWashHost.autoresizingMask = UIViewAutoresizingNone;
-    _statusWashHost.tag = 9004;
-    _statusWashHost.clipsToBounds = NO;
-    _statusWash = [[CALayer layer] retain];
-    _statusWash.name = @"statusWash";
-    _statusWash.frame = _statusWashHost.bounds;
-    _statusWash.contentsGravity = kCAGravityResize;
-    _statusWash.opacity = 0.0f;
-    [_statusWashHost.layer insertSublayer:_statusWash atIndex:0];
-}
-
 - (void)layoutMisideChrome {
     [self layoutWallpaperStack];
 }
@@ -136,6 +115,7 @@ static void SenkoPlaceBehind(UIView *view, UIView *root) {
                 _misidePattern.userInteractionEnabled = NO;
                 _misidePattern.autoresizingMask =
                     UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+                SenkoAddSoftWallpaperOverlay(_misidePattern, img);
                 [self.view insertSubview:_misidePattern
                                   atIndex:SenkoWallpaperIndex(self.view)];
             }
@@ -159,12 +139,6 @@ static void SenkoPlaceBehind(UIView *view, UIView *root) {
             [self.view addSubview:_boyField];
         }
         _boyField.frame = self.view.bounds;
-/* flakes under controls; z-order keeps buttons tappable */
-        UIView *well = [self.view viewWithTag:9001];
-        if (_table)
-            [self.view insertSubview:_boyField aboveSubview:_table];
-        else if (well)
-            [self.view insertSubview:_boyField aboveSubview:well];
         [self bringMainChromeToFront];
         [_boyField start];
     } else if (_boyField) {
@@ -188,6 +162,7 @@ static void SenkoPlaceBehind(UIView *view, UIView *root) {
                 _frutigerBg.userInteractionEnabled = NO;
                 _frutigerBg.autoresizingMask =
                     UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+                SenkoAddSoftWallpaperOverlay(_frutigerBg, img);
                 [self.view insertSubview:_frutigerBg
                                   atIndex:SenkoWallpaperIndex(self.view)];
             }
@@ -259,11 +234,6 @@ static void SenkoPlaceBehind(UIView *view, UIView *root) {
             [self.view addSubview:_bubbleField];
         }
         _bubbleField.frame = self.view.bounds;
-        UIView *well = [self.view viewWithTag:9001];
-        if (_table)
-            [self.view insertSubview:_bubbleField aboveSubview:_table];
-        else if (well)
-            [self.view insertSubview:_bubbleField aboveSubview:well];
         [self bringMainChromeToFront];
         [_bubbleField start];
     } else if (_bubbleField) {
@@ -271,7 +241,7 @@ static void SenkoPlaceBehind(UIView *view, UIView *root) {
     }
 }
 
-/* glow key: connecting / connected / error */
+/* the orbit colour: connecting, connected, error or idle */
 - (NSString *)backgroundStatusKey {
     if ([_state isEqualToString:@"connecting"]) return @"connecting";
     if ([_state isEqualToString:@"connected"]) return @"connected";
@@ -284,25 +254,16 @@ static void SenkoPlaceBehind(UIView *view, UIView *root) {
 }
 
 - (void)applyBackgroundForCurrentState:(BOOL)animated {
-    [self ensureStatusWash];
+    (void)animated;
     CGRect b = self.view.bounds;
     if (b.size.width < 1.0f || b.size.height < 1.0f)
         b = [[UIScreen mainScreen] bounds];
-    NSString *key = [self backgroundStatusKey];
-
     if (_bgGrad) {
         _bgGrad.frame = b;
-/* pure theme wallpaper - no full-screen status tint */
+/* pure theme wallpaper, the state lives in the orbit */
         SenkoApplyBackgroundGradient(_bgGrad);
     }
     [self layoutWallpaperStack];
-    [self layoutStatusGlow];
-    if (_statusWash) {
-        CGFloat side = _statusWashHost ? _statusWashHost.bounds.size.width : 200.0f;
-        SenkoApplyStatusWash(_statusWash, key, side, animated);
-        _statusWashHost.hidden = NO;
-    }
-    [self layoutStatusGlow];
 }
 
 

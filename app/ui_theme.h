@@ -82,10 +82,6 @@ UIView *SenkoEffectContentView(UIView *effectView);
 void SenkoApplyBackgroundGradient(CAGradientLayer *g);
 /* state ignored - wallpaper stays pure theme; glow is around connect */
 void SenkoApplyBackgroundGradientForState(CAGradientLayer *g, NSString *state, BOOL animated);
-/* soft radial glow around connect button (layer.contents). state: idle|connecting|connected|error */
-void SenkoApplyStatusWash(CALayer *layer, NSString *state, CGFloat side, BOOL animated);
-/* transparent list well for the flat themes */
-void SenkoStyleIos16ListWell(UIView *well);
 /* light title / body fonts for modern themes */
 UIFont *SenkoFontTitle(CGFloat size);
 UIFont *SenkoFontBody(CGFloat size, BOOL semibold);
@@ -122,8 +118,6 @@ void SenkoStyleGlyphOnDark(UIButton *button);
 /* section header plate styling */
 void SenkoFillSectionGradient(CAGradientLayer *g);
 void SenkoStyleSectionPlate(UIView *plate);
-void SenkoStyleSectionTitle(UILabel *label);
-void SenkoStyleSectionMeta(UILabel *label);
 void SenkoStyleSectionGlyph(UIButton *button);
 /* terminal / config editor colors */
 void SenkoStyleTerminalPlate(UIView *plate);
@@ -137,6 +131,8 @@ void SenkoStyleSelectableCell(UITableViewCell *cell);
 CGRect SenkoViewBounds(UIView *view);
 /* solid theme fill, or ios26 wallpaper under translucent chrome */
 void SenkoApplyScreenChrome(UIView *root);
+/* a list over the screen gradient instead of a flat fill */
+void SenkoClearTableBackground(UITableView *table);
 
 void SetStatusDefault(UILabel *label, NSString *text);
 void SetStatusRefresh(UILabel *label, NSString *text);
@@ -190,10 +186,9 @@ void SenkoApplyRelief(UIButton *button, CAGradientLayer *fill,
 
 /* capsule button; skips rebuild if size/colors match */
 void StyleGlossyCapsule(UIButton *button, UIColor *top, UIColor *bottom);
-/* the classic home screen paints the connect control as a dome instead of the
-   status card, so both the gradient body and the per-theme variants come back */
-CAGradientLayer *ApplyGlossyDome(UIButton *button, UIColor *top, UIColor *bottom);
-void StyleDomeColors(UIButton *button, UIColor *top, UIColor *bottom);
+/* a filled pill has to label itself against its own fill: a theme is free to
+   hand over a pale idle colour that white text disappears into */
+UIColor *SenkoPillLabelColor(UIColor *fill);
 /* resize capsule layers without color rebuild */
 void StyleGlossyCapsuleLayout(UIButton *button);
 CGFloat GetTopOffset(void);
@@ -215,8 +210,6 @@ void SenkoAnimateSpring(NSTimeInterval duration, NSTimeInterval delay,
                         void (^completion)(BOOL finished));
 /* scale a view briefly, used for press feedback on cells and pills */
 void SenkoPressPop(UIView *view, BOOL pressed);
-/* fade and lift a view into place; index staggers rows in a list */
-void SenkoRevealView(UIView *view, NSUInteger index);
 /* catransaction: disable implicit animations */
 void SenkoBeginSilentLayers(void);
 void SenkoEndSilentLayers(void);

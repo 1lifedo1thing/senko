@@ -82,7 +82,6 @@ NSString *SenkoControlStateFromReply(NSString *reply, long *uptime);
 - (void)sendCommand:(NSString *)cmd timeoutMs:(int)timeoutMs reply:(void (^)(NSString *reply))done;
 
 - (void)probeDaemon:(void (^)(BOOL up))done;
-- (void)kickDaemon:(void (^)(BOOL ok, NSString *detail))done;
 - (void)ensureDaemon:(void (^)(BOOL up, NSString *detail))done;
 
 - (void)listCatalog:(void (^)(NSArray *servers, NSArray *subs, NSArray *order))done;
@@ -141,9 +140,9 @@ NSString *SenkoControlStateFromReply(NSString *reply, long *uptime);
    stages arrive whether the check passed or failed */
 - (void)checkIndex:(int)idx mode:(NSString *)mode
             stages:(void (^)(NSArray *stages, int ms, NSString *error))done;
-/* the pf config pfctl loaded, or the ipfw rules the backend spawned */
-- (void)firewallConfig:(void (^)(NSString *text, NSString *error))done;
-/* drop one named piece of accumulated state: dns, bypass, rules or config */
+/* the route plan the utun tunnel installed, one route per line */
+- (void)tunnelRoutes:(void (^)(NSString *text, NSString *error))done;
+/* drop one named piece of accumulated state: dns, direct, rules or config */
 - (void)flushTarget:(NSString *)what reply:(void (^)(NSString *reply))done;
 /* issue a new device id, so a panel that binds to one sees a new device */
 - (void)resetDeviceHWID:(void (^)(NSString *hwid, NSString *error))done;

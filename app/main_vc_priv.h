@@ -13,14 +13,14 @@
 #include <objc/message.h>
 #import "control_client.h"
 #import "native_vpn.h"
-#import "native_config.h"
 #import "qr_scan.h"
 #import "ui_theme.h"
 #import "boykisser_field.h"
 #import "bubble_field.h"
 #import "themes_vc.h"
 #import "server_cell.h"
-#import "home_layout.h"
+#import "home_view.h"
+#import "server_picker.h"
 #import "server_sheet.h"
 #import "update_install.h"
 #import "meow.h"
@@ -31,13 +31,21 @@
                       UIActionSheetDelegate, UIAlertViewDelegate,
                       QRScanDelegate, EditSubscriptionDelegate,
                       FileImportDelegate, EditAWGDelegate,
-                      EditServerDelegate, SenkoServerSheetDelegate> {
+                      EditServerDelegate, SenkoServerSheetDelegate,
+                      SenkoServerPickerDelegate> {
     SenkoControl *_ctl;
     SenkoNativeVPN *_nativeVPN;
-    UIButton     *_connectBtn;
-    UIButton     *_pingAllBtn;
-    SenkoHomeCard *_statusCard;
-    SenkoHomeChrome _ui; /* borrowed pointers, resolved once in viewDidLoad */
+    /* both live in the view hierarchy, which owns them */
+    SenkoHomeView *_home;
+    SenkoServerPicker *_picker;
+    BOOL          _pickerShown;
+    /* the group chip and the search text narrow what the list shows. nil is
+       every group, -1 is Manual, -2 the amneziawg profile alone */
+    NSNumber     *_pickerFilter;
+    NSString     *_pickerQuery;
+    NSArray      *_chipKeys;
+    BOOL          _awgRowShown;
+    UIControl    *_connectBtn;
     SenkoServerSheet *_sheet;
     UILabel      *_statusLabel;
     UITableView  *_table;
@@ -63,7 +71,14 @@
    not as a frozen list */
     UIView       *_busyOverlay;
     CAGradientLayer *_bgGrad;
-    NSMutableSet *_revealedRows;
+    /* quick connect probes the catalog on its own queue, so a list refresh or a
+       manual ping sweep never cancels the probe a pending connect waits on */
+    NSArray      *_autoQueue;
+    NSMutableArray *_autoResults;
+    NSUInteger    _autoNext;
+    NSUInteger    _autoPending;
+    NSUInteger    _autoDone;
+    NSUInteger    _autoGeneration;
     /* tunnel age as the daemon last reported it, plus the monotonic instant it
        arrived, so the label can tick between refreshes */
     long          _tunnelUptime;
@@ -77,6 +92,8 @@
     uint64_t      _trafficUp;
     uint64_t      _trafficDown;
     BOOL          _trafficKnown;
+    /* the previous counter sample, the speed tiles are its derivative */
+    CFTimeInterval _rateAt;
     /* the daemon owns the tunnel, and nothing else asks it what happened: a
        tunnel that came up, dropped or was switched outside this screen left the
        card showing whatever the last user action had put there until the app
@@ -85,8 +102,6 @@
     /* each poll has two replies. a slow older poll must not repaint state after
        a newer one has already described the daemon */
     NSUInteger    _tunnelStateGeneration;
-    UIView            *_statusWashHost;
-    CALayer           *_statusWash;
     SenkoBoykisserField *_boyField;
     SenkoBubbleField  *_bubbleField;
     UIImageView       *_misidePattern;
@@ -96,7 +111,6 @@
     NSMutableDictionary *_serverStatus;
     NSInteger     _checkGeneration;
     NSInteger     _catalogGeneration;
-    CGFloat       _listHeaderProgress;
     CGSize        _laidChromeSize;
     NSString     *_laidStatusKey;
     NSMutableSet  *_pingingSubs;
@@ -120,32 +134,28 @@
     SenkoEmptyStateView *_emptyState;
     NSString      *_deviceHWID;
     int            _hwidRetries;
-    /* uikit runs the rotation inside its own animation block, so every frame
-       this layout writes would otherwise be interpolated from the old shape */
-    BOOL           _rotating;
     BOOL           _layingOutChrome;
 }
 
 - (void)dealloc;
 - (void)themeDidChange:(NSNotification *)n;
-- (void)styleListWell;
 - (void)loadView;
 - (void)viewDidAppear:(BOOL)animated;
 - (void)viewWillDisappear:(BOOL)animated;
-- (void)layoutMainChromeGeometry;
 - (void)layoutMainChrome;
 - (NSString *)stateHeadline;
-- (void)styleHeaderTitle:(UILabel *)title;
+- (void)showServerPicker;
+- (void)hideServerPicker;
+/* chips, the auto row and the home server card follow the catalog */
+- (void)syncPickerChrome;
+- (void)syncHomeServerCard;
+- (void)statsPressed;
 - (void)openSheetForServer:(SenkoServer *)server;
 - (void)serverSheet:(SenkoServerSheet *)sheet
     didChooseAction:(NSString *)action
         serverIndex:(int)index;
 - (void)viewDidLayoutSubviews;
-- (void)willAnimateRotationToInterfaceOrientation:(UIInterfaceOrientation)io duration:(NSTimeInterval)duration;
 - (void)didRotateFromInterfaceOrientation:(UIInterfaceOrientation)io;
-- (void)viewWillTransitionToSize:(CGSize)size
-       withTransitionCoordinator:(id)coordinator;
-- (void)finishRotation;
 - (void)viewDidLoad;
 - (void)viewWillAppear:(BOOL)animated;
 - (void)ensureDaemonThenRefresh;
@@ -154,8 +164,6 @@
 - (void)settingsPressed;
 - (void)bringMainChromeToFront;
 - (void)layoutWallpaperStack;
-- (void)layoutStatusGlow;
-- (void)ensureStatusWash;
 - (void)layoutMisideChrome;
 - (void)syncMisideDecor;
 - (void)syncBoykisserField;
@@ -212,7 +220,6 @@
 - (NSArray *)sortedRows:(NSArray *)rows;
 - (NSNumber *)bestPingForServer:(SenkoServer *)sv;
 - (NSArray *)connectCandidatesForServerIndex:(int)index;
-- (void)setListHeaderProgress:(CGFloat)progress;
 - (SenkoServer *)serverAtIndexPath:(NSIndexPath *)ip;
 - (void)refresh;
 /* the status half of -refresh on its own: the catalog is expensive to list and
@@ -231,7 +238,6 @@
 - (void)applyServerListLock;
 - (void)setLastErr:(NSString *)msg;
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tv;
-- (void)scrollViewDidScroll:(UIScrollView *)scrollView;
 - (void)sectionToggleTapped:(UIButton *)button;
 - (void)moveSectionAtIndex:(NSInteger)from toIndex:(NSInteger)to;
 - (void)sectionLongPressed:(UILongPressGestureRecognizer *)gesture;
@@ -246,12 +252,14 @@
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)s;
 - (UIView *)tableView:(UITableView *)tv viewForHeaderInSection:(NSInteger)s;
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip;
-- (void)tableView:(UITableView *)tv willDisplayCell:(UITableViewCell *)cell
-forRowAtIndexPath:(NSIndexPath *)ip;
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip;
 - (void)selectServerIndex:(int)index;
 - (SenkoServer *)serverByIndex:(int)index;
-- (NSString *)selectionSummary;
+- (NSString *)homeDetailText;
+- (void)showSortMenu;
+- (void)sortMenuPicked:(NSInteger)index;
+- (void)applyPickerFilterTo:(NSMutableArray *)secs;
+- (void)reloadPickerList;
 - (void)syncUptimeTicker;
 - (void)editServerVC:(EditServerVC *)vc saveLink:(NSString *)link index:(int)idx;
 - (BOOL)tableView:(UITableView *)tv canEditRowAtIndexPath:(NSIndexPath *)ip;
@@ -265,10 +273,11 @@ forRowAtIndexPath:(NSIndexPath *)ip;
 - (void)subMenuTapped:(UIButton *)btn;
 - (void)awgRefreshTapped:(UIButton *)btn;
 - (void)awgPingTapped:(UIButton *)btn;
-- (void)refreshSubscriptionIndex:(int)pos;
+- (void)refreshSubscriptionIndex:(int)pos failures:(NSMutableArray *)failures;
 - (void)refreshPressed;
 - (void)showBusyOverlay:(NSString *)text;
 - (void)hideBusyOverlay;
+- (void)layoutBusyOverlay;
 - (void)pingPressed;
 - (void)serverPingTapped:(UIButton *)button;
 - (void)startPingSweep;
@@ -283,6 +292,17 @@ forRowAtIndexPath:(NSIndexPath *)ip;
 - (void)forceTunnelCleanupWithReason:(NSString *)reason;
 - (void)togglePressed;
 - (void)toggleAfterAWGCheck;
+- (void)connectSelectedServer;
+- (void)connectFastestServer;
+- (NSArray *)autoProbeCandidates;
+- (void)launchAutoProbes:(NSUInteger)generation;
+- (void)finishAutoProbes;
+- (void)resetRates;
+- (void)applyTrafficUp:(uint64_t)up down:(uint64_t)down;
+- (SenkoSub *)subscriptionForServer:(SenkoServer *)server;
+- (NSString *)sourceNameForServer:(SenkoServer *)server;
+- (NSString *)nameForServer:(SenkoServer *)server;
+- (void)chooseServerIndex:(int)index;
 - (void)switchActiveServerIndex:(int)idx;
 - (void)connectTryingCandidates:(NSArray *)candidates offset:(NSUInteger)offset
                            reply:(void (^)(NSString *reply))replyBlock;

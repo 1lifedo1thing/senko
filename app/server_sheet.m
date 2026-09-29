@@ -2,7 +2,6 @@
 #import "ui_theme.h"
 #import "app_common.h"
 #import "server_cell.h"
-#import "home_layout.h"
 
 #include <math.h>
 

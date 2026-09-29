@@ -4,19 +4,10 @@
 #import <fcntl.h>
 #import <unistd.h>
 
-/* the stock build gets apple's own vpn glyph from NEVPNManager, so the
-   injected badge would only duplicate it there. the jailbreak build has no
-   other vpn indicator, so it keeps the badge; clear the marker on launch in
-   case an older build (or the user's own toggle) left it turned off */
+/* the jailbreak build keeps the injected badge; clear the marker on launch
+   in case an older build (or the user's own toggle) left it turned off */
 static void SenkoDisableInjectedStatusBadge(void) {
-#if SENKO_STOCK_NATIVE
-    int fd = open(SENKO_VPN_BADGE_OFF_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) return;
-    (void)write(fd, "removed\n", 8);
-    close(fd);
-#else
     unlink(SENKO_VPN_BADGE_OFF_PATH);
-#endif
 }
 
 @implementation MainVC
@@ -28,10 +19,6 @@ static void SenkoDisableInjectedStatusBadge(void) {
     [_boyField release];
     [_bubbleField stop];
     [_bubbleField release];
-    [_statusWash release];
-    _statusWash = nil;
-    [_statusWashHost release];
-    _statusWashHost = nil;
     [_misidePattern release];
     [_frutigerBg release];
     [_ios26Bg release];
@@ -51,6 +38,11 @@ static void SenkoDisableInjectedStatusBadge(void) {
     [_serverStatus release];
     [_pingingSubs release];
     [_pingQueue release];
+    [_autoQueue release];
+    [_autoResults release];
+    [_pickerFilter release];
+    [_pickerQuery release];
+    [_chipKeys release];
     [_busyOverlay removeFromSuperview];
     [_busyOverlay release];
     [_pendingUpdatePath release];
@@ -70,10 +62,16 @@ static void SenkoDisableInjectedStatusBadge(void) {
     [_emptyState removeFromSuperview];
     [_emptyState release];
     [_deviceHWID release];
-    [_revealedRows release];
+    [_laidStatusKey release];
     [super dealloc];
 }
 
+- (void)styleTable {
+    _table.backgroundColor = [UIColor clearColor];
+    _table.separatorStyle = UITableViewCellSeparatorStyleNone;
+    if ([_table respondsToSelector:@selector(setBackgroundView:)])
+        _table.backgroundView = nil;
+}
 
 - (void)themeDidChange:(NSNotification *)n {
     (void)n;
@@ -87,108 +85,25 @@ static void SenkoDisableInjectedStatusBadge(void) {
     [self syncIos26Decor];
     [self syncBubbleField];
     [self layoutWallpaperStack];
-    [self styleHeaderTitle:_ui.title];
     [_sheet dismiss];
-    SenkoHomeStyleChrome(&_ui);
-    if (_statusLabel) {
-        _statusLabel.backgroundColor = [UIColor clearColor];
-        _statusLabel.layer.borderWidth = 0;
-        _statusLabel.layer.cornerRadius = 0;
-        [self applyState];
-    }
-    [self styleListWell];
-    if (_table) {
-        _table.backgroundColor = [UIColor clearColor];
-        _table.separatorStyle = UITableViewCellSeparatorStyleNone;
-        _table.separatorColor = SenkoThemeIsLight()
-            ? [UIColor colorWithWhite:0 alpha:0.12f]
-            : [UIColor colorWithWhite:1 alpha:0.16f];
-        if ([_table respondsToSelector:@selector(setBackgroundView:)])
-            _table.backgroundView = nil;
-    }
+    [_home applyTheme];
+    [_picker applyTheme];
+    [self styleTable];
+    [self applyState];
     [_table reloadData];
     [_emptyState applyTheme];
     [self.view setNeedsLayout];
     [self layoutMainChrome];
 }
 
-- (void)styleListWell {
-    UIView *well = [self.view viewWithTag:SenkoHomeTagWell];
-    if (!well) return;
-    if (SenkoThemeIsIos16()) {
-        SenkoStyleIos16ListWell(well);
-        return;
-    }
-    SenkoRemoveFrost(well);
-    well.backgroundColor = [UIColor clearColor];
-    well.layer.borderWidth = 0;
-    well.layer.borderColor = [UIColor clearColor].CGColor;
-    well.layer.shadowOpacity = 0;
-    for (CALayer *layer in well.layer.sublayers) {
-        if (![layer.name isEqualToString:@"wellGrad"] ||
-            ![layer isKindOfClass:[CAGradientLayer class]])
-            continue;
-        layer.hidden = NO;
-        CAGradientLayer *wg = (CAGradientLayer *)layer;
-        if (SenkoThemeIsBoykisser()) {
-/* the veil lifts the list off the wallpaper, so it follows the ground it sits
-   on instead of washing a dark screen white */
-            UIColor *veil = SenkoThemeIsLight()
-                ? [UIColor colorWithRed:1.00 green:0.94 blue:0.97 alpha:0.35]
-                : [UIColor colorWithRed:0.09 green:0.05 blue:0.075 alpha:0.32];
-            wg.colors = [NSArray arrayWithObjects:(id)veil.CGColor, (id)veil.CGColor, nil];
-        } else if (SenkoThemeIsFrutigeraero()) {
-            UIColor *veil = [UIColor colorWithWhite:1 alpha:0.28];
-            wg.colors = [NSArray arrayWithObjects:(id)veil.CGColor, (id)veil.CGColor, nil];
-        } else if (SenkoThemeIsIos26()) {
-            wg.colors = [NSArray arrayWithObjects:
-                         (id)[UIColor clearColor].CGColor,
-                         (id)[UIColor clearColor].CGColor, nil];
-            wg.hidden = YES;
-        } else if (SenkoThemeIsMiside()) {
-            wg.colors = [NSArray arrayWithObjects:
-                         (id)[UIColor clearColor].CGColor,
-                         (id)[UIColor clearColor].CGColor, nil];
-            wg.hidden = YES;
-        } else {
-            wg.colors = [NSArray arrayWithObjects:(id)kBG.CGColor, (id)kBGBot.CGColor, nil];
-        }
-    }
+- (void)languageDidChange:(NSNotification *)n {
+    (void)n;
+    [_home relocalize];
+    [_picker relocalize];
+    [self rebuildSections];
+    [_table reloadData];
+    [self applyState];
 }
-
-
-/* the wordmark reads from the leading edge in a geometric bold; each theme only
-   picks the size and the ink */
-- (void)styleHeaderTitle:(UILabel *)title {
-    if (![title isKindOfClass:[UILabel class]]) return;
-    BOOL pad = ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad);
-    BOOL compact = (!pad && SenkoViewBounds(self.view).size.height <= 568.0f);
-    CGFloat size = pad ? 28.0f : (compact ? 22.0f : 25.0f);
-/* the classic header centres the wordmark, and this runs again on every theme
-   change, so it has to agree with the layout rather than reset it */
-    title.textAlignment = SenkoClassicHomeEnabled() ? NSTextAlignmentCenter
-                                                    : NSTextAlignmentLeft;
-    title.backgroundColor = [UIColor clearColor];
-    title.shadowColor = nil;
-    title.shadowOffset = CGSizeZero;
-    title.font = SenkoFontDisplay(size);
-    title.textColor = kInk;
-}
-
-- (UIButton *)makeHeaderButton:(SEL)action tag:(NSInteger)tag {
-    UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
-    b.tag = tag;
-    [b addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
-    [b addTarget:self action:@selector(chromeButtonDown:)
-        forControlEvents:UIControlEventTouchDown];
-    [b addTarget:self action:@selector(chromeButtonUp:)
-        forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside |
-                         UIControlEventTouchCancel];
-    return b;
-}
-
-- (void)chromeButtonDown:(UIView *)v { SenkoPressPop(v, YES); }
-- (void)chromeButtonUp:(UIView *)v { SenkoPressPop(v, NO); }
 
 - (void)loadView {
     UIView *v = [[[UIView alloc] initWithFrame:[[UIScreen mainScreen] bounds]] autorelease];
@@ -196,16 +111,11 @@ static void SenkoDisableInjectedStatusBadge(void) {
     v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.view = v;
     _bgGrad = AddVGradient(v, kBG, kBGBot);
-    [self ensureStatusWash];
     [self applyBackgroundForCurrentState:NO];
-    if (SenkoThemeIsBoykisser())
-        [self syncBoykisserField];
     if (SenkoThemeIsMiside())
         [self syncMisideDecor];
-    if (SenkoThemeIsFrutigeraero()) {
+    if (SenkoThemeIsFrutigeraero())
         [self syncFrutigerDecor];
-        [self syncBubbleField];
-    }
     if (SenkoThemeIsIos26())
         [self syncIos26Decor];
     [self layoutWallpaperStack];
@@ -213,9 +123,7 @@ static void SenkoDisableInjectedStatusBadge(void) {
 
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
-    SenkoCrashScreen("server list");
-/* the id used to be asked for only while the empty list was on screen, so a
-   catalog that never arrived meant it was never asked for at all */
+    SenkoCrashScreen(_pickerShown ? "server list" : "home");
 /* the retry budget is spent per appearance, not for the life of the process:
    a daemon that was still starting up when it ran out left the plate reading
    "not available yet" for the rest of the session even after the daemon came
@@ -228,6 +136,7 @@ static void SenkoDisableInjectedStatusBadge(void) {
     [self syncBubbleField];
     [_boyField setPaused:NO];
     [_bubbleField setPaused:NO];
+    [_home->power setRunning:!_pickerShown];
     [self startStatusHeartbeat];
 }
 
@@ -241,40 +150,26 @@ static void SenkoDisableInjectedStatusBadge(void) {
     [_sheet dismiss];
     [_boyField setPaused:YES];
     [_bubbleField setPaused:YES];
+    [_home->power setRunning:NO];
     (void)animated;
-}
-
-- (void)layoutMainChromeGeometry {
-    /* the whole screen changes shape at once during a rotation, and letting
-       uikit interpolate each piece from its old frame is what made the card,
-       the pill and the rows slide past each other on the way round */
-    BOOL animating = [UIView areAnimationsEnabled];
-    if (_rotating && animating) [UIView setAnimationsEnabled:NO];
-    if (SenkoClassicHomeEnabled())
-        SenkoHomeLayoutClassic(self.view, &_ui, _listHeaderProgress);
-    else
-        SenkoHomeLayout(self.view, &_ui, _listHeaderProgress);
-    [self layoutStatusGlow];
-    /* a narrow orientation can leave no room below the list and hide this
-       panel. always resync it here, otherwise returning to a larger layout
-       leaves the empty catalog blank until a later catalog refresh. */
-    [self syncEmptyState];
-    if (_boyField && !CGSizeEqualToSize(_boyField.bounds.size, self.view.bounds.size))
-        _boyField.frame = self.view.bounds;
-    if (_bubbleField && !CGSizeEqualToSize(_bubbleField.bounds.size, self.view.bounds.size))
-        _bubbleField.frame = self.view.bounds;
-    if (_frutigerBg && !_frutigerBg.hidden)
-        _frutigerBg.frame = self.view.bounds;
-    if (_ios26Bg && !_ios26Bg.hidden)
-        _ios26Bg.frame = self.view.bounds;
-    if (_rotating && animating) [UIView setAnimationsEnabled:YES];
 }
 
 - (void)layoutMainChrome {
     if (_layingOutChrome) return;
     _layingOutChrome = YES;
-    [self layoutMainChromeGeometry];
-    CGSize sz = self.view.bounds.size;
+    CGRect b = self.view.bounds;
+    if (!CGRectEqualToRect(_home.frame, b)) _home.frame = b;
+    if (!CGRectEqualToRect(_picker.bounds, CGRectMake(0, 0, b.size.width, b.size.height))) {
+        CGAffineTransform t = _picker.transform;
+        _picker.transform = CGAffineTransformIdentity;
+        _picker.frame = b;
+        _picker.transform = t;
+    }
+    if (_boyField && !CGSizeEqualToSize(_boyField.bounds.size, b.size))
+        _boyField.frame = b;
+    if (_bubbleField && !CGSizeEqualToSize(_bubbleField.bounds.size, b.size))
+        _bubbleField.frame = b;
+    CGSize sz = b.size;
     NSString *key = [self backgroundStatusKey];
     BOOL sizeChanged = !CGSizeEqualToSize(sz, _laidChromeSize);
     BOOL statusChanged = !(_laidStatusKey && [key isEqualToString:_laidStatusKey]);
@@ -292,6 +187,8 @@ static void SenkoDisableInjectedStatusBadge(void) {
         else
             [self layoutWallpaperStack];
     }
+    [self syncEmptyState];
+    [self layoutBusyOverlay];
     _layingOutChrome = NO;
 }
 
@@ -300,57 +197,14 @@ static void SenkoDisableInjectedStatusBadge(void) {
     [self layoutMainChrome];
 }
 
-- (void)willAnimateRotationToInterfaceOrientation:(UIInterfaceOrientation)io
-                                         duration:(NSTimeInterval)duration {
-    (void)io; (void)duration;
-    _rotating = YES;
-    [self.view setNeedsLayout];
-    [self layoutMainChrome];
-}
-
-/* ios 8 replaced the rotation callbacks with this one, and the old pair is not
-   called there at all */
-- (void)viewWillTransitionToSize:(CGSize)size
-       withTransitionCoordinator:(id)coordinator {
-    struct objc_super sup = { self, [UIViewController class] };
-    if ([[UIViewController class] instancesRespondToSelector:_cmd])
-        ((void (*)(struct objc_super *, SEL, CGSize, id))objc_msgSendSuper)(
-            &sup, _cmd, size, coordinator);
-    _rotating = YES;
-    [self.view setNeedsLayout];
-    if ([coordinator respondsToSelector:
-            @selector(animateAlongsideTransition:completion:)]) {
-        ((void (*)(id, SEL, id, id))objc_msgSend)(
-            coordinator, @selector(animateAlongsideTransition:completion:), nil,
-            ^(id context) {
-                (void)context;
-                [self finishRotation];
-            });
-        return;
-    }
-    [self performSelector:@selector(finishRotation) withObject:nil afterDelay:0.4];
-}
-
-- (void)finishRotation {
-    if (!_rotating) return;
-    _rotating = NO;
-    _listHeaderProgress = 0.0f;
-    /* ios 5 can enter viewDidLayoutSubviews again while this callback is
-       forcing layout. leave the next pass to UIKit, which already owns the
-       rotation transaction */
-    [self.view setNeedsLayout];
-}
-
 - (void)didRotateFromInterfaceOrientation:(UIInterfaceOrientation)io {
     (void)io;
-    /* the spacer the collapse is measured against is a different height in the
-       new orientation, so the stored progress belongs to a screen that is gone.
-       the rows are not reloaded: they are already on screen, and replaying
-       their entrance animation is what made a rotation flicker */
-    [self finishRotation];
     if (_boyField && SenkoThemeIsBoykisser())
         [self syncBoykisserField];
 }
+
+- (void)chromeButtonDown:(UIView *)v { SenkoPressPop(v, YES); }
+- (void)chromeButtonUp:(UIView *)v { SenkoPressPop(v, NO); }
 
 - (void)viewDidLoad {
     [super viewDidLoad];
@@ -374,119 +228,48 @@ static void SenkoDisableInjectedStatusBadge(void) {
     _servers = [[NSMutableArray alloc] init];
     _subs = [[NSMutableArray alloc] init];
     _collapsedSubs = [[NSMutableSet alloc] init];
-    _listHeaderProgress = 0.0f;
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(themeDidChange:)
-                                                 name:SenkoThemeDidChangeNotification
-                                               object:nil];
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    [nc addObserver:self selector:@selector(themeDidChange:)
+               name:SenkoThemeDidChangeNotification object:nil];
+    [nc addObserver:self selector:@selector(languageDidChange:)
+               name:SenkoLanguageDidChangeNotification object:nil];
     /* core animation drops layer animations when the app is backgrounded, so
-       the connecting pulse has to be reinstalled on the way back. the notify
-       centre passes the notification, which -applyState does not take */
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(appDidBecomeActive:)
-                                                 name:UIApplicationDidBecomeActiveNotification
-                                               object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(appWillResignActive:)
-                                                 name:UIApplicationWillResignActiveNotification
-                                               object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(widgetToggleRequested:)
-                                                 name:SENKO_WIDGET_TOGGLE_NOTIFICATION
-                                               object:nil];
+       the orbit has to be reinstalled on the way back. the notify centre passes
+       the notification, which -applyState does not take */
+    [nc addObserver:self selector:@selector(appDidBecomeActive:)
+               name:UIApplicationDidBecomeActiveNotification object:nil];
+    [nc addObserver:self selector:@selector(appWillResignActive:)
+               name:UIApplicationWillResignActiveNotification object:nil];
+    [nc addObserver:self selector:@selector(widgetToggleRequested:)
+               name:SENKO_WIDGET_TOGGLE_NOTIFICATION object:nil];
 
-    _revealedRows = [[NSMutableSet alloc] init];
     SenkoCrashTheme([SenkoThemeCurrentId() UTF8String]);
 
-    UILabel *title = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
-    title.tag = SenkoHomeTagTitle;
-    title.text = @"Senko";
-    [self styleHeaderTitle:title];
-    [self.view addSubview:title];
-
-    UIButton *gear = [self makeHeaderButton:@selector(settingsPressed)
-                                         tag:SenkoHomeTagGear];
-    [self.view addSubview:gear];
-    UIButton *plus = [self makeHeaderButton:@selector(addPressed)
-                                         tag:SenkoHomeTagPlus];
-    [self.view addSubview:plus];
-
-    _statusCard = SenkoHomeBuildStatusCard(self.view);
-
-    _connectBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    _connectBtn.tag = SenkoHomeTagConnect;
-    _connectBtn.contentHorizontalAlignment = UIControlContentHorizontalAlignmentCenter;
-    _connectBtn.contentVerticalAlignment = UIControlContentVerticalAlignmentCenter;
-    _connectBtn.titleLabel.textAlignment = NSTextAlignmentCenter;
+    _home = [[[SenkoHomeView alloc] initWithFrame:self.view.bounds] autorelease];
+    [_home->gear addTarget:self action:@selector(settingsPressed)
+          forControlEvents:UIControlEventTouchUpInside];
+    [_home->stats addTarget:self action:@selector(statsPressed)
+           forControlEvents:UIControlEventTouchUpInside];
+    [_home->serverCard addTarget:self action:@selector(showServerPicker)
+                forControlEvents:UIControlEventTouchUpInside];
+    _connectBtn = _home->power;
     [_connectBtn addTarget:self action:@selector(togglePressed)
           forControlEvents:UIControlEventTouchUpInside];
-    [_connectBtn addTarget:self action:@selector(chromeButtonDown:)
-          forControlEvents:UIControlEventTouchDown];
-    [_connectBtn addTarget:self action:@selector(chromeButtonUp:)
-          forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside |
-                           UIControlEventTouchCancel];
-    [_statusCard addSubview:_connectBtn];
-
-    _pingAllBtn = [UIButton buttonWithType:UIButtonTypeCustom];
-    _pingAllBtn.accessibilityLabel = SenkoLocalizedText(@"Check servers");
-    [_pingAllBtn addTarget:self action:@selector(pingPressed)
-          forControlEvents:UIControlEventTouchUpInside];
-    [_pingAllBtn addTarget:self action:@selector(chromeButtonDown:)
-          forControlEvents:UIControlEventTouchDown];
-    [_pingAllBtn addTarget:self action:@selector(chromeButtonUp:)
-          forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside |
-                           UIControlEventTouchCancel];
-    [_statusCard addSubview:_pingAllBtn];
-
-    /* the detail line is the same label the rest of the app writes progress
+    _connectBtn.accessibilityLabel = SenkoLocalizedText(@"Connect");
+    /* the detail line is the label the rest of the controller writes progress
        into, so every SetStatusDefault caller keeps working unchanged */
-    _statusLabel = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
-    _statusLabel.backgroundColor = [UIColor clearColor];
-    _statusLabel.numberOfLines = 2;
-    _statusLabel.lineBreakMode = NSLineBreakByTruncatingTail;
-    _statusLabel.adjustsFontSizeToFitWidth = YES;
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    _statusLabel.minimumFontSize = 10.0f;
-#pragma clang diagnostic pop
-    SetStatusDefault(_statusLabel, @"idle");
-    [_statusCard addSubview:_statusLabel];
-
-    _ui.title = title;
-    _ui.gear = gear;
-    _ui.plus = plus;
-    _ui.card = _statusCard;
-    _ui.connect = _connectBtn;
-    _ui.check = _pingAllBtn;
-    _ui.detail = _statusLabel;
-    _ui.background = _bgGrad;
-    SenkoHomeStyleChrome(&_ui);
-    SenkoHomeApplyStatus(&_ui, @"idle", SenkoLocalizedText(@"Disconnected"), NO);
-
-    UIView *well = [[[UIView alloc] initWithFrame:CGRectZero] autorelease];
-    well.tag = SenkoHomeTagWell;
-    well.layer.masksToBounds = YES;
-    CAGradientLayer *wellG = [CAGradientLayer layer];
-    wellG.name = @"wellGrad";
-    [well.layer insertSublayer:wellG atIndex:0];
-    [self.view addSubview:well];
-    _ui.well = well;
-    [self styleListWell];
+    _statusLabel = _home->detail;
+    SetStatusDefault(_statusLabel, @"");
+    [self.view addSubview:_home];
 
     BOOL pad = ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad);
     _table = [[[UITableView alloc] initWithFrame:CGRectZero
-                                            style:UITableViewStylePlain] autorelease];
+                                           style:UITableViewStylePlain] autorelease];
     _table.dataSource = self;
     _table.delegate = self;
-    _table.backgroundColor = [UIColor clearColor];
-    if ([_table respondsToSelector:@selector(setBackgroundView:)])
-        _table.backgroundView = nil;
-    _table.separatorStyle = UITableViewCellSeparatorStyleNone;
-    _table.separatorColor = SenkoThemeIsLight()
-        ? [UIColor colorWithWhite:0 alpha:0.12f]
-        : [UIColor colorWithWhite:1 alpha:0.16f];
-    _table.rowHeight = pad ? 100.0f : 92.0f;
-    _table.sectionHeaderHeight = pad ? 60.0f : 52.0f;
+    [self styleTable];
+    _table.rowHeight = pad ? 72.0f : 64.0f;
+    _table.sectionHeaderHeight = 56.0f;
     _table.delaysContentTouches = NO;
     _table.canCancelContentTouches = YES;
     _table.showsVerticalScrollIndicator = YES;
@@ -496,12 +279,16 @@ static void SenkoDisableInjectedStatusBadge(void) {
         ((void (*)(id, SEL, CGFloat))objc_msgSend)(_table, @selector(setEstimatedSectionHeaderHeight:), 0.0f);
     if ([_table respondsToSelector:@selector(setSectionHeaderTopPadding:)])
         ((void (*)(id, SEL, CGFloat))objc_msgSend)(_table, @selector(setSectionHeaderTopPadding:), 0.0f);
-    UILongPressGestureRecognizer *rowDrag = [[[UILongPressGestureRecognizer alloc]
+    UILongPressGestureRecognizer *rowHold = [[[UILongPressGestureRecognizer alloc]
                                               initWithTarget:self action:@selector(rowLongPressed:)] autorelease];
-    rowDrag.minimumPressDuration = 0.55;
-    [_table addGestureRecognizer:rowDrag];
-    [self.view addSubview:_table];
-    _ui.table = _table;
+    rowHold.minimumPressDuration = 0.5;
+    [_table addGestureRecognizer:rowHold];
+
+    _picker = [[[SenkoServerPicker alloc] initWithFrame:self.view.bounds
+                                                  table:_table
+                                               delegate:self] autorelease];
+    _picker.hidden = YES;
+    [self.view addSubview:_picker];
 
     _emptyState = [[SenkoEmptyStateView alloc] initWithFrame:CGRectZero];
     _emptyState.hidden = YES;
@@ -511,9 +298,14 @@ static void SenkoDisableInjectedStatusBadge(void) {
                       forControlEvents:UIControlEventTouchUpInside];
     [_emptyState->hwidTap addTarget:self action:@selector(emptyStateCopyHWID)
                    forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:_emptyState];
-    /* the list scrolls under the card now, so the card has to sit above it */
+    [_picker addSubview:_emptyState];
+
+    if (SenkoThemeIsBoykisser())
+        [self syncBoykisserField];
+    if (SenkoThemeIsFrutigeraero())
+        [self syncBubbleField];
     [self bringMainChromeToFront];
+    [self applyState];
 }
 
 - (void)widgetToggleRequested:(NSNotification *)note {
@@ -523,22 +315,20 @@ static void SenkoDisableInjectedStatusBadge(void) {
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    /* the sort order lives in defaults and can change while settings are up */
+    /* the quick connect switch lives in settings and can change while they
+       are up, and so can the sort order */
     [self rebuildSections];
     [self layoutMainChrome];
     [_table reloadData];
     [_table layoutIfNeeded];
     [self syncEmptyState];
+    [self applyState];
     if (!_catalogLoaded)
         [self showBusyOverlay:SenkoLocalizedText(@"Loading servers and subscriptions...")];
     [self ensureDaemonThenRefresh];
 }
 
 - (void)ensureDaemonThenRefresh {
-#if SENKO_STOCK_NATIVE
-    [self refreshNativeCatalog];
-    return;
-#else
     /* probing during a live tunnel can overwrite its status with stale state */
     BOOL quiet = [self isTunnelActive];
     [_ctl ensureDaemon:^(BOOL up, NSString *detail) {
@@ -547,6 +337,8 @@ static void SenkoDisableInjectedStatusBadge(void) {
                 [self refresh];
                 return;
             }
+            _catalogLoaded = YES;
+            [self hideBusyOverlay];
             [self setLastErr:detail ? detail : @"daemon offline"];
             [_state release];
             _state = [@"error" copy];
@@ -562,22 +354,17 @@ static void SenkoDisableInjectedStatusBadge(void) {
             SetStatusRefresh(_statusLabel, detail);
         [self refresh];
     }];
-#endif
 }
 
 
 - (void)appDidBecomeActive:(NSNotification *)n {
     (void)n;
     [self applyState];
-/* nothing polled the daemon while the app was away, so the card was still
+/* nothing polled the daemon while the app was away, so the screen was still
    showing the state the last user action left behind. the tunnel outlives the
    app, and coming back is the first chance to find out what it is doing */
     [self startStatusHeartbeat];
-#if SENKO_STOCK_NATIVE
-    [self refreshNativeCatalog];
-#else
     [self ensureDaemonThenRefresh];
-#endif
 /* the daemon may have come up while the app was suspended, so give the hwid
    plate a fresh retry budget instead of leaving it on whatever ran out before
    backgrounding */
@@ -592,16 +379,75 @@ static void SenkoDisableInjectedStatusBadge(void) {
     [self stopStatusHeartbeat];
 }
 
-- (void)settingsPressed {
+- (void)presentInNavigation:(UIViewController *)root {
     [self dismissCurrentActionSheetAnimated:YES];
-    SettingsVC *s = [[[SettingsVC alloc] init] autorelease];
     UINavigationController *nav = [[[UINavigationController alloc]
-                                    initWithRootViewController:s] autorelease];
+                                    initWithRootViewController:root] autorelease];
     if ([nav respondsToSelector:@selector(setEdgesForExtendedLayout:)])
         ((void (*)(id, SEL, NSUInteger))objc_msgSend)(nav, @selector(setEdgesForExtendedLayout:), 0);
     StyleNavBarClassic(nav);
     nav.modalPresentationStyle = UIModalPresentationFullScreen;
     [self presentViewController:nav animated:YES completion:nil];
+}
+
+- (void)settingsPressed {
+    [self presentInNavigation:[[[SettingsVC alloc] init] autorelease]];
+}
+
+- (void)statsPressed {
+    [self presentInNavigation:[[[StatsVC alloc] init] autorelease]];
+}
+
+- (void)showServerPicker {
+    if (_pickerShown) return;
+    [self dismissCurrentActionSheetAnimated:YES];
+    _pickerShown = YES;
+    SenkoCrashScreen("server list");
+    [self rebuildSections];
+    [_table reloadData];
+    [_table setContentOffset:CGPointZero animated:NO];
+    _picker.transform = CGAffineTransformIdentity;
+    _picker.frame = self.view.bounds;
+    _picker.hidden = NO;
+    [self bringMainChromeToFront];
+    [self syncEmptyState];
+    CGFloat lift = floorf(self.view.bounds.size.height * 0.08f);
+    _picker.alpha = 0.0f;
+    _picker.transform = CGAffineTransformMakeTranslation(0.0f, lift);
+    [_home->power setRunning:NO];
+    SenkoAnimate(0.26, ^{
+        _picker.alpha = 1.0f;
+        _picker.transform = CGAffineTransformIdentity;
+        _home.alpha = 0.0f;
+    }, NULL);
+}
+
+- (void)hideServerPicker {
+    if (!_pickerShown) return;
+    _pickerShown = NO;
+    SenkoCrashScreen("home");
+    [_sheet dismiss];
+    [_picker clearQuery];
+    if (_table.editing) [_table setEditing:NO animated:NO];
+    if ([_pickerQuery length]) {
+        [_pickerQuery release];
+        _pickerQuery = nil;
+        [self rebuildSections];
+        [_table reloadData];
+    }
+    [_home->power setRunning:YES];
+    CGFloat lift = floorf(self.view.bounds.size.height * 0.08f);
+    SenkoAnimate(0.22, ^{
+        _picker.alpha = 0.0f;
+        _picker.transform = CGAffineTransformMakeTranslation(0.0f, lift);
+        _home.alpha = 1.0f;
+    }, ^(BOOL finished) {
+        (void)finished;
+/* a reopen during the fade owns the picker now */
+        if (_pickerShown) return;
+        _picker.hidden = YES;
+        _picker.transform = CGAffineTransformIdentity;
+    });
 }
 
 @end

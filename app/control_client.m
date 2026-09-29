@@ -5,16 +5,12 @@
 
 #import <sys/socket.h>
 #import <sys/un.h>
-#import <sys/wait.h>
 #import <fcntl.h>
 #import <unistd.h>
 #import <string.h>
 #import <errno.h>
-#import <spawn.h>
 #import <stdio.h>
 #import <sys/stat.h>
-
-extern char **environ;
 
 @implementation SenkoServer
 - (void)dealloc {
@@ -203,6 +199,21 @@ static int native_config_reply_complete(const char *buf, size_t len) {
     return 0;
 }
 
+/* amneziawg answers with AWG lines closed by AWGEND */
+static int awg_reply_complete(const char *buf, size_t len) {
+    size_t start = 0;
+    for (size_t i = 0; i < len; ++i) {
+        if (buf[i] != '\n') continue;
+        const char *ln = buf + start;
+        size_t llen = i - start;
+        if ((llen >= 7 && memcmp(ln, "AWGEND ", 7) == 0) ||
+            (llen >= 4 && memcmp(ln, "ERR ", 4) == 0))
+            return 1;
+        start = i + 1;
+    }
+    return 0;
+}
+
 /* wait for the final tunnel state */
 static int tunnel_reply_complete(const char *buf, size_t len) {
     size_t start = 0;
@@ -247,23 +258,6 @@ static NSString *senkoLoadCtlToken(NSString *sockPath) {
             [NSCharacterSet whitespaceAndNewlineCharacterSet]];
 }
 
-/* rootful jailbreaks expose the payload through /usr, while rootless
-   jailbreaks keep it under /var/jb. the same app binary can be copied between
-   those layouts, so resolve the setuid helper at launch instead of baking one
-   filesystem root into the arm64 slice */
-static const char *SenkoKickPath(void) {
-    static const char *paths[] = {
-        SENKO_USR_BIN "/senko-kick",
-        "/var/jb/usr/bin/senko-kick",
-        "/usr/bin/senko-kick",
-        "/bin/senko-kick",
-        NULL
-    };
-    for (NSUInteger i = 0; paths[i]; ++i)
-        if (access(paths[i], X_OK) == 0) return paths[i];
-    return paths[0];
-}
-
 static int write_all_fd(int fd, const void *buf, size_t len) {
     const char *p = (const char *)buf;
     size_t left = len;
@@ -276,15 +270,18 @@ static int write_all_fd(int fd, const void *buf, size_t len) {
     return 0;
 }
 
-/* let mobile clients open the socket */
-static int senkoCtlAuth(int fd, NSString *sockPath) {
+/* let mobile clients open the socket. senkod answers AUTH only between two
+   commands, so a client that waits less than its own command timeout reports
+   a daemon busy connecting as one that did not answer */
+static int senkoCtlAuth(int fd, NSString *sockPath, int timeoutMs,
+                        char *refusal, size_t refusalCap) {
     NSString *tok = senkoLoadCtlToken(sockPath);
     if (![tok length]) return 0;
     char line[96];
     int n = snprintf(line, sizeof line, "AUTH %s\n", [tok UTF8String]);
     if (n <= 0 || (size_t)n >= sizeof line) return -1;
     if (write_all_fd(fd, line, (size_t)n) != 0) return -1;
-    set_rcv_timeout(fd, 1500);
+    set_rcv_timeout(fd, timeoutMs);
     char buf[128];
     size_t tot = 0;
     while (tot + 1 < sizeof buf) {
@@ -299,6 +296,10 @@ static int senkoCtlAuth(int fd, NSString *sockPath) {
     }
     if (tot >= 3 && memcmp(buf, "OK ", 3) == 0) return 0;
     if (tot >= 2 && memcmp(buf, "OK", 2) == 0) return 0;
+/* a refusal names its reason ("too many control connections"), which the
+   caller shows instead of a daemon that did not answer */
+    if (tot >= 4 && memcmp(buf, "ERR ", 4) == 0 && refusal && refusalCap)
+        snprintf(refusal, refusalCap, "%s", buf);
     return -1;
 }
 
@@ -318,9 +319,11 @@ static int senkoCtlAuth(int fd, NSString *sockPath) {
         return nil;
     }
 
-    if (senkoCtlAuth(fd, _sockPath) != 0) {
+    char refusal[128] = "";
+    if (senkoCtlAuth(fd, _sockPath, timeoutMs > 0 ? timeoutMs : 2000,
+                     refusal, sizeof refusal) != 0) {
         close(fd);
-        return nil;
+        return refusal[0] ? [NSString stringWithUTF8String:refusal] : nil;
     }
 
     NSString *line = [cmd hasSuffix:@"\n"] ? cmd : [cmd stringByAppendingString:@"\n"];
@@ -348,6 +351,7 @@ static int senkoCtlAuth(int fd, NSString *sockPath) {
     else if ([cmd hasPrefix:@"NATIVE_CONFIG "])
         done_fn = native_config_reply_complete;
     else if (is_blob) done_fn = blob_reply_complete;
+    else if ([cmd hasPrefix:@"AWG "]) done_fn = awg_reply_complete;
 
     NSMutableData *acc = [NSMutableData data];
     char buf[4096];
@@ -537,7 +541,7 @@ static SenkoRule *parseRULE(NSString *line) {
    both. an older daemon sends none and the caller still gets its result */
 - (void)checkIndex:(int)idx mode:(NSString *)mode
             stages:(void (^)(NSArray *, int, NSString *))done {
-    NSArray *safeMode = [NSArray arrayWithObjects:@"tcp", @"proxy", @"tunnel", @"handshake", nil];
+    NSArray *safeMode = [NSArray arrayWithObjects:@"tcp", @"real", @"proxy", @"tunnel", @"handshake", nil];
     if (![safeMode containsObject:mode]) {
         if (done) done(nil, -1, @"unknown check type");
         return;
@@ -577,7 +581,7 @@ static SenkoRule *parseRULE(NSString *line) {
     }];
 }
 
-- (void)firewallConfig:(void (^)(NSString *, NSString *))done {
+- (void)tunnelRoutes:(void (^)(NSString *, NSString *))done {
     [self sendCommand:@"FWCONF" timeoutMs:6000 reply:^(NSString *reply) {
         NSMutableString *text = [NSMutableString string];
         BOOL sawEnd = NO;
@@ -695,147 +699,65 @@ static SenkoRule *parseRULE(NSString *line) {
     }];
 }
 
-/* the helper writes its own account with mode 0644, so the app can read it
-   without a daemon: when the daemon is what failed to start, that file is the
-   only thing that knows why, and telling the user to go and open it is not an
-   answer on a phone */
-/* senko-kick falls back to this path when it fails before becoming root: the
-   one case where /var/log/senko-kick.log cannot be written is exactly the one
-   the user most needs explained. picking by mtime rather than always
-   preferring one file keeps a stale setuid failure from masking whatever the
-   next run actually reported through the other path */
-static NSString *SenkoKickLogPath(void) {
-    NSString * const primary = @"/var/log/senko-kick.log";
-    NSString * const fallback = @(SENKO_CRASH_DIR "/kick.log");
-    NSDictionary *pAttrs = [[NSFileManager defaultManager] attributesOfItemAtPath:primary error:NULL];
-    NSDictionary *fAttrs = [[NSFileManager defaultManager] attributesOfItemAtPath:fallback error:NULL];
-    NSDate *pDate = [pAttrs objectForKey:NSFileModificationDate];
-    NSDate *fDate = [fAttrs objectForKey:NSFileModificationDate];
-    if (fDate && (!pDate || [fDate compare:pDate] == NSOrderedDescending))
-        return fallback;
-    return pDate ? primary : (fDate ? fallback : primary);
-}
-
-static NSString *SenkoKickLogTail(void) {
-    NSData *blob = [NSData dataWithContentsOfFile:SenkoKickLogPath()];
-    if (![blob length]) return nil;
-    NSUInteger want = [blob length] > 4096 ? 4096 : [blob length];
-    NSData *slice = [blob subdataWithRange:NSMakeRange([blob length] - want, want)];
+/* the last line senkod or launchd wrote. the log is root:mobile 0640, so the
+   app can still read why the daemon is down when the socket cannot say */
+static NSString *SenkoSystemLogLastLine(void) {
+    NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath:@SENKO_SYSTEM_LOG];
+    if (!fh) return nil;
+    unsigned long long size = [fh seekToEndOfFile];
+    unsigned long long want = size > 4096 ? 4096 : size;
+    [fh seekToFileOffset:size - want];
+    NSData *slice = [fh readDataOfLength:(NSUInteger)want];
+    [fh closeFile];
     NSString *text = [[[NSString alloc] initWithData:slice
                                             encoding:NSUTF8StringEncoding] autorelease];
-    if (![text length]) return nil;
     NSArray *lines = [text componentsSeparatedByString:@"\n"];
     for (NSInteger i = (NSInteger)[lines count] - 1; i >= 0; --i) {
         NSString *line = [[lines objectAtIndex:i] stringByTrimmingCharactersInSet:
                           [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        if (![line length]) continue;
-        if ([line hasPrefix:@"senko-kick: "]) line = [line substringFromIndex:12];
-        return [line length] ? line : nil;
+        if ([line length]) return line;
     }
     return nil;
 }
 
-/* senko-kick answers with the reason it gave up, and a bare number in the
-   alert told the user nothing they could act on. it only ever returns 0, 1, 2,
-   3 or 5: anything else means it never got to return at all */
-static NSString *SenkoKickFailureText(int status, pid_t reaped) {
-    NSString *tail = SenkoKickLogTail();
-    if (reaped <= 0)
-        return @"senko-kick could not be waited for";
-    if (WIFSIGNALED(status)) {
-        int sig = WTERMSIG(status);
-        if (![tail length])
-            return [NSString stringWithFormat:
-                    @"senko-kick was killed (signal %d) before it logged anything: "
-                     "this jailbreak did not let it run as root", sig];
-        return [NSString stringWithFormat:@"senko-kick was killed (signal %d): %@",
-                sig, tail];
-    }
-    int code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-    switch (code) {
-/* the tail now carries which of the two setuid failures this actually is
-   (bit missing vs. a nosuid mount); the flat text is only what is left to
-   say when neither log file could be read at all */
-        case 1: return [tail length] ? tail
-                     : @"senko-kick is not setuid root: reinstall the package";
-        case 2: return @"senkod is missing: reinstall the package";
-        case 3: return @"another daemon start is still running";
-        case 5: return @"senkod did not open its control socket";
-        default: break;
-    }
-    if ([tail length])
-        return [NSString stringWithFormat:@"daemon start failed (%d): %@", code, tail];
-    return [NSString stringWithFormat:@"daemon start failed (%d)", code];
-}
-
-- (void)kickDaemon:(void (^)(BOOL, NSString *))done {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        const char *path = SenkoKickPath();
-        BOOL ok = NO;
-        NSString *detail = nil;
-        if (access(path, X_OK) != 0) {
-            detail = @"senko-kick missing, reinstall package";
-        } else {
-            for (int attempt = 0; attempt < 3 && !ok; ++attempt) {
-                pid_t pid = 0;
-                char *argv[] = { (char *)path, NULL };
-                int rc = posix_spawn(&pid, path, NULL, NULL, argv, environ);
-                if (rc != 0) {
-                    detail = [NSString stringWithFormat:
-                              @"cannot start senko-kick (%d: %s)",
-                              rc, strerror(rc)];
-                    if (attempt < 2) usleep(250000);
-                    continue;
-                }
-
-                int st = 0;
-                pid_t waited;
-                do {
-                    waited = waitpid(pid, &st, 0);
-                } while (waited < 0 && errno == EINTR);
-                if (waited > 0 && WIFEXITED(st) && WEXITSTATUS(st) == 0) {
-                    ok = YES;
-                    detail = @"daemon started";
-                } else {
-                    detail = SenkoKickFailureText(st, waited);
-                    break;
-                }
-            }
-        }
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (done) done(ok, detail);
-        });
-    });
+/* launchd owns senkod (KeepAlive, 3 s throttle) and the app has no root to
+   start it, so all that is left to do is to say what is missing */
+static NSString *SenkoDaemonDownText(void) {
+    static const char *bins[] = { "/usr/bin/senkod", SENKO_USR_BIN "/senkod",
+                                  "/var/jb/usr/bin/senkod", NULL };
+    static const char *plists[] = { "/Library/LaunchDaemons/com.senko.senkod.plist",
+                                    "/var/jb/Library/LaunchDaemons/com.senko.senkod.plist",
+                                    NULL };
+    BOOL haveBin = NO, havePlist = NO;
+    for (int i = 0; bins[i] && !haveBin; ++i) haveBin = access(bins[i], F_OK) == 0;
+    for (int i = 0; plists[i] && !havePlist; ++i) havePlist = access(plists[i], F_OK) == 0;
+    if (!haveBin) return @"senkod is missing: reinstall the package";
+    if (!havePlist) return @"the senkod launch daemon is missing: reinstall the package";
+    NSString *last = SenkoSystemLogLastLine();
+    if ([last length])
+        return [NSString stringWithFormat:@"senkod is not running, last log line: %@", last];
+    return @"senkod is not running and its log is empty";
 }
 
 - (void)ensureDaemon:(void (^)(BOOL, NSString *))done {
-    [self probeDaemon:^(BOOL up) {
-        if (up) {
-            if (done) done(YES, nil);
-            return;
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+/* launchd may be inside its restart throttle, or senkod still loading its
+   config on an old device */
+        BOOL up = NO;
+        for (int i = 0; i < 24 && !up; ++i) {
+            NSString *r = [self blockingSend:@"STATUS" timeoutMs:800];
+            up = r && ([r hasPrefix:@"STATE "] ||
+                       [r rangeOfString:@"\nSTATE "].location != NSNotFound);
+            if (!up) usleep(250000);
         }
-/* kick once and wait for launchd or the helper to finish */
-        [self kickDaemon:^(BOOL kicked, NSString *detail) {
-            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-                BOOL up2 = NO;
-                for (int i = 0; i < 24 && !up2; ++i) {
-                    NSString *r = [self blockingSend:@"STATUS" timeoutMs:800];
-                    if (r && ([r hasPrefix:@"STATE "] ||
-                        [r rangeOfString:@"\nSTATE "].location != NSNotFound)) up2 = YES;
-                    else usleep(250000);
-                }
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if (up2) {
-                        if (done) done(YES, detail ? detail : @"daemon started");
-                    } else if (done) {
-                        NSString *msg = detail ? detail : @"daemon still offline";
-                        done(NO, [msg stringByAppendingString:
-                                  @" (see /var/log/senko-kick.log)"]);
-                    }
-                });
-            });
-        }];
-    }];
+        NSString *detail = up ? nil : [SenkoDaemonDownText() retain];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (done) done(up, detail);
+            [detail release];
+        });
+        [pool drain];
+    });
 }
 
 static BOOL tokenIsProto(NSString *s) {
@@ -867,8 +789,10 @@ static SenkoServer *parseSRV(NSString *line) {
     sv->selected = [[t objectAtIndex:2] intValue] != 0;
     sv->group    = [[t objectAtIndex:3] intValue];
     NSUInteger remarkStart = 7;
+    BOOL unsupported = [[t objectAtIndex:7] isEqualToString:@"0"];
+    /* a placeholder row names its foreign protocol ("vmess") in the proto slot */
     BOOL newLayout = [t count] >= 10 &&
-        tokenIsProto([t objectAtIndex:4]) &&
+        (tokenIsProto([t objectAtIndex:4]) || unsupported) &&
         tokenIsNet([t objectAtIndex:5]) &&
         tokenIsSecurity([t objectAtIndex:6]) &&
         ([[t objectAtIndex:7] isEqualToString:@"0"] ||
@@ -1194,7 +1118,7 @@ static SenkoSub *parseSUB(NSString *line) {
 
 - (void)checkIndex:(int)idx mode:(NSString *)mode
               reply:(void (^)(int, NSString *))done {
-    NSArray *safeMode = [NSArray arrayWithObjects:@"tcp", @"proxy", @"tunnel", @"handshake", nil];
+    NSArray *safeMode = [NSArray arrayWithObjects:@"tcp", @"real", @"proxy", @"tunnel", @"handshake", nil];
     if (![safeMode containsObject:mode]) { if (done) done(-1, @"unknown check type"); return; }
     NSString *command = [mode isEqualToString:@"tcp"]
         ? [NSString stringWithFormat:@"PING %d", idx]
@@ -1220,232 +1144,131 @@ static SenkoSub *parseSUB(NSString *line) {
     }];
 }
 
-- (void)runAWGHelper:(NSArray *)args reply:(void (^)(NSString *))done {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        const char *path = SenkoKickPath();
-        NSMutableArray *argvData = [NSMutableArray array];
-        [argvData addObject:[NSData dataWithBytes:path length:strlen(path) + 1]];
-        for (NSString *arg in args) {
-            const char *s = [arg UTF8String];
-            if (!s) continue;
-            [argvData addObject:[NSData dataWithBytes:s length:strlen(s) + 1]];
+/* senkod runs the amneziawg tunnel itself and answers with AWG lines closed
+   by AWGEND. a probe waits for the server's handshake and a stop for the
+   tunnel thread, which may be inside a dns lookup, hence the long timeout */
+/* a status poll that got no reply returns nil: the poller reports the daemon
+   itself, and an invented "error" line here raised a connection failed alert
+   about amneziawg on every device whose senkod was simply not running */
+- (void)awgRequest:(NSString *)verb path:(NSString *)path
+       silenceIsError:(BOOL)silenceIsError reply:(void (^)(NSString *))done {
+    NSString *cmd = [path length] ? [NSString stringWithFormat:@"AWG %@ %@", verb, path]
+                                  : [NSString stringWithFormat:@"AWG %@", verb];
+    [self sendCommand:cmd timeoutMs:20000 reply:^(NSString *reply) {
+        NSMutableString *out = [NSMutableString string];
+        NSString *error = nil;
+        for (NSString *line in [reply componentsSeparatedByString:@"\n"]) {
+            if ([line hasPrefix:@"AWG "])
+                [out appendFormat:@"%@\n", [line substringFromIndex:4]];
+            else if ([line hasPrefix:@"ERR "])
+                error = [line substringFromIndex:4];
         }
-        char *argv[5] = { NULL, NULL, NULL, NULL, NULL };
-        NSUInteger count = [argvData count];
-        if (count > 4) count = 4;
-        for (NSUInteger i = 0; i < count; ++i) argv[i] = (char *)[[argvData objectAtIndex:i] bytes];
-        char output[192] = {0};
-        int pipefd[2] = {-1, -1};
-        pid_t pid = 0;
-        BOOL ok = pipe(pipefd) == 0;
-        if (ok) {
-            posix_spawn_file_actions_t fa;
-            posix_spawn_file_actions_init(&fa);
-            posix_spawn_file_actions_adddup2(&fa, pipefd[1], STDOUT_FILENO);
-            posix_spawn_file_actions_addclose(&fa, pipefd[0]);
-            posix_spawn_file_actions_addclose(&fa, pipefd[1]);
-            ok = posix_spawn(&pid, path, &fa, NULL, argv, environ) == 0;
-            posix_spawn_file_actions_destroy(&fa);
-            close(pipefd[1]);
-            if (ok) {
-/* kick may wait on its startup lock before answering; keep draining */
-                size_t total = 0;
-                while (total + 1 < sizeof output) {
-                    ssize_t n = read(pipefd[0], output + total, sizeof output - 1 - total);
-                    if (n > 0) {
-                        total += (size_t)n;
-                        continue;
-                    }
-                    if (n < 0 && errno == EINTR) continue;
-                    break;
-                }
-                output[total] = '\0';
-                int st = 0;
-                while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
-            }
-            close(pipefd[0]);
-        }
-        NSString *status = output[0] ? [NSString stringWithUTF8String:output] : nil;
-        dispatch_async(dispatch_get_main_queue(), ^{ if (done) done(status); });
-    });
+        NSString *status = [out length] ? out : nil;
+        if (!status && error) status = [NSString stringWithFormat:@"error %@", error];
+        else if (!status && !reply && silenceIsError) status = @"error senkod did not answer";
+        if (done) done(status);
+    }];
 }
 
 - (void)startAWGAtPath:(NSString *)path reply:(void (^)(NSString *))done {
     if (![path length]) { if (done) done(nil); return; }
-    [self runAWGHelper:[NSArray arrayWithObjects:@"--awg", path, nil] reply:done];
-}
-
-/* the helper is a setuid spawn that serialises on the daemon startup lock, and
-   the connect path pays for two of them before the tunnel even starts. these
-   are the same two files the helper reads to decide it has nothing to do, so
-   reading them here gives that answer without the spawn */
-static BOOL senkoAWGIdle(void) {
-    struct stat st;
-    /* only a provably absent pid file proves nothing is running. any other
-       failure means this process cannot read /var/run, and then the helper has
-       to answer, or a live amneziawg tunnel would never be stopped */
-    if (stat("/var/run/senkoawgd.pid", &st) == 0 || errno != ENOENT) return NO;
-    FILE *f = fopen("/var/run/senkoawgd.status", "r");
-    if (!f) return errno == ENOENT;
-    char line[64];
-    line[0] = '\0';
-    if (!fgets(line, sizeof line, f)) line[0] = '\0';
-    fclose(f);
-    line[strcspn(line, "\r\n")] = '\0';
-    return line[0] == '\0' || strcmp(line, "idle") == 0;
-}
-
-- (void)replyIdle:(void (^)(NSString *))done {
-    if (!done) return;
-    dispatch_async(dispatch_get_main_queue(), ^{ done(@"idle\n"); });
+    [self awgRequest:@"START" path:path silenceIsError:YES reply:done];
 }
 
 - (void)stopAWG:(void (^)(NSString *))done {
-    if (senkoAWGIdle()) { [self replyIdle:done]; return; }
-    [self runAWGHelper:[NSArray arrayWithObject:@"--awg-stop"] reply:done];
+    [self awgRequest:@"STOP" path:nil silenceIsError:YES reply:done];
 }
 
 - (void)awgStatus:(void (^)(NSString *))done {
-    if (senkoAWGIdle()) { [self replyIdle:done]; return; }
-    [self runAWGHelper:[NSArray arrayWithObject:@"--awg-status"] reply:done];
+    [self awgRequest:@"STATUS" path:nil silenceIsError:NO reply:done];
 }
 
 - (void)probeAWGAtPath:(NSString *)path reply:(void (^)(NSString *))done {
     if (![path length]) { if (done) done(nil); return; }
-    [self runAWGHelper:[NSArray arrayWithObjects:@"--awg-probe", path, nil] reply:done];
+    [self awgRequest:@"PROBE" path:path silenceIsError:YES reply:done];
 }
 
 - (void)validateAWGAtPath:(NSString *)path reply:(void (^)(NSString *))done {
     if (![path length]) { if (done) done(nil); return; }
-    [self runAWGHelper:[NSArray arrayWithObjects:@"--awg-validate", path, nil] reply:done];
+    [self awgRequest:@"VALIDATE" path:path silenceIsError:YES reply:done];
 }
 
 - (void)updatePackageAtPath:(NSString *)path reply:(void (^)(NSString *))done {
     [self updatePackageAtPath:path progress:nil reply:done];
 }
 
+/* dpkg runs in senkod --update, detached from senkod because the update
+   stops senkod halfway through. its lines land in SENKO_UPDATE_LOG, which
+   senkod truncated before answering, so the file is read from the start */
+#define SENKO_UPDATE_WAIT_SECONDS 300
+
 - (void)updatePackageAtPath:(NSString *)path
                    progress:(void (^)(NSString *))progress
                       reply:(void (^)(NSString *))done {
-    if (![path length]) {
-        if (done) done(@"UPDATE ERR empty path");
+    if (![path length] || [path rangeOfCharacterFromSet:
+                           [NSCharacterSet whitespaceAndNewlineCharacterSet]].location != NSNotFound) {
+        if (done) done(@"UPDATE ERR the package path is empty or has spaces");
         return;
     }
+    NSString *cmd = [NSString stringWithFormat:@"UPDATE %@", path];
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        const char *bin = SenkoKickPath();
-        if (access(bin, X_OK) != 0) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (done) done(@"UPDATE ERR senko-kick missing");
-            });
-            return;
-        }
-/* keep the path for spawn */
-        NSString *pathCopy = [[path copy] autorelease];
-        const char *p = [pathCopy fileSystemRepresentation];
-        if (!p) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (done) done(@"UPDATE ERR bad path encoding");
-            });
-            return;
-        }
-        char *argv[] = { (char *)bin, (char *)"--update", (char *)p, NULL };
-        int pipefd[2] = { -1, -1 };
-        NSMutableString *last = [NSMutableString string];
-        NSMutableString *lineBuf = [NSMutableString string];
-        BOOL sawTerminal = NO;
-        pid_t pid = 0;
-        int spawn_errno = 0;
-        BOOL ok = pipe(pipefd) == 0;
-        if (!ok) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (done) done(@"UPDATE ERR pipe failed");
-            });
-            return;
-        }
-/* use a mobile-readable stderr path */
-        const char *errlog = "/tmp/senko-update.log";
-        posix_spawn_file_actions_t fa;
-        posix_spawn_file_actions_init(&fa);
-        posix_spawn_file_actions_adddup2(&fa, pipefd[1], STDOUT_FILENO);
-        if (posix_spawn_file_actions_addopen(&fa, STDERR_FILENO, errlog,
-                                             O_WRONLY | O_CREAT | O_APPEND, 0600) != 0) {
-            posix_spawn_file_actions_addopen(&fa, STDERR_FILENO, "/dev/null",
-                                             O_WRONLY, 0);
-        }
-        posix_spawn_file_actions_addclose(&fa, pipefd[0]);
-        posix_spawn_file_actions_addclose(&fa, pipefd[1]);
-        int prc = posix_spawn(&pid, bin, &fa, NULL, argv, environ);
-        posix_spawn_file_actions_destroy(&fa);
-        close(pipefd[1]);
-        ok = (prc == 0);
-        if (!ok) spawn_errno = prc;
-        int exitSt = -1;
-        if (ok) {
-            char buf[256];
-            for (;;) {
-                ssize_t n = read(pipefd[0], buf, sizeof buf);
-                if (n <= 0) break;
-                NSString *chunk = [[NSString alloc] initWithBytes:buf
-                                                           length:(NSUInteger)n
-                                                         encoding:NSUTF8StringEncoding];
-                if (!chunk) {
-/* use a fallback path for bad utf8 */
-                    chunk = [[NSString alloc] initWithBytes:buf
-                                                     length:(NSUInteger)n
-                                                   encoding:NSISOLatin1StringEncoding];
-                }
-                if (!chunk) continue;
-                [lineBuf appendString:chunk];
-                [chunk release];
-                for (;;) {
-                    NSRange nl = [lineBuf rangeOfString:@"\n"];
-                    if (nl.location == NSNotFound) break;
-                    NSString *line = [lineBuf substringToIndex:nl.location];
-                    [lineBuf deleteCharactersInRange:NSMakeRange(0, nl.location + 1)];
-                    NSString *trim = [line stringByTrimmingCharactersInSet:
-                                      [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-                    if (![trim length]) continue;
-                    if ([trim hasPrefix:@"UPDATE OK"] || [trim hasPrefix:@"UPDATE ERR"]) {
-                        [last setString:trim];
-                        sawTerminal = YES;
-                    }
-                    if (progress) {
-                        dispatch_async(dispatch_get_main_queue(), ^{
-                            progress(trim);
-                        });
-                    }
-                }
-            }
-            int st = 0;
-            while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
-            if (WIFEXITED(st))
-                exitSt = WEXITSTATUS(st);
-        }
-        close(pipefd[0]);
-        if ([lineBuf length]) {
-            NSString *trim = [lineBuf stringByTrimmingCharactersInSet:
-                              [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-            if ([trim length]) {
-                if ([trim hasPrefix:@"UPDATE OK"] || [trim hasPrefix:@"UPDATE ERR"]) {
-                    [last setString:trim];
-                    sawTerminal = YES;
-                }
-                if (progress) {
-                    dispatch_async(dispatch_get_main_queue(), ^{ progress(trim); });
-                }
-            }
-        }
+        NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+        NSString *reply = [self blockingSend:cmd timeoutMs:5000];
         NSString *status = nil;
-        if (sawTerminal && [last length]) {
-            status = [[last copy] autorelease];
-        } else if (!ok) {
-            status = [NSString stringWithFormat:@"UPDATE ERR spawn failed (%d)", spawn_errno];
-        } else if (exitSt != 0) {
-            status = [NSString stringWithFormat:@"UPDATE ERR helper exit %d", exitSt];
-        } else {
-            status = @"UPDATE ERR no status from helper";
+        if (!reply) {
+            status = @"UPDATE ERR senkod did not answer";
+        } else if (![reply hasPrefix:@"OK "] &&
+                   [reply rangeOfString:@"\nOK "].location == NSNotFound) {
+            NSRange err = [reply rangeOfString:@"ERR "];
+            NSString *why = err.location != NSNotFound
+                ? [[reply substringFromIndex:err.location + 4] stringByTrimmingCharactersInSet:
+                   [NSCharacterSet whitespaceAndNewlineCharacterSet]]
+                : @"unexpected answer";
+            status = [NSString stringWithFormat:@"UPDATE ERR %@", why];
         }
-        dispatch_async(dispatch_get_main_queue(), ^{ if (done) done(status); });
+        unsigned long long offset = 0;
+        NSMutableString *pending = [NSMutableString string];
+        for (int tick = 0; !status && tick < SENKO_UPDATE_WAIT_SECONDS * 2; ++tick) {
+            NSAutoreleasePool *tickPool = [[NSAutoreleasePool alloc] init];
+            NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath:@SENKO_UPDATE_LOG];
+            if (fh) {
+                [fh seekToFileOffset:offset];
+                NSData *chunk = [fh readDataToEndOfFile];
+                [fh closeFile];
+                offset += [chunk length];
+                NSString *text = [[NSString alloc] initWithData:chunk encoding:NSUTF8StringEncoding];
+                if (!text)
+                    text = [[NSString alloc] initWithData:chunk encoding:NSISOLatin1StringEncoding];
+                if (text) [pending appendString:text];
+                [text release];
+            }
+            for (;;) {
+                NSRange nl = [pending rangeOfString:@"\n"];
+                if (nl.location == NSNotFound) break;
+                NSString *line = [[pending substringToIndex:nl.location]
+                                  stringByTrimmingCharactersInSet:
+                                  [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                [pending deleteCharactersInRange:NSMakeRange(0, nl.location + 1)];
+                if (![line length]) continue;
+                if ([line hasPrefix:@"UPDATE OK"] || [line hasPrefix:@"UPDATE ERR"])
+                    status = [line copy];
+                if (progress)
+                    dispatch_async(dispatch_get_main_queue(), ^{ progress(line); });
+                if (status) break;
+            }
+            [tickPool drain];
+            if (!status) usleep(500000);
+            else [status autorelease];
+        }
+        if (!status)
+            status = [NSString stringWithFormat:@"UPDATE ERR no result after %d s, see %s",
+                      SENKO_UPDATE_WAIT_SECONDS, SENKO_UPDATE_LOG];
+        [status retain];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (done) done(status);
+            [status release];
+        });
+        [pool drain];
     });
 }
 

@@ -89,53 +89,68 @@ static NSString *SenkoFormatUptime(long seconds) {
                                                    repeats:YES];
 }
 
+- (void)resetRates {
+    _rateAt = 0.0;
+    [_home setDownRate:SenkoFormatRate(0.0) upRate:SenkoFormatRate(0.0)];
+    [_home setDownTotal:nil upTotal:nil];
+}
+
+/* the daemon reports byte counters, so a speed is the change between two
+   samples over the time they were taken apart. a counter that went backwards
+   belongs to a new tunnel and only starts the next sample */
+- (void)applyTrafficUp:(uint64_t)up down:(uint64_t)down {
+    CFTimeInterval now = CACurrentMediaTime();
+    if (_rateAt > 0.0 && now - _rateAt > 0.2 &&
+        up >= _trafficUp && down >= _trafficDown) {
+        double dt = now - _rateAt;
+        [_home setDownRate:SenkoFormatRate((double)(down - _trafficDown) / dt)
+                    upRate:SenkoFormatRate((double)(up - _trafficUp) / dt)];
+    }
+    _rateAt = now;
+    _trafficUp = up;
+    _trafficDown = down;
+/* while senko is on screen nothing else on an ios 5 device is moving data, so
+   the speed reads 0 most of the time; the session total says the tunnel has
+   carried traffic at all */
+    [_home setDownTotal:SenkoFormatBytes(down) upTotal:SenkoFormatBytes(up)];
+}
+
 - (void)uptimeTick {
     if (![_state isEqualToString:@"connected"]) {
         [self syncUptimeTicker];
         return;
     }
-    SetStatusDefault(_statusLabel, [self selectionSummary]);
+    SetStatusDefault(_statusLabel, [self homeDetailText]);
     if (_trafficPending || _busy || _selectedBackend == SenkoBackendAmneziaWG) return;
     _trafficPending = YES;
     NSUInteger generation = _trafficGeneration;
-    [_ctl traffic:^(BOOL known, uint64_t up, uint64_t down) {
+    void (^received)(BOOL, uint64_t, uint64_t) = ^(BOOL known, uint64_t up, uint64_t down) {
         _trafficPending = NO;
         if (generation != _trafficGeneration || !_uptimeTimer ||
             ![_state isEqualToString:@"connected"]) return;
         _trafficKnown = known;
-        _trafficUp = up;
-        _trafficDown = down;
-        SenkoHomeApplyTraffic(&_ui, known, up, down);
-        if (SenkoClassicHomeEnabled())
-            SetStatusDefault(_statusLabel, [self selectionSummary]);
-    }];
+        if (known) [self applyTrafficUp:up down:down];
+        else {
+            _rateAt = 0.0;
+            [_home setDownRate:@"—" upRate:@"—"];
+            [_home setDownTotal:nil upTotal:nil];
+        }
+    };
+    if ([SenkoNativeVPN available]) [_nativeVPN traffic:received];
+    else [_ctl traffic:received];
 }
 
-- (NSString *)selectionSummary {
-    if (_selectedBackend == SenkoBackendAmneziaWG)
-        return SenkoLocalizedText(@"AmneziaWG profile");
-    SenkoServer *picked = nil;
-    for (SenkoServer *s in _servers) {
-        if (s->index == _selectedSrvIdx) { picked = s; break; }
-    }
-    if (!picked) return SenkoLocalizedText(@"No server selected");
-    NSString *name = [picked->remark length]
-        ? SenkoServerDisplayName(picked->remark)
-        : (picked->host ? picked->host : @"server");
-    NSMutableString *line = [NSMutableString stringWithString:name];
-    NSNumber *ms = [_serverStatus objectForKey:[NSNumber numberWithInt:picked->index]];
-    if (ms && [ms intValue] >= 0)
-        [line appendFormat:@" · %d ms", [ms intValue]];
-    if ([_state isEqualToString:@"connected"] && _tunnelUptimeKnown) {
-        long elapsed = _tunnelUptime +
-            (long)(CACurrentMediaTime() - _tunnelUptimeAt);
+/* the line under the state answers "for how long", the card below answers
+   "through which server", so the two never repeat each other */
+- (NSString *)homeDetailText {
+    if ([_state isEqualToString:@"connected"]) {
+        if (!_tunnelUptimeKnown) return @"";
+        long elapsed = _tunnelUptime + (long)(CACurrentMediaTime() - _tunnelUptimeAt);
         NSString *age = SenkoFormatUptime(elapsed);
-        if (age) [line appendFormat:@" · %@", age];
+        return age ? age : @"";
     }
-    if (_trafficKnown && SenkoClassicHomeEnabled())
-        [line appendFormat:@" · ↑ %@ ↓ %@", SenkoFormatBytes(_trafficUp),
-                           SenkoFormatBytes(_trafficDown)];
-    return line;
+    if ([_state isEqualToString:@"connecting"]) return @"";
+    return SenkoLocalizedText(@"Tap to connect");
 }
 
 - (void)applyState {
@@ -154,21 +169,19 @@ static NSString *SenkoFormatUptime(long seconds) {
         ++_trafficGeneration;
         _trafficKnown = NO;
         _trafficUp = _trafficDown = 0;
-        SenkoHomeApplyTraffic(&_ui, NO, 0, 0);
+        [self resetRates];
         _tunnelUptimeKnown = NO;
         _tunnelUptime = 0;
         _tunnelUptimeAt = 0.0;
     }
-    BOOL active = connected || connecting;
     if (!connecting)
         [NSObject cancelPreviousPerformRequestsWithTarget:self
                                                  selector:@selector(refresh)
                                                    object:nil];
-/* the glow behind the orb is painted from backgroundStatusKey, which reports an
-   error for as long as one is standing even though _state has already gone back
-   to idle. feeding the orb the same key is what stops a grey dot sitting in a
-   red halo with nothing on the card to explain it */
-    SenkoHomeApplyStatus(&_ui, [self backgroundStatusKey], [self stateHeadline], YES);
+/* the orbit is painted from backgroundStatusKey, which reports an error for as
+   long as one is standing even though _state has already gone back to idle */
+    [_home->power setStateKey:[self backgroundStatusKey]];
+    _home->state.text = [self stateHeadline];
 
     if (connected)
         [self setLastErr:nil];
@@ -177,10 +190,10 @@ static NSString *SenkoFormatUptime(long seconds) {
         _state = [@"idle" copy];
     }
     /* a failure is announced by the alert that setLastErr raises; repeating it
-       as body text next to the button is what crowded the card */
-    SetStatusDefault(_statusLabel, [self selectionSummary]);
+       as body text under the button is what crowded the screen */
+    SetStatusDefault(_statusLabel, [self homeDetailText]);
+    [self syncHomeServerCard];
     [self syncUptimeTicker];
-    (void)active;
 
     [self applyBackgroundForCurrentState:YES];
 
@@ -190,16 +203,12 @@ static NSString *SenkoFormatUptime(long seconds) {
 }
 
 static void senkoClearStatus(void) {
-#if SENKO_STOCK_NATIVE
-    return;
-#else
     const char *path = "/var/mobile/Library/Preferences/com.senko.status.state";
     int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd >= 0) {
         (void)write(fd, "0\n", 2);
         close(fd);
     }
-#endif
 }
 
 - (void)forceTunnelCleanupWithReason:(NSString *)reason {
@@ -223,14 +232,25 @@ static void senkoClearStatus(void) {
 - (void)togglePressed {
     if (_busy)
         return;
-#if SENKO_STOCK_NATIVE
-    [self toggleAfterAWGCheck];
-    return;
-#else
     [NSObject cancelPreviousPerformRequestsWithTarget:self
                                              selector:@selector(refresh)
                                                object:nil];
     [_ctl awgStatus:^(NSString *status) {
+/* no answer at all means senkod itself is down. saying so, with the reason its
+   log gives, beats failing one step later on a request it cannot answer */
+        if (!status) {
+            [_ctl ensureDaemon:^(BOOL up, NSString *detail) {
+                if (up) {
+                    [self toggleAfterAWGCheck];
+                    return;
+                }
+                [_lastAlertErr release];
+                _lastAlertErr = nil;
+                [self setLastErr:detail ? detail : @"daemon offline"];
+                [self applyState];
+            }];
+            return;
+        }
         NSString *s = [status stringByTrimmingCharactersInSet:
                        [NSCharacterSet whitespaceAndNewlineCharacterSet]];
 /* stale awg state must not make a stopped helper appear connected */
@@ -261,7 +281,6 @@ static void senkoClearStatus(void) {
         }
         [self toggleAfterAWGCheck];
     }];
-#endif
 }
 
 /* tries idx, and on a clean (non-stuck) failure moves to the next
@@ -281,41 +300,6 @@ static void senkoClearStatus(void) {
 }
 
 - (void)startNativeServerIndex:(int)idx {
-#if SENKO_STOCK_NATIVE
-    SenkoServer *server = [self serverByIndex:idx];
-    if (!server || ![server->link length]) {
-        [self setLastErr:@"server link is not cached"];
-        [_state release]; _state = [@"error" copy];
-        [self applyState];
-        [self setToggleBusy:NO];
-        return;
-    }
-    SenkoNativeConfigurationForLink(server->link,
-        ^(NSString *json, NSString *endpoint, NSString *error) {
-        if (!json) {
-            [self setLastErr:error ? error : @"native VPN configuration failed"];
-            [_state release]; _state = [@"error" copy];
-            [self applyState];
-            [self setToggleBusy:NO];
-            return;
-        }
-        [_nativeVPN startWithConfiguration:json serverAddress:endpoint
-                                completion:^(NSError *nativeError) {
-            if (nativeError) {
-                [self setLastErr:[nativeError localizedDescription]];
-                [_state release]; _state = [@"error" copy];
-                [self applyState];
-                [self setToggleBusy:NO];
-                return;
-            }
-            _activeBackend = SenkoBackendServer;
-            [_state release]; _state = [@"connected" copy];
-            [self setLastErr:nil];
-            [self applyState];
-            [self setToggleBusy:NO];
-        }];
-    });
-#else
     [_ctl nativeConfigurationIndex:idx reply:^(NSString *json, NSString *error) {
         if (!json) {
             [self setLastErr:error ? error : @"native VPN configuration failed"];
@@ -339,13 +323,16 @@ static void senkoClearStatus(void) {
             [self setToggleBusy:NO];
         }];
     }];
-#endif
 }
 
 - (void)toggleAfterAWGCheck {
     BOOL on = [_state isEqualToString:@"connected"] || [_state isEqualToString:@"connecting"];
     if (!on && _selectedBackend == SenkoBackendAmneziaWG) {
         [self startSavedAWGProfile];
+        return;
+    }
+    if (!on && SenkoAutoServerEnabled()) {
+        [self connectFastestServer];
         return;
     }
     [self setToggleBusy:YES];
@@ -358,14 +345,6 @@ static void senkoClearStatus(void) {
                     [self setToggleBusy:NO];
                     return;
                 }
-#if SENKO_STOCK_NATIVE
-                _activeBackend = SenkoBackendNone;
-                [_state release]; _state = [@"idle" copy];
-                senkoClearStatus();
-                [self setLastErr:nil];
-                [self applyState];
-                [self setToggleBusy:NO];
-#else
                 [_ctl disconnectReply:^(NSString *reply) {
                     (void)reply;
                     _activeBackend = SenkoBackendNone;
@@ -375,7 +354,6 @@ static void senkoClearStatus(void) {
                     [self applyState];
                     [self setToggleBusy:NO];
                 }];
-#endif
             }];
             return;
         }
@@ -387,99 +365,100 @@ static void senkoClearStatus(void) {
             [self setToggleBusy:NO];
         }];
     } else {
-        if (_selectedSrvIdx < 0)
-            [self syncSelectionFromDaemon];
-        if (_selectedSrvIdx < 0) {
+        [self connectSelectedServer];
+    }
+}
+
+/* the caller has already marked the toggle busy */
+- (void)connectSelectedServer {
+    if (_selectedSrvIdx < 0)
+        [self syncSelectionFromDaemon];
+    if (_selectedSrvIdx < 0) {
 /* the user asked for this by tapping connect, so the alert has to show even
    when the same message was raised a moment ago */
-            [_lastAlertErr release];
-            _lastAlertErr = nil;
-            [self setLastErr:@"no configuration is selected"];
+        [_lastAlertErr release];
+        _lastAlertErr = nil;
+        [self setLastErr:@"no configuration is selected"];
+        [self applyState];
+        [self setToggleBusy:NO];
+        return;
+    }
+    [_state release];
+    _state = [@"connecting" copy];
+    [self setLastErr:nil];
+    [self applyState];
+    [_ctl stopAWG:^(NSString *stopReply) {
+        NSString *stopClean = [stopReply stringByTrimmingCharactersInSet:
+                               [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (!stopClean.length || [stopClean hasPrefix:@"error"]) {
+            [self setLastErr:stopClean.length ? stopClean :
+                @"could not stop amneziawg"];
+            [_state release]; _state = [@"error" copy];
+            senkoClearStatus();
             [self applyState];
             [self setToggleBusy:NO];
             return;
         }
-        [_state release];
-        _state = [@"connecting" copy];
-        [self setLastErr:nil];
-        [self applyState];
-#if SENKO_STOCK_NATIVE
-        [self startNativeServerIndex:_selectedSrvIdx];
-#else
-        [_ctl stopAWG:^(NSString *stopReply) {
-            NSString *stopClean = [stopReply stringByTrimmingCharactersInSet:
-                                   [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-            if (!stopClean.length || [stopClean hasPrefix:@"error"]) {
-                [self setLastErr:stopClean.length ? stopClean :
-                    @"could not stop amneziawg"];
-                [_state release]; _state = [@"error" copy];
-                senkoClearStatus();
-                [self applyState];
-                [self setToggleBusy:NO];
-                return;
-            }
-            if ([SenkoNativeVPN available]) {
-                [_ctl disconnectReply:^(NSString *reply) {
-                    if (!reply || [reply hasPrefix:@"ERR "]) {
-                        NSString *message = reply && [reply length] > 4
-                            ? [reply substringFromIndex:4]
-                            : @"could not stop legacy VPN";
-                        [self setLastErr:message];
-                        [_state release]; _state = [@"error" copy];
-                        [self applyState];
-                        [self setToggleBusy:NO];
-                        return;
-                    }
-                    [self startNativeServerIndex:_selectedSrvIdx];
-                }];
-                return;
-            }
-            [self connectTryingCandidates:[self connectCandidatesForServerIndex:_selectedSrvIdx]
-                                    offset:0
-                                     reply:^(NSString *reply) {
-            NSString *errReason = nil;
-            NSString *finalState = nil;
-            if (reply) {
-                NSArray *lines = [reply componentsSeparatedByString:@"\n"];
-                for (NSString *ln in lines) {
-                    if ([ln length] == 0) continue;
-                    if ([ln hasPrefix:@"ERR "]) {
-                        errReason = [[ln substringFromIndex:4]
-                            stringByTrimmingCharactersInSet:
-                            [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-                    } else if ([ln hasPrefix:@"STATE "]) {
-                        finalState = SenkoControlStateFromReply(ln, NULL);
-                    }
+        if ([SenkoNativeVPN available]) {
+            [_ctl disconnectReply:^(NSString *reply) {
+                if (!reply || [reply hasPrefix:@"ERR "]) {
+                    NSString *message = reply && [reply length] > 4
+                        ? [reply substringFromIndex:4]
+                        : @"could not stop legacy VPN";
+                    [self setLastErr:message];
+                    [_state release]; _state = [@"error" copy];
+                    [self applyState];
+                    [self setToggleBusy:NO];
+                    return;
+                }
+                [self startNativeServerIndex:_selectedSrvIdx];
+            }];
+            return;
+        }
+        [self connectTryingCandidates:[self connectCandidatesForServerIndex:_selectedSrvIdx]
+                                offset:0
+                                 reply:^(NSString *reply) {
+        NSString *errReason = nil;
+        NSString *finalState = nil;
+        if (reply) {
+            NSArray *lines = [reply componentsSeparatedByString:@"\n"];
+            for (NSString *ln in lines) {
+                if ([ln length] == 0) continue;
+                if ([ln hasPrefix:@"ERR "]) {
+                    errReason = [[ln substringFromIndex:4]
+                        stringByTrimmingCharactersInSet:
+                        [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                } else if ([ln hasPrefix:@"STATE "]) {
+                    finalState = SenkoControlStateFromReply(ln, NULL);
                 }
             }
+        }
 /* missing replies leave routing active unless the timeout tears it down */
-            BOOL stuckConnecting = finalState &&
-                [finalState isEqualToString:@"connecting"] && !errReason;
-            if (!reply || stuckConnecting) {
-                [self forceTunnelCleanupWithReason:@"connect timeout"];
-                return;
-            }
-            if (errReason && [errReason length])
-                [self setLastErr:errReason];
-            if (finalState && [finalState length]) {
-                [_state release];
-                _state = [finalState copy];
-            } else if (errReason) {
-                [_state release];
-                _state = [@"error" copy];
-            }
-            if ([_state isEqualToString:@"error"] ||
-                [_state isEqualToString:@"idle"])
-                senkoClearStatus();
-            [self applyState];
-            [_ctl listCatalog:^(NSArray *servers, NSArray *subs, NSArray *order) {
-                if (servers) [self applyCatalog:servers subs:subs order:order];
-                [self setToggleBusy:NO];
-            }];
-            }];
+        BOOL stuckConnecting = finalState &&
+            [finalState isEqualToString:@"connecting"] && !errReason;
+        if (!reply || stuckConnecting) {
+            [self forceTunnelCleanupWithReason:@"connect timeout"];
+            return;
+        }
+        if (errReason && [errReason length])
+            [self setLastErr:errReason];
+        if (finalState && [finalState length]) {
+            [_state release];
+            _state = [finalState copy];
+        } else if (errReason) {
+            [_state release];
+            _state = [@"error" copy];
+        }
+        if ([_state isEqualToString:@"error"] ||
+            [_state isEqualToString:@"idle"])
+            senkoClearStatus();
+        [self applyState];
+        [_ctl listCatalog:^(NSArray *servers, NSArray *subs, NSArray *order) {
+            if (servers) [self applyCatalog:servers subs:subs order:order];
+            [self setToggleBusy:NO];
         }];
-#endif
-    }
+        }];
+    }];
 }
 
 - (void)switchActiveServerIndex:(int)idx {
@@ -501,9 +480,6 @@ static void senkoClearStatus(void) {
                 [self setToggleBusy:NO];
                 return;
             }
-#if SENKO_STOCK_NATIVE
-            [self startNativeServerIndex:idx];
-#else
             [_ctl disconnectReply:^(NSString *reply) {
                 if (!reply || [reply hasPrefix:@"ERR "]) {
                     [self setLastErr:reply && [reply length] > 4
@@ -515,7 +491,6 @@ static void senkoClearStatus(void) {
                 }
                 [self startNativeServerIndex:idx];
             }];
-#endif
         }];
         return;
     }
@@ -757,5 +732,199 @@ static void senkoClearStatus(void) {
     }];
 }
 
+
+/* quick connect measures at most this many servers before it dials. a panel
+   feed can carry hundreds, and three checks at a time through a daemon that
+   answers each within its own timeout would keep the button busy for minutes */
+static const NSUInteger kSenkoAutoProbeLimit = 24;
+
+/* servers already measured go first, fastest first, so a recent sweep decides
+   the candidates, and unmeasured ones fill the rest in catalog order */
+- (NSArray *)autoProbeCandidates {
+    NSMutableArray *measured = [NSMutableArray array];
+    NSMutableArray *unknown = [NSMutableArray array];
+    for (SenkoServer *sv in _servers) {
+        if (!sv->supported) continue;
+        NSNumber *ms = [_serverStatus objectForKey:[NSNumber numberWithInt:sv->index]];
+        if (ms && [ms intValue] >= 0) [measured addObject:sv];
+        else [unknown addObject:sv];
+    }
+    [measured sortUsingComparator:^NSComparisonResult(SenkoServer *a, SenkoServer *b) {
+        int pa = [[_serverStatus objectForKey:[NSNumber numberWithInt:a->index]] intValue];
+        int pb = [[_serverStatus objectForKey:[NSNumber numberWithInt:b->index]] intValue];
+        if (pa == pb) return NSOrderedSame;
+        return pa < pb ? NSOrderedAscending : NSOrderedDescending;
+    }];
+    [measured addObjectsFromArray:unknown];
+    if ([measured count] > kSenkoAutoProbeLimit)
+        [measured removeObjectsInRange:NSMakeRange(kSenkoAutoProbeLimit,
+                                                   [measured count] - kSenkoAutoProbeLimit)];
+    return measured;
+}
+
+- (void)connectFastestServer {
+    NSArray *candidates = [self autoProbeCandidates];
+    if (![candidates count]) {
+        [_lastAlertErr release];
+        _lastAlertErr = nil;
+        [self setLastErr:@"no configuration is selected"];
+        [self applyState];
+        return;
+    }
+    [self setToggleBusy:YES];
+    [_state release];
+    _state = [@"connecting" copy];
+    [self setLastErr:nil];
+    [self applyState];
+    SetStatusRefresh(_statusLabel, SenkoLocalizedText(@"Looking for the fastest server"));
+    [_autoQueue release];
+    _autoQueue = [candidates copy];
+    [_autoResults release];
+    _autoResults = [[NSMutableArray alloc] initWithCapacity:[candidates count]];
+    for (NSUInteger i = 0; i < [candidates count]; ++i)
+        [_autoResults addObject:[NSNumber numberWithInt:-1]];
+    _autoNext = 0;
+    _autoPending = 0;
+    _autoDone = 0;
+    [self launchAutoProbes:++_autoGeneration];
+}
+
+- (void)launchAutoProbes:(NSUInteger)generation {
+    if (generation != _autoGeneration) return;
+    /* every check holds a daemon client slot for its whole probe */
+    while (_autoPending < 3 && _autoNext < [_autoQueue count]) {
+        NSUInteger slot = _autoNext++;
+        SenkoServer *server = [_autoQueue objectAtIndex:slot];
+        int index = server->index;
+        NSNumber *key = [NSNumber numberWithInt:index];
+        _autoPending++;
+        [_serverStatus setObject:[NSNumber numberWithInt:-3] forKey:key];
+        [self reloadServerRowForIndex:index];
+        [_ctl checkIndex:index mode:@"tcp" reply:^(int ms, NSString *error) {
+            (void)error;
+            if (generation != _autoGeneration) return;
+            _autoPending--;
+            _autoDone++;
+            [_autoResults replaceObjectAtIndex:slot withObject:[NSNumber numberWithInt:ms]];
+            [_serverStatus setObject:[NSNumber numberWithInt:ms] forKey:key];
+            [self reloadServerRowForIndex:index];
+            if (_autoDone >= [_autoQueue count])
+                [self finishAutoProbes];
+            else
+                [self launchAutoProbes:generation];
+        }];
+    }
+}
+
+/* a subscription refresh can renumber the catalog while the checks run, so the
+   winner is found again by what it is rather than by the index it had */
+- (void)finishAutoProbes {
+    SenkoServer *winner = nil;
+    int bestMs = INT_MAX;
+    for (NSUInteger slot = 0; slot < [_autoQueue count]; ++slot) {
+        int ms = [[_autoResults objectAtIndex:slot] intValue];
+        if (ms >= 0 && ms < bestMs) {
+            bestMs = ms;
+            winner = [_autoQueue objectAtIndex:slot];
+        }
+    }
+    int best = -1;
+    for (SenkoServer *sv in _servers) {
+        if (winner && SenkoServerIdentityEqual(sv, winner)) {
+            best = sv->index;
+            break;
+        }
+    }
+    [_autoQueue release];
+    _autoQueue = nil;
+    [_autoResults release];
+    _autoResults = nil;
+    if (best < 0) {
+        [_state release];
+        _state = [@"idle" copy];
+        [_lastAlertErr release];
+        _lastAlertErr = nil;
+        [self setLastErr:@"no server answered the check"];
+        [self applyState];
+        [self setToggleBusy:NO];
+        return;
+    }
+    _selectedBackend = SenkoBackendServer;
+    _selectedSrvIdx = best;
+    [self rebuildSections];
+    [_table reloadData];
+    [self syncHomeServerCard];
+    [self connectSelectedServer];
+}
+
+- (SenkoSub *)subscriptionForServer:(SenkoServer *)server {
+    if (!server || server->group < 0) return nil;
+    for (SenkoSub *sub in _subs)
+        if (sub->index == server->group) return sub;
+    return nil;
+}
+
+- (NSString *)sourceNameForServer:(SenkoServer *)server {
+    SenkoSub *sub = [self subscriptionForServer:server];
+    if (sub && [sub->name length])
+        return [sub->name stringByReplacingOccurrencesOfString:@"_" withString:@" "];
+    return SenkoLocalizedText(@"Manual");
+}
+
+- (NSString *)nameForServer:(SenkoServer *)server {
+    NSString *shown = [_rowName objectForKey:[NSNumber numberWithInt:server->index]];
+    if ([shown length]) return shown;
+    NSString *name = SenkoServerDisplayName(server->remark);
+    if ([name length]) return name;
+    return server->host ? server->host : @"server";
+}
+
+/* the card names what the power button will dial: the amneziawg profile, the
+   quick connect choice, or one server with where it came from */
+- (void)syncHomeServerCard {
+    if (!_home) return;
+    UIColor *accent = kAccentBlue;
+    if (_selectedBackend == SenkoBackendAmneziaWG) {
+        [_home setServerTitle:@"AmneziaWG"
+                     subtitle:SenkoLocalizedText(@"AmneziaWG profile")
+                         icon:SenkoIconShield(20.0f, accent)
+                       isFlag:NO];
+        return;
+    }
+    if ([_servers count] == 0 && ![self hasAWGProfile]) {
+        [_home setServerTitle:SenkoLocalizedText(@"No servers")
+                     subtitle:SenkoLocalizedText(@"Add a subscription or a server")
+                         icon:SenkoPlusIcon(20.0f, accent)
+                       isFlag:NO];
+        return;
+    }
+    SenkoServer *picked = [self serverByIndex:_selectedSrvIdx];
+    if (SenkoAutoServerEnabled()) {
+        BOOL live = [self isTunnelActive] && _activeBackend == SenkoBackendServer && picked;
+        [_home setServerTitle:SenkoLocalizedText(@"Auto")
+                     subtitle:live ? [self nameForServer:picked]
+                                   : SenkoLocalizedText(@"Fastest server")
+                         icon:TintedIconNamed(@"glyph-bolt.png", 20.0f, accent)
+                       isFlag:NO];
+        return;
+    }
+    if (!picked) {
+        [_home setServerTitle:SenkoLocalizedText(@"Choose a server")
+                     subtitle:SenkoLocalizedText(@"Tap to open the list")
+                         icon:TintedIconNamed(@"glyph-globe.png", 20.0f, accent)
+                       isFlag:NO];
+        return;
+    }
+    NSMutableString *subtitle = [NSMutableString stringWithString:
+                                 [self sourceNameForServer:picked]];
+    NSNumber *ms = [self bestPingForServer:picked];
+    if (ms && [ms intValue] >= 0)
+        [subtitle appendFormat:@" · %@", [NSString stringWithFormat:
+                                          SenkoLocalizedText(@"%d ms"), [ms intValue]]];
+    [_home setServerTitle:[self nameForServer:picked]
+                 subtitle:subtitle
+                     icon:SenkoServerBadgeImage(picked->remark, 44.0f)
+                   isFlag:YES];
+}
 
 @end
