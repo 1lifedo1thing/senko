@@ -33,17 +33,17 @@ remove_rootful_app_bundle() {
 
 remove_rootful_layout() {
   [ -z "$JBROOT" ] || return 0
-  for name in senkod senkoctl senko-kick senkoawgd; do
+  for name in senkod senkoctl; do
     remove_rootful_link "/usr/bin/${name}" "${PAYLOAD_ROOT}/usr/bin/${name}"
   done
   remove_rootful_link /usr/lib/senkotlsfix.dylib "${PAYLOAD_ROOT}/usr/lib/senkotlsfix.dylib"
   remove_rootful_link /usr/lib/senkotlsfix "${PAYLOAD_ROOT}/usr/lib/senkotlsfix"
+  remove_rootful_link /usr/lib/senko/cacert.pem "${PAYLOAD_ROOT}/usr/lib/senko/cacert.pem"
   remove_rootful_link /usr/lib/senkostatus.dylib "${PAYLOAD_ROOT}/usr/lib/senkostatus.dylib"
   remove_rootful_link /usr/lib/senkostatus.plist "${PAYLOAD_ROOT}/usr/lib/senkostatus.plist"
   remove_rootful_app_bundle
   remove_rootful_link /Library/LaunchDaemons/com.senko.senkod.plist \
     "${PAYLOAD_ROOT}/Library/LaunchDaemons/com.senko.senkod.plist"
-  remove_rootful_link /etc/pf.os "${PAYLOAD_ROOT}/etc/pf.os"
   # only ever removed when it still points at the shim this package installed
   remove_rootful_link /usr/bin/head "${PAYLOAD_ROOT}/usr/lib/senko/head"
 }
@@ -57,20 +57,28 @@ case "$1" in
     # prerm already stopped everything; this is the last chance to catch a core
     # that outlived a failed or skipped prerm, and it is what frees the utun the
     # default route still points at
-    "$KILLALL" -9 senkod senkoawgd senko-core >/dev/null 2>&1 || true
+    "$KILLALL" -9 senkod senko-core SenkoTunnel >/dev/null 2>&1 || true
     rm -f /var/tmp/senkod.sock >/dev/null 2>&1 || true
     rm -f /var/mobile/Library/Preferences/Senko/import.dat >/dev/null 2>&1 || true
-    rm -f /var/run/senko-pf.conf >/dev/null 2>&1 || true
     rm -f "${JBROOT}/usr/bin/redsocks-senko" /var/run/senko-redsocks.conf >/dev/null 2>&1 || true
     rm -f "${SUBSTRATE_DIR}/senkostatus.dylib" \
           "${SUBSTRATE_DIR}/senkostatus.plist" \
+          "${SUBSTRATE_DIR}/senkotlsfix.dylib" \
+          "${SUBSTRATE_DIR}/senkotlsfix.plist" \
           /var/mobile/Library/Preferences/com.senko.status.state \
           /var/mobile/Library/Preferences/com.senko.status.log \
           /var/mobile/Library/Preferences/com.senko.status.off >/dev/null 2>&1 || true
-    # stale icon records survive after SpringBoard loses the bundle path
-    "$UICACHE" >/dev/null 2>&1 || true
     remove_rootful_layout
-    remove_rootful_app_bundle
+    # the icon cache is rebuilt only after the bundle is gone: rebuilding it
+    # first recorded senko again, and a tester on ios 10 kept an icon that
+    # opened a copy with no daemon behind it
+    "$UICACHE" >/dev/null 2>&1 || true
+    # the app keeps running from memory once its bundle is deleted
+    "$KILLALL" -9 senko >/dev/null 2>&1 || true
+    if [ "${SENKO_SKIP_RESPRING:-0}" != "1" ]; then
+      ( sleep 2; "$KILLALL" -9 SpringBoard backboardd >/dev/null 2>&1 || true ) \
+        </dev/null >/dev/null 2>&1 &
+    fi
     ;;
 esac
 

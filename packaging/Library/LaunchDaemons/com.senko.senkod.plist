@@ -12,7 +12,6 @@
     <string>/var/tmp/senkod.sock</string>
     <string>--config</string>
     <string>/var/root/Library/Preferences/senko.cfg</string>
-    <string>--full-device</string>
   </array>
   <!-- omitting UserName avoids broken launchctl loads on older jailbreaks -->
   <key>RunAtLoad</key>

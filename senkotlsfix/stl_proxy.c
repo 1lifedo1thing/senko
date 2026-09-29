@@ -243,11 +243,10 @@ static int stl_connect(int fd, const struct sockaddr *addr, socklen_t addr_len) 
     return -1;
 }
 
-/* the daemon only falls back to this in process proxy when the system has no
-   firewall tool at all. pf is the discriminator: ios 7 gained /dev/pf, and
-   every system that has it gets routed by pfctl or by ipfw instead. without
-   this check the connect hook is rebound in every uikit process on the device,
-   which is a lot of risk for a path those systems never take */
+/* the daemon falls back to this in process proxy only when its utun tunnel
+   cannot open. /dev/pf is the discriminator the hook always used: ios 7 gained
+   it, and those systems keep the hook off, because rebinding connect in every
+   uikit process is a lot of risk for a fallback they have not needed */
 int stl_proxy_supported_system(void) {
     static int cached = -1;
     if (cached >= 0) return cached;

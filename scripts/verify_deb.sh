@@ -56,12 +56,15 @@ fi
 [ -x data/var/jb/usr/bin/senkod ] || {
   echo "universal daemon payload missing" >&2; exit 1;
 }
+[ -s data/var/jb/usr/lib/senko/cacert.pem ] || {
+  echo "daemon tls roots missing from the persistent path" >&2; exit 1;
+}
 [ -f data/var/jb/Library/LaunchDaemons/com.senko.senkod.plist ] || {
   echo "universal launchd plist missing" >&2; exit 1;
 }
-[ -f data/var/jb/etc/pf.os ] || {
-  echo "universal pf.os compatibility file missing" >&2; exit 1;
-}
+if [ -e data/var/jb/etc/pf.os ]; then
+  echo "pf.os is back in the payload, but senko no longer uses pf" >&2; exit 1
+fi
 if [ -e data/Applications ] || [ -e data/usr ] || [ -e data/Library ]; then
   echo "universal package would write into the rootless sealed root" >&2
   exit 1

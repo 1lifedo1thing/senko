@@ -23,7 +23,6 @@ TLSFIX_DIR=${PAYLOAD_ROOT}/usr/lib/senkotlsfix
 STATUS_DYLIB=${PAYLOAD_ROOT}/usr/lib/senkostatus.dylib
 STATUS_PLIST=${PAYLOAD_ROOT}/usr/lib/senkostatus.plist
 APP=${PAYLOAD_ROOT}/Applications/Senko.app
-KICK=${PAYLOAD_ROOT}/usr/bin/senko-kick
 KILLALL=${JBROOT}/usr/bin/killall
 [ -x "$KILLALL" ] || KILLALL=/usr/bin/killall
 [ -x "$KILLALL" ] || KILLALL=/bin/killall
@@ -34,22 +33,22 @@ LAUNCHCTL=${JBROOT}/bin/launchctl
 [ -x "$LAUNCHCTL" ] || LAUNCHCTL=/bin/launchctl
 [ -x "$LAUNCHCTL" ] || LAUNCHCTL=/usr/bin/launchctl
 STATUS_STATE=/var/mobile/Library/Preferences/com.senko.status.state
-UPDATE_AWG_MARKER=/var/run/senkoawgd.upgrade
+AWG_ACTIVE=/var/run/senkod-amnezia.config
 CFG=/var/root/Library/Preferences/senko.cfg
 LEGACY_CFG=/var/mobile/Library/Preferences/senko.cfg
 
 install_rootful_link() {
   source_path=$1
   target_path=$2
-  [ -e "$source_path" ] || return 0
-  mkdir -p "${target_path%/*}" 2>/dev/null || true
+  [ -e "$source_path" ] || return 1
+  mkdir -p "${target_path%/*}" || return 1
   if [ -e "$target_path" ] && [ ! -L "$target_path" ]; then
-    rm -rf "$target_path" 2>/dev/null || true
+    rm -rf "$target_path" || return 1
   fi
   if [ -L "$target_path" ]; then
-    rm -f "$target_path" 2>/dev/null || true
+    rm -f "$target_path" || return 1
   fi
-  ln -sf "$source_path" "$target_path" 2>/dev/null || true
+  ln -s "$source_path" "$target_path"
 }
 
 # rootful springboard requires the bundle on the system Applications volume.
@@ -89,48 +88,179 @@ install_rootful_daemon_plist() {
   return 0
 }
 
+# senko before 3.0 shipped a setuid senko-kick, as a real copy in /usr/bin on
+# rootful installs. senkod does that work itself now, and a stray setuid root
+# binary must not outlive the package that needed it
+remove_kick_leftovers() {
+  for path in /usr/bin/senko-kick "${PAYLOAD_ROOT}/usr/bin/senko-kick"; do
+    [ -e "$path" ] || [ -L "$path" ] || continue
+    rm -f "$path" 2>/dev/null || true
+  done
+  rm -f /var/log/senko-kick.log /var/tmp/senko-kick.lock \
+    /var/mobile/Library/Preferences/Senko/kick.log 2>/dev/null || true
+}
+
+# senko before 3.0 ran amneziawg in its own senkoawgd process. senkod runs the
+# tunnel now; an old one still up would hold a second utun and its routes.
+# SIGTERM makes it take them down. the profile an upgrade asked to keep moves
+# to the file senkod restores from
+retire_senkoawgd() {
+  if [ -f /var/run/senkoawgd.pid ]; then
+    "$KILLALL" -TERM senkoawgd >/dev/null 2>&1 || true
+    sleep 1
+    "$KILLALL" -9 senkoawgd >/dev/null 2>&1 || true
+  fi
+  if [ -s /var/run/senkoawgd.upgrade ]; then
+    profile="$(sed -n '1p' /var/run/senkoawgd.upgrade 2>/dev/null || true)"
+    case "$profile" in
+      /var/mobile/Library/Preferences/Senko/*.conf) printf '%s\n' "$profile" > "$AWG_ACTIVE" ;;
+    esac
+  fi
+  rm -f /var/run/senkoawgd.pid /var/run/senkoawgd.status /var/run/senkoawgd.config \
+    /var/run/senkoawgd.upgrade >/dev/null 2>&1 || true
+  if [ -L /usr/bin/senkoawgd ] && [ "$(readlink /usr/bin/senkoawgd 2>/dev/null)" = "${PAYLOAD_ROOT}/usr/bin/senkoawgd" ]; then
+    rm -f /usr/bin/senkoawgd
+  fi
+}
+
 install_rootful_layout() {
   [ -z "$JBROOT" ] || return 0
-  for name in senkod senkoctl senko-kick senkoawgd; do
-    install_rootful_link "${PAYLOAD_ROOT}/usr/bin/${name}" "/usr/bin/${name}" || true
-  done
+  [ -x "${PAYLOAD_ROOT}/usr/bin/senkod" ] || return 1
+  [ -s "${PAYLOAD_ROOT}/usr/lib/senko/cacert.pem" ] || return 1
+  install_rootful_link "${PAYLOAD_ROOT}/usr/bin/senkod" "/usr/bin/senkod"
+  [ "$(readlink /usr/bin/senkod)" = "${PAYLOAD_ROOT}/usr/bin/senkod" ] || return 1
+  install_rootful_link "${PAYLOAD_ROOT}/usr/bin/senkoctl" "/usr/bin/senkoctl" || true
   install_rootful_link "${PAYLOAD_ROOT}/usr/lib/senkotlsfix.dylib" "/usr/lib/senkotlsfix.dylib" || true
   install_rootful_link "${PAYLOAD_ROOT}/usr/lib/senkotlsfix" "/usr/lib/senkotlsfix" || true
+  install_rootful_link "${PAYLOAD_ROOT}/usr/lib/senko/cacert.pem" "/usr/lib/senko/cacert.pem"
+  [ "$(readlink /usr/lib/senko/cacert.pem)" = "${PAYLOAD_ROOT}/usr/lib/senko/cacert.pem" ] || return 1
   install_rootful_link "${PAYLOAD_ROOT}/usr/lib/senkostatus.dylib" "/usr/lib/senkostatus.dylib" || true
   install_rootful_link "${PAYLOAD_ROOT}/usr/lib/senkostatus.plist" "/usr/lib/senkostatus.plist" || true
-  install_rootful_daemon_plist || true
+  install_rootful_daemon_plist || return 1
+  [ -s /Library/LaunchDaemons/com.senko.senkod.plist ] || return 1
   if [ ! -e /usr/bin/head ] && [ -e "${PAYLOAD_ROOT}/usr/lib/senko/head" ]; then
     install_rootful_link "${PAYLOAD_ROOT}/usr/lib/senko/head" "/usr/bin/head" || true
   fi
-  if [ ! -e /etc/pf.os ] && [ -e "${PAYLOAD_ROOT}/etc/pf.os" ]; then
-    install_rootful_link "${PAYLOAD_ROOT}/etc/pf.os" "/etc/pf.os" || true
+}
+
+# senko before 3.0 redirected traffic with pf or ipfw. a daemon that died under
+# those versions left its rules loaded, and nothing in this version would take
+# them out again
+remove_firewall_leftovers() {
+  if [ -f /var/run/senko-pf.conf ]; then
+    for pfctl in /var/jb/sbin/pfctl /var/jb/usr/sbin/pfctl /sbin/pfctl /usr/sbin/pfctl; do
+      [ -x "$pfctl" ] || continue
+      "$pfctl" -q -a com.apple/senko -F all >/dev/null 2>&1 || true
+      break
+    done
+    rm -f /var/run/senko-pf.conf >/dev/null 2>&1 || true
+  fi
+  for ipfw in /var/jb/sbin/ipfw /sbin/ipfw /usr/sbin/ipfw; do
+    [ -x "$ipfw" ] || continue
+    rule=12000
+    while [ "$rule" -le 12098 ]; do
+      "$ipfw" -q delete "$rule" >/dev/null 2>&1 || true
+      rule=$((rule + 1))
+    done
+    break
+  done
+  # the link to the pf.os file this package no longer carries
+  if [ -L /etc/pf.os ] && [ "$(readlink /etc/pf.os 2>/dev/null)" = "${PAYLOAD_ROOT}/etc/pf.os" ]; then
+    rm -f /etc/pf.os
   fi
 }
 
 # rootful systems need a real system-volume bundle. Dopamine keeps its writable
 # app bundles in /var/jb/Applications, because /Applications is sealed
-install_rootful_app_bundle || true
+install_rootful_app_bundle || {
+  echo "senko: cannot place the app in /Applications" >&2
+  exit 1
+}
 [ -z "$JBROOT" ] && APP=/Applications/Senko.app
 
 # rootful systems need canonical links because armv7 code uses /usr paths
-install_rootful_layout || true
+install_rootful_layout || {
+  echo "senko: cannot place senkod, its TLS roots, or its launchd plist on rootful iOS" >&2
+  exit 1
+}
+remove_firewall_leftovers || true
+remove_kick_leftovers || true
+retire_senkoawgd || true
+
+# senkod runs xray from the packet tunnel extension binary. ios sandboxes any
+# executable it starts from a path inside an app bundle, and xray then could
+# not open its config ("operation not permitted"), so the same file gets a
+# second name outside the bundle. a hard link, because a symlink resolves back
+# into the bundle and a copy would cost another 25 MB
+install_core_link() {
+  core_exe="${PAYLOAD_ROOT}/Applications/Senko.app/PlugIns/SenkoTunnel.appex/SenkoTunnel"
+  core_link="${PAYLOAD_ROOT}/usr/lib/senko-core"
+  [ -x "$core_exe" ] || return 1
+  rm -f "$core_link" 2>/dev/null || return 1
+  ln "$core_exe" "$core_link"
+}
+install_core_link || {
+  echo "senko: cannot link senko-core, the jailbreak tunnel will not start" >&2
+  exit 1
+}
+
+# the launchctl of h3lix on ios 10 answers 0 to bootstrap and bootout without
+# doing either, so every step is judged by what launchd lists afterwards
+launchd_loaded() {
+  case "$("$LAUNCHCTL" list 2>/dev/null)" in
+    *com.senko.senkod*) return 0 ;;
+  esac
+  return 1
+}
 
 launchd_stop() {
   [ -x "$LAUNCHCTL" ] || return 0
-  "$LAUNCHCTL" bootout "system/com.senko.senkod" >/dev/null 2>&1 || \
-    "$LAUNCHCTL" bootout system "$PLIST" >/dev/null 2>&1 || \
-    "$LAUNCHCTL" unload "$PLIST" >/dev/null 2>&1 || true
-  "$LAUNCHCTL" remove com.senko.senkod >/dev/null 2>&1 || true
+  "$LAUNCHCTL" bootout "system/com.senko.senkod" >/dev/null 2>&1
+  launchd_loaded || return 0
+  "$LAUNCHCTL" bootout system "$PLIST" >/dev/null 2>&1
+  launchd_loaded || return 0
+  "$LAUNCHCTL" unload "$PLIST" >/dev/null 2>&1
+  launchd_loaded || return 0
+  "$LAUNCHCTL" remove com.senko.senkod >/dev/null 2>&1
+  launchd_loaded || return 0
+  echo "senko: launchd still holds com.senko.senkod" >&2
+  return 1
 }
 
 launchd_start() {
-  [ -x "$LAUNCHCTL" ] || return 1
-  "$LAUNCHCTL" bootstrap system "$PLIST" >/dev/null 2>&1 || \
-    "$LAUNCHCTL" load -w "$PLIST" >/dev/null 2>&1 || \
-    "$LAUNCHCTL" load "$PLIST" >/dev/null 2>&1 || return 1
+  if [ ! -x "$LAUNCHCTL" ]; then
+    echo "senko: no launchctl found, senkod was not started" >&2
+    return 1
+  fi
+  "$LAUNCHCTL" bootstrap system "$PLIST" >/dev/null 2>&1
+  launchd_loaded || "$LAUNCHCTL" load -w "$PLIST" >/dev/null 2>&1
+  launchd_loaded || "$LAUNCHCTL" load "$PLIST" >/dev/null 2>&1
+  if ! launchd_loaded; then
+    echo "senko: launchd did not load ${PLIST}, senkod is not running" >&2
+    echo "postinst: launchd did not load ${PLIST}" >> /var/log/senko-system.log 2>/dev/null
+    return 1
+  fi
+  # the app shows this log, so a tester can see the step without a shell
+  echo "postinst: launchd holds com.senko.senkod" >> /var/log/senko-system.log 2>/dev/null
   "$LAUNCHCTL" enable system/com.senko.senkod >/dev/null 2>&1 || true
   "$LAUNCHCTL" kickstart -k system/com.senko.senkod >/dev/null 2>&1 || \
     "$LAUNCHCTL" start com.senko.senkod >/dev/null 2>&1 || true
+  # launchctl can list a job whose process exits before it opens the socket
+  attempt=0
+  while [ "$attempt" -lt 8 ]; do
+    # senkoctl exits non-zero for "STATE error", which is still an answer: a
+    # saved tunnel that failed to restore left every install half-configured
+    reply="$("${PAYLOAD_ROOT}/usr/bin/senkoctl" status 2>/dev/null)"
+    case "$reply" in
+      *"STATE "*)
+        echo "postinst: senkod answered STATUS" >> /var/log/senko-system.log 2>/dev/null
+        return 0 ;;
+    esac
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 8 ] && sleep 1
+  done
+  echo "postinst: senkod did not answer STATUS after launchd load" >> /var/log/senko-system.log 2>/dev/null
+  return 1
 }
 
 tlsfix_installed() {
@@ -202,7 +332,8 @@ remove_rootful_legacy_links() {
 }
 
 remove_modern_legacy_payload() {
-  # ios 12 and later use system tls and native status handling
+  # ios 12+ needs no injected tls shim or status hook; senkod's roots stay
+  # under /usr/lib/senko
   rm -f "$TLSFIX_DYLIB" "$STATUS_DYLIB" "$STATUS_PLIST"
   rm -rf "$TLSFIX_DIR"
 }
@@ -251,24 +382,6 @@ chmod 644 "$PLIST" || true
 for bin in "${PAYLOAD_ROOT}/usr/bin/senkod" "${PAYLOAD_ROOT}/usr/bin/senkoctl"; do
   [ -e "$bin" ] && chown root:wheel "$bin" && chmod 755 "$bin" || true
 done
-[ -e "${PAYLOAD_ROOT}/usr/bin/senkoawgd" ] && chown root:wheel "${PAYLOAD_ROOT}/usr/bin/senkoawgd" && chmod 755 "${PAYLOAD_ROOT}/usr/bin/senkoawgd" || true
-# setuid is required because the sandboxed app cannot signal the root daemon.
-# this bit silently failing to take is the one failure mode that leaves dpkg
-# reporting success while the app is left unable to ever reach root, so the
-# chmod result and the bit it was supposed to set are both checked rather
-# than swallowed
-if [ -e "$KICK" ]; then
-  chown root:wheel "$KICK" || true
-  if chmod 4755 "$KICK"; then
-    if [ ! -u "$KICK" ]; then
-      echo "senko-kick: chmod 4755 reported success but $KICK has no setuid bit (filesystem likely mounted nosuid)" \
-        >> /var/log/senko-kick.log 2>/dev/null || true
-    fi
-  else
-    echo "senko-kick: chmod 4755 failed on $KICK during install" \
-      >> /var/log/senko-kick.log 2>/dev/null || true
-  fi
-fi
 # the obsolete helper would compete for the local proxy port
 rm -f "${JBROOT}/usr/bin/redsocks-senko" "${PAYLOAD_ROOT}/usr/bin/redsocks-senko" /var/run/senko-redsocks.conf >/dev/null 2>&1 || true
 [ -e "$TLSFIX_DYLIB" ] && chown root:wheel "$TLSFIX_DYLIB" && chmod 755 "$TLSFIX_DYLIB" || true
@@ -311,6 +424,10 @@ if [ ! -s /var/log/senko-system.log ]; then
   [ -s /var/log/senkoawgd.log ] && sed 's/^/[awg] /' /var/log/senkoawgd.log >> /var/log/senko-system.log
 fi
 touch /var/log/senko-system.log >/dev/null 2>&1 || true
+# the log outlives reinstalls, so lines from an older senkod read as the
+# current one's; a marker shows where this install begins
+installed="$(dpkg-query -W -f='${Version}' com.senko.daemon 2>/dev/null || true)"
+printf 'postinst: senko %s installed\n' "${installed:-unknown}" >> /var/log/senko-system.log 2>/dev/null || true
 chown root:mobile /var/log/senko-system.log >/dev/null 2>&1 || true
 chmod 640 /var/log/senko-system.log >/dev/null 2>&1 || true
 touch /var/log/senkotlsfix.log >/dev/null 2>&1 || true
@@ -345,7 +462,7 @@ fi
 chown root:wheel "$CFG" >/dev/null 2>&1 || true
 chmod 600 "$CFG" >/dev/null 2>&1 || true
 
-# the update helper owns kick.lock, so a second restart would race its recovery
+# senkod --update restarts the daemon itself once dpkg returns
 if [ "${SENKO_UPDATE:-0}" != "1" ]; then
   # SIGTERM lets senkod remove routes before launchd starts the replacement
   launchd_stop
@@ -356,25 +473,31 @@ if [ "${SENKO_UPDATE:-0}" != "1" ]; then
   "$KILLALL" -9 senkod >/dev/null 2>&1 || true
   rm -f /var/tmp/senkod.sock /var/tmp/senkod.token
 
-  launchd_start || true
-
-  if [ -s "$UPDATE_AWG_MARKER" ] && [ -x "$KICK" ]; then
-    upgrade_config="$(sed -n '1p' "$UPDATE_AWG_MARKER" 2>/dev/null || true)"
-    case "$upgrade_config" in
-      /var/mobile/Library/Preferences/Senko/*.conf)
-        if [ -r "$upgrade_config" ]; then
-          ( "$KICK" --awg "$upgrade_config" >/dev/null 2>&1 || true ) </dev/null &
-        fi
-        ;;
-    esac
-    rm -f "$UPDATE_AWG_MARKER" >/dev/null 2>&1 || true
-  fi
+  # senkod brings a recorded amneziawg profile back by itself
+  launchd_start || {
+    echo "senko: senkod was not loaded by launchd; see /var/log/senko-system.log" >&2
+    exit 1
+  }
 fi
 
 echo "Senko installed successfully. control socket: /var/tmp/senkod.sock"
 
+# ios 7 and older keep the app list in mobile's installation cache, and their
+# uicache run as root stops at "cannot open cache file. incorrect user?".
+# newer uicache needs root, so root stays the fallback
+INSTALL_CACHE=/var/mobile/Library/Caches/com.apple.mobile.installation.plist
+SU=/bin/su
+[ -x "$SU" ] || SU=/usr/bin/su
+refresh_app_cache() {
+  if [ -z "$JBROOT" ] && [ -f "$INSTALL_CACHE" ] && [ -x "$SU" ]; then
+    "$SU" - mobile -c "$UICACHE -p $APP" && return 0
+    "$SU" - mobile -c "$UICACHE" && return 0
+  fi
+  "$UICACHE" -p "$APP" || "$UICACHE"
+}
+
 # backgrounding avoids an ios 6 uicache deadlock while the old app is alive
-( "$UICACHE" -p "$APP" >/dev/null 2>&1 || "$UICACHE" >/dev/null 2>&1 || true ) </dev/null &
+( refresh_app_cache >/dev/null 2>&1 || true ) </dev/null &
 
 if [ "${SENKO_SKIP_RESPRING:-0}" = "1" ]; then
   exit 0

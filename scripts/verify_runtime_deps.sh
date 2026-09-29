@@ -44,10 +44,9 @@ cp "${DEB}" "${WORK}/pkg.deb"
   fi
 
   [ -x "${payload}/usr/bin/senkod" ] || { echo "missing senkod" >&2; exit 1; }
-  [ -x "${payload}/usr/bin/senkoawgd" ] || { echo "missing senkoawgd" >&2; exit 1; }
-  awg_bins="$(find "${payload}/usr/bin" -maxdepth 1 -type f -name '*awgd' -print)"
-  [ "${awg_bins}" = "${payload}/usr/bin/senkoawgd" ] || {
-    echo "stale awg daemon binary" >&2
+  # amneziawg runs inside senkod
+  [ -z "$(find "${payload}/usr/bin" -maxdepth 1 -name '*awgd' -print)" ] || {
+    echo "a separate amneziawg daemon must not be packaged" >&2
     exit 1
   }
   [ ! -e "${payload}/usr/bin/redsocks-senko" ] || {
@@ -55,41 +54,42 @@ cp "${DEB}" "${WORK}/pkg.deb"
     exit 1
   }
   [ -f "${payload}/usr/lib/senkotlsfix.dylib" ] || { echo "missing bundled tlsfix" >&2; exit 1; }
-  # the app can only ever ask a setuid senko-kick to reach the root daemon; a
-  # deb built without that bit installs cleanly and then fails on every
-  # launch with no way for the user to tell why. read the mode tar actually
-  # stored rather than what extracting here reproduces: a sandbox that
-  # itself disallows setting setuid on extraction would otherwise fail this
-  # check on a correctly packaged deb
-  kick_entry="$(tar -tvf data.tar.gz | grep -F "${relroot}/usr/bin/senko-kick")"
-  kick_perm="${kick_entry%% *}"
-  case "${kick_perm}" in
-    -rws*) ;;
-    *)
-      echo "senko-kick packaged without setuid, tar entry: ${kick_entry:-<not found>}" >&2
-      exit 1
-      ;;
-  esac
+  # senkod runs root work for the app itself; some jailbreaks (h3lix,
+  # doubleh3lix, sockport) never honour a setuid bit for an app's child, so
+  # the package must not rely on one. read the modes tar stored
+  setuid_entries="$(tar -tvf data.tar.gz | awk '$1 ~ /^-..[sS]/')"
+  [ -z "${setuid_entries}" ] || {
+    echo "setuid files must not be packaged: ${setuid_entries}" >&2
+    exit 1
+  }
+  [ ! -e "${payload}/usr/bin/senko-kick" ] || {
+    echo "senko-kick must not be packaged" >&2
+    exit 1
+  }
   [ ! -e "${payload}/Library/MobileSubstrate" ] || {
     echo "MobileSubstrate payload must be installed only when available" >&2
     exit 1
   }
 
-  for bin in "${payload}/usr/bin/senkod" "${payload}/usr/bin/senkoctl" "${payload}/usr/bin/senkoawgd" \
+  for bin in "${payload}/usr/bin/senkod" "${payload}/usr/bin/senkoctl" \
+             "${payload}/Applications/Senko.app/senko" \
              "${payload}/usr/lib/senkotlsfix.dylib" \
-             "${payload}/usr/lib/senkostatus.dylib" \
-             "${payload}/Applications/Senko.app/senko"; do
+             "${payload}/usr/lib/senkostatus.dylib"; do
     while IFS= read -r dep; do
       case "${dep}" in
         /usr/lib/*|/System/Library/Frameworks/*|/var/jb/usr/lib/senkotlsfix.dylib|/var/jb/usr/lib/senkostatus.dylib) ;;
         *) echo "non-system runtime dependency in ${bin}: ${dep}" >&2; exit 1 ;;
       esac
     done < <("${TC}/otool" -L "${bin}" | awk '/^[[:space:]]/ { print $1 }')
-    slices="$("${TC}/lipo" -info "${bin}")"
-    case "${slices}" in
-      *armv7*arm64*arm64e*|*armv7*arm64e*arm64*|*arm64*armv7*arm64e*|*arm64*arm64e*armv7*|*arm64e*armv7*arm64*|*arm64e*arm64*armv7*) ;;
-      *) echo "missing armv7, arm64, or arm64e slice in ${bin}: ${slices}" >&2; exit 1 ;;
+    slices="$("${TC}/lipo" -archs "${bin}")"
+    case "${bin}" in
+      *.dylib) expected="armv7 arm64 arm64e" ;;
+      *) expected="armv7 arm64" ;;
     esac
+    if [ "${slices}" != "${expected}" ]; then
+      echo "unexpected slices in ${bin}: ${slices} (expected ${expected})" >&2
+      exit 1
+    fi
   done
 )
 

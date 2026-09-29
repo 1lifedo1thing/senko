@@ -225,6 +225,112 @@ static BOOL SenkoInstallVPNHook(void) {
     return NO;
 }
 
+/* springboard draws the wifi glyph only while configd's primary interface is
+   the wifi interface: SBWiFiManager -_primaryInterfaceChanged: sets the flag
+   SBTelephonyManager -dataConnectionType reads (ios 6.1 springboard). a senko
+   tunnel is primary while it carries the system dns, so the glyph and the vpn
+   badge beside it vanished for as long as it ran. the tunnel still leaves by
+   wifi, and senkod writes which interface it rides into the state file */
+static void (*gSenkoOrigPrimaryChanged)(id, SEL, BOOL) = NULL;
+static BOOL gSenkoWiFiHookTried = NO;
+
+static BOOL SenkoTunnelRidesWiFi(void) {
+    char buf[32];
+    int fd = open(kSenkoStatusStatePath, O_RDONLY);
+    if (fd < 0) return NO;
+    ssize_t n = read(fd, buf, sizeof buf - 1);
+    close(fd);
+    if (n < 4) return NO;
+    buf[n] = '\0';
+    /* ios names its wifi interface en0; cellular is pdp_ip */
+    return buf[0] == '1' && buf[1] == ' ' && strncmp(buf + 2, "en", 2) == 0;
+}
+
+static NSString *SenkoNetworkFacts(void);
+
+static void SenkoPrimaryInterfaceChanged(id self, SEL _cmd, BOOL primary) {
+    if (!primary && SenkoTunnelRidesWiFi()) {
+        primary = YES;
+        SenkoWriteStatus(@"configd made the tunnel primary; wifi kept, the tunnel rides it");
+        gSenkoOrigPrimaryChanged(self, _cmd, primary);
+        SenkoWriteStatus(SenkoNetworkFacts());
+        return;
+    }
+    gSenkoOrigPrimaryChanged(self, _cmd, primary);
+}
+
+static BOOL SenkoCallBool(id obj, SEL sel, BOOL *out) {
+    if (!obj || ![obj respondsToSelector:sel]) return NO;
+    BOOL (*call)(id, SEL) = (BOOL (*)(id, SEL))[obj methodForSelector:sel];
+    *out = call(obj, sel);
+    return YES;
+}
+
+/* what the status bar will draw: 8 is wifi on the ios 5.1.1 and 6.1
+   springboards, -1 when this firmware has no such getter */
+static int SenkoDataConnectionType(void);
+
+/* the three facts the wifi glyph is drawn from, for the log */
+static NSString *SenkoNetworkFacts(void) {
+    id wifi = SenkoSharedObject(@"SBWiFiManager", @selector(sharedInstance),
+                                @selector(sharedWiFiManager));
+    id telephony = SenkoSharedObject(@"SBTelephonyManager",
+                                     @selector(sharedTelephonyManager),
+                                     @selector(sharedInstance));
+    BOOL primary = NO, have_primary = SenkoCallBool(wifi, sel_registerName("isPrimaryInterface"), &primary);
+    int using_wifi = -1;
+    Ivar ivar = telephony ? class_getInstanceVariable([telephony class], "_usingWifi") : NULL;
+    if (ivar) using_wifi = (*((unsigned char *)telephony + ivar_getOffset(ivar))) & 1;
+    return [NSString stringWithFormat:@"data=%d wifi_primary=%d using_wifi=%d",
+            SenkoDataConnectionType(), have_primary ? (int)primary : -1, using_wifi];
+}
+
+static int SenkoDataConnectionType(void) {
+    id telephony = SenkoSharedObject(@"SBTelephonyManager",
+                                     @selector(sharedTelephonyManager),
+                                     @selector(sharedInstance));
+    SEL sel = sel_registerName("dataConnectionType");
+    if (!telephony || ![telephony respondsToSelector:sel]) return -1;
+    int (*call)(id, SEL) = (int (*)(id, SEL))[telephony methodForSelector:sel];
+    return call(telephony, sel);
+}
+
+static void SenkoInstallWiFiHook(void) {
+    if (gSenkoOrigPrimaryChanged || gSenkoWiFiHookTried) return;
+    Class cls = NSClassFromString(@"SBWiFiManager");
+    if (!cls) return; /* springboard may publish it later */
+    gSenkoWiFiHookTried = YES;
+    SEL sel = sel_registerName("_primaryInterfaceChanged:");
+    Method method = class_getInstanceMethod(cls, sel);
+    char ret[4] = "", arg[4] = "";
+    if (method) {
+        method_getReturnType(method, ret, sizeof ret);
+        if (method_getNumberOfArguments(method) == 3)
+            method_getArgumentType(method, 2, arg, sizeof arg);
+    }
+    /* a void method taking one BOOL, whichever of the two encodings */
+    if (!method || ret[0] != 'v' || (arg[0] != 'c' && arg[0] != 'B')) {
+        SenkoWriteStatus(@"no -[SBWiFiManager _primaryInterfaceChanged:] on this "
+                         @"firmware; the wifi glyph follows configd alone");
+        return;
+    }
+    gSenkoOrigPrimaryChanged = (void (*)(id, SEL, BOOL))
+        method_setImplementation(method, (IMP)SenkoPrimaryInterfaceChanged);
+    SenkoWriteStatus(@"wifi glyph kept while a tunnel rides wifi");
+}
+
+/* configd already told springboard the tunnel is primary by the time senkod
+   writes the state file, so the flag is set again here rather than waiting for
+   the next network change */
+static void SenkoRefreshWiFi(void) {
+    SenkoInstallWiFiHook();
+    if (!gSenkoOrigPrimaryChanged || !SenkoTunnelRidesWiFi()) return;
+    id wifi = SenkoSharedObject(@"SBWiFiManager", @selector(sharedInstance),
+                                @selector(sharedWiFiManager));
+    if (!wifi) return;
+    SenkoPrimaryInterfaceChanged(wifi, sel_registerName("_primaryInterfaceChanged:"), YES);
+}
+
 static BOOL SenkoApplyStatus(BOOL enabled) {
     /* springboard can publish its status classes after the injected library is
        loaded, so an early missing selector must remain retryable */
@@ -278,7 +384,8 @@ static BOOL SenkoApplyStatus(BOOL enabled) {
 /* one line per apply, not just the first hook install: the only way a future
    wifi glyph report turns into evidence instead of another guess */
     SenkoWriteStatus([NSString stringWithFormat:
-        @"apply enabled=%d via=%@ ios=%@", enabled, via, SenkoOSVersion()]);
+        @"apply enabled=%d via=%@ ios=%@ %@", enabled, via, SenkoOSVersion(),
+        SenkoNetworkFacts()]);
     return result;
 }
 
@@ -310,8 +417,15 @@ static BOOL SenkoApplyStatus(BOOL enabled) {
     if (!gSenkoReady) return;
 
     BOOL enabled = SenkoReadVPNState() && access(kSenkoStatusOffPath, F_OK) != 0;
-    if (gSenkoDidApply && gSenkoLastState == enabled) return;
-    if (SenkoApplyStatus(enabled)) {
+    if (gSenkoDidApply && gSenkoLastState == enabled) {
+        SenkoRefreshWiFi();
+        return;
+    }
+    BOOL applied = SenkoApplyStatus(enabled);
+    /* ios 6 can recalculate the wifi item while publishing the vpn item, so
+       restore the physical link after that publication */
+    SenkoRefreshWiFi();
+    if (applied) {
         gSenkoDidApply = YES;
         gSenkoLastState = enabled;
         gSenkoRetries = 0;
