@@ -14,10 +14,12 @@
     UIButton        *refresh;
     UIButton        *ping;
     UIButton        *more;
+    UIView          *backdrop;
     BOOL             compact;
     CGSize           styledSize;
 }
 - (void)stylePlate;
+- (void)setPinned:(BOOL)pinned;
 @end
 
 @implementation SenkoSectionHeader
@@ -33,6 +35,25 @@
     plate.layer.borderWidth = 0.0f;
     plate.layer.shadowOpacity = 0.0f;
     plate.layer.shouldRasterize = NO;
+}
+
+/* a plain table pins the heading over its rows; clear, its text overlaps theirs */
+- (void)setPinned:(BOOL)pinned {
+    if (pinned && !backdrop) {
+        backdrop = [[UIView alloc] initWithFrame:self.bounds];
+        backdrop.userInteractionEnabled = NO;
+        backdrop.autoresizingMask = UIViewAutoresizingFlexibleWidth |
+                                    UIViewAutoresizingFlexibleHeight;
+        [self insertSubview:backdrop atIndex:0];
+    }
+    if (!backdrop) return;
+    backdrop.backgroundColor = [kBG colorWithAlphaComponent:0.86f];
+    backdrop.hidden = !pinned;
+}
+
+- (void)dealloc {
+    [backdrop release];
+    [super dealloc];
 }
 
 - (void)layoutSubviews {
@@ -1581,6 +1602,36 @@ static BOOL SenkoServerMatchesQuery(SenkoServer *sv, NSString *shown, NSString *
     return 64.0f;
 }
 
+/* a pinned heading sits below its own slot. uikit may wrap it in a container,
+   so look one level down */
+- (void)syncPinnedHeaders {
+    _pinnedSyncQueued = NO;
+    if (!_table) return;
+    NSMutableArray *headers = [NSMutableArray array];
+    for (UIView *v in _table.subviews) {
+        if ([v isKindOfClass:[SenkoSectionHeader class]]) {
+            [headers addObject:v];
+            continue;
+        }
+        for (UIView *inner in v.subviews)
+            if ([inner isKindOfClass:[SenkoSectionHeader class]]) [headers addObject:inner];
+    }
+    NSInteger count = [self numberOfSectionsInTableView:_table];
+    for (SenkoSectionHeader *h in headers) {
+        NSInteger s = h.tag - 7000;
+        if (s < 0 || s >= count || h.hidden) {
+            [h setPinned:NO];
+            continue;
+        }
+        CGFloat y = [h convertRect:h.bounds toView:_table].origin.y;
+        [h setPinned:y > [_table rectForHeaderInSection:s].origin.y + 0.5f];
+    }
+}
+
+- (void)scrollViewDidScroll:(UIScrollView *)scroll {
+    if (scroll == _table) [self syncPinnedHeaders];
+}
+
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)s {
     (void)tv; (void)s;
     return 56.0f;
@@ -1736,6 +1787,14 @@ static BOOL SenkoServerMatchesQuery(SenkoServer *sv, NSString *shown, NSString *
         }
         [plate addSubview:more];
         wrap->more = more;
+    }
+/* a reload while scrolled builds the pinned heading clear; it has no position
+   until this returns */
+    if (!_pinnedSyncQueued) {
+        _pinnedSyncQueued = YES;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self syncPinnedHeaders];
+        });
     }
     return wrap;
 }

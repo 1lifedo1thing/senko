@@ -49,6 +49,7 @@
     SenkoServerSheet *_sheet;
     UILabel      *_statusLabel;
     UITableView  *_table;
+    BOOL          _pinnedSyncQueued;
     NSMutableArray *_servers;
     NSMutableArray *_subs;
     NSMutableArray *_sectionOrder;
