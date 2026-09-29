@@ -87,6 +87,25 @@ static NSString *BlockTitle(NSString *value) {
     }];
 }
 
+/* reloading here replaced the switch mid-slide, so it jumped on the reply */
+- (void)applySwitch:(UISwitch *)sw key:(NSString *)key {
+    NSString *value = sw.on ? @"1" : @"0";
+    if (!_settings) {
+        [sw setOn:!sw.on animated:YES];
+        return;
+    }
+    [_ctl setSetting:key value:value reply:^(NSString *reply) {
+        if ([reply hasPrefix:@"OK "]) {
+            [_settings setObject:value forKey:key];
+            return;
+        }
+        [sw setOn:[[_settings objectForKey:key] isEqualToString:@"1"] animated:YES];
+        [self devSay:SenkoLocalizedText(@"Force")
+             message:reply ? SenkoHumanReadableError(reply)
+                           : SenkoLocalizedText(@"Daemon is unreachable")];
+    }];
+}
+
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tv {
     (void)tv;
     return 4;
@@ -185,15 +204,15 @@ static NSString *BlockTitle(NSString *value) {
 }
 
 - (void)socksPublicChanged:(UISwitch *)sw {
-    [self apply:@"socks_public" value:sw.on ? @"1" : @"0"];
+    [self applySwitch:sw key:@"socks_public"];
 }
 
 - (void)gatingChanged:(UISwitch *)sw {
-    [self apply:@"sub_ignore_gating" value:sw.on ? @"1" : @"0"];
+    [self applySwitch:sw key:@"sub_ignore_gating"];
 }
 
 - (void)traceChanged:(UISwitch *)sw {
-    [self apply:@"trace" value:sw.on ? @"1" : @"0"];
+    [self applySwitch:sw key:@"trace"];
 }
 
 - (void)fpsChanged:(UISwitch *)sw {

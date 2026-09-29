@@ -570,8 +570,27 @@ static NSString *SenkoTextSettingKey(SenkoSettingsRow row) {
     }];
 }
 
+/* reloading on the reply replaced the switch mid-slide, so it jumped late.
+   keep it and slide back only if the daemon refused */
+- (void)applySwitch:(UISwitch *)sw key:(NSString *)key {
+    NSString *value = sw.on ? @"1" : @"0";
+    if (!_settings) {
+        [sw setOn:!sw.on animated:YES];
+        return;
+    }
+    [_ctl setSetting:key value:value reply:^(NSString *reply) {
+        if ([reply hasPrefix:@"OK "]) {
+            [_settings setObject:value forKey:key];
+            return;
+        }
+        [sw setOn:[self daemonFlag:key] animated:YES];
+        [self showBackupMessage:reply ? SenkoHumanReadableError(reply)
+                                      : SenkoLocalizedText(@"Daemon is unreachable")];
+    }];
+}
+
 - (void)autoConnectChanged:(UISwitch *)sw {
-    [self applySetting:@"auto_connect" value:sw.on ? @"1" : @"0"];
+    [self applySwitch:sw key:@"auto_connect"];
 }
 
 /* quick connect is the app's own choice of what the button dials, so it lives
@@ -581,11 +600,11 @@ static NSString *SenkoTextSettingKey(SenkoSettingsRow row) {
 }
 
 - (void)autoReconnectChanged:(UISwitch *)sw {
-    [self applySetting:@"auto_reconnect" value:sw.on ? @"1" : @"0"];
+    [self applySwitch:sw key:@"auto_reconnect"];
 }
 
 - (void)failoverChanged:(UISwitch *)sw {
-    [self applySetting:@"failover" value:sw.on ? @"1" : @"0"];
+    [self applySwitch:sw key:@"failover"];
 }
 
 - (void)showAttemptMenu {
