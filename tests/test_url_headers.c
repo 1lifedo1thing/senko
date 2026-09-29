@@ -37,9 +37,18 @@ int main(void) {
     failed += check(url_build_get_cookie_header(&u, NULL, NULL,
                                                 req, sizeof req, &n) == URL_OK &&
                    strstr(req, "Authorization:") == NULL &&
-                   strstr(req, "User-Agent: Happ/3.26.1\r\n") != NULL &&
-                   strstr(req, "x-hwid:") != NULL,
+                   strstr(req, "User-Agent: Happ/3.26.1/ios\r\n") != NULL &&
+                   strstr(req, "Accept: application/json, ") != NULL &&
+                   strstr(req, "x-hwid:") != NULL &&
+                   strstr(req, "x-device-os: iOS\r\n") != NULL &&
+                   strstr(req, "iPhone10,3") == NULL &&
+                   strstr(req, "x-ver-os: 15.0") == NULL,
                    "happ-compatible default user agent and hwid");
+    failed += check(url_build_get_cookie_header(&u, NULL, "x-hwid: user-id",
+                                                req, sizeof req, &n) == URL_OK &&
+                   strstr(req, "x-hwid: user-id\r\n") != NULL &&
+                   strstr(req, "x-device-os: iOS\r\n") != NULL,
+                   "custom hwid keeps independent device headers");
 
     char redirect[1024];
     failed += check(url_resolve_redirect(&u, "/sub/token/",

@@ -3,10 +3,11 @@
 #include "subfetch.h"
 #include "url.h"
 #include "http.h"
-#include "net_safe.h"
 #include "b64.h"
+#include "senko_time.h"
 
 #include <arpa/inet.h>
+#include <errno.h>
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,8 +17,9 @@
 #include <unistd.h>
 #include <zlib.h>
 
-/* unpack gzip bodies */
-static int maybe_gunzip_body(uint8_t *buf, size_t *len, size_t cap) {
+/* unpack gzip bodies. a cut body, or one that inflates past cap, keeps what
+   inflated and sets *cut */
+static int maybe_gunzip_body(uint8_t *buf, size_t *len, size_t cap, int *cut) {
     if (!buf || !len || *len < 10) return 0;
     if (buf[0] != 0x1f || buf[1] != 0x8b) return 0;
 
@@ -39,10 +41,13 @@ static int maybe_gunzip_body(uint8_t *buf, size_t *len, size_t cap) {
     int ir = inflate(&zs, Z_FINISH);
     size_t out_len = (size_t)zs.total_out;
     inflateEnd(&zs);
-    if (ir != Z_STREAM_END || out_len == 0 || out_len > cap) {
+    int partial = ir != Z_STREAM_END &&
+                  (ir == Z_OK || ir == Z_BUF_ERROR) && (*cut || out_len == cap);
+    if ((ir != Z_STREAM_END && !partial) || out_len == 0 || out_len > cap) {
         free(out);
         return -1;
     }
+    if (partial) *cut = 1;
     memcpy(buf, out, out_len);
     *len = out_len;
     free(out);
@@ -50,11 +55,7 @@ static int maybe_gunzip_body(uint8_t *buf, size_t *len, size_t cap) {
     return 0;
 }
 
-static long now_ms(void) {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (long)tv.tv_sec * 1000 + tv.tv_usec / 1000;
-}
+
 
 static uint64_t userinfo_value(const char *value, const char *wanted) {
     if (!value || !wanted) return 0;
@@ -170,18 +171,18 @@ static void parser_info(const http_parser_t *hp, subfetch_info_t *info) {
 }
 
 /* wait with a deadline */
-static int wait_io(int fd, int want_write, long deadline, const subfetch_cfg_t *cfg) {
-    while (now_ms() < deadline) {
-        if (cfg && cfg->pump) cfg->pump(cfg->pump_ctx);
+static int wait_io(int fd, int want_write, int64_t deadline) {
+    for (;;) {
+        int64_t left = deadline - senko_now_ms();
+        if (left <= 0) return 0;
         struct pollfd pfd;
         pfd.fd = fd;
         pfd.events = want_write ? POLLOUT : POLLIN;
         pfd.revents = 0;
-        int r = poll(&pfd, 1, 10);
+        int r = poll(&pfd, 1, left > 1000 ? 1000 : (int)left);
         if (r > 0 && pfd.revents) return 1;
-        if (r < 0) return 0;
+        if (r < 0 && errno != EINTR) return 0;
     }
-    return 0;
 }
 
 /* keep redirect cookies */
@@ -211,16 +212,18 @@ static int same_origin(const url_t *a, const url_t *b) {
 /* fetch one url */
 static subfetch_status_t fetch_once(const subfetch_cfg_t *cfg, const url_t *u,
                                     uint8_t *body, size_t body_cap, size_t *body_len,
-                                    char *redir, size_t redir_cap, long deadline,
+                                    char *redir, size_t redir_cap, int64_t deadline,
                                     char *cookie_jar, size_t cookie_cap,
                                     subfetch_info_t *info) {
     const transport_vt_t *vt = u->is_https ? cfg->tls : cfg->tcp;
     if (!vt) return SUBFETCH_ERR_TRANSPORT; /* tls transport is missing */
 
-    char numeric[INET6_ADDRSTRLEN];
-    if (!net_resolve_public(u->host, u->port, numeric, sizeof numeric))
-        return SUBFETCH_ERR_URL;
-    int fd = cfg->dial(cfg->dial_ctx, numeric, u->port);
+/* let the dialer resolve: through the tunnel it hands the hostname to socks5
+   and the remote side resolves it. resolving here first broke that for any
+   host the local resolver blocks */
+    int64_t left = deadline - senko_now_ms();
+    if (left < 0) left = 0;
+    int fd = cfg->dial(cfg->dial_ctx, u->host, u->port, (int)left);
     if (fd < 0) return SUBFETCH_ERR_DIAL;
 
     transport_tls_cfg_t tcfg;
@@ -228,7 +231,12 @@ static subfetch_status_t fetch_once(const subfetch_cfg_t *cfg, const url_t *u,
     tcfg.sni = u->host; /* use the subscription host */
 
     void *th = vt->open(fd, &tcfg);
-    if (!th) { close(fd); return SUBFETCH_ERR_TRANSPORT; }
+    if (!th) {
+        fprintf(stderr, "senkod: subscription %s transport setup failed for %s\n",
+                u->is_https ? "tls" : "tcp", u->host);
+        close(fd);
+        return SUBFETCH_ERR_TRANSPORT;
+    }
 
     subfetch_status_t result = SUBFETCH_ERR_HTTP;
     do {
@@ -243,12 +251,16 @@ static subfetch_status_t fetch_once(const subfetch_cfg_t *cfg, const url_t *u,
             int w = vt->write(th, (const uint8_t *)req + off, reqlen - off);
             if (w > 0) { off += (size_t)w; continue; }
             if (w == TRANSPORT_WANT_WRITE) {
-                if (!wait_io(fd, 1, deadline, cfg)) { io_ok = 0; break; }
+                if (!wait_io(fd, 1, deadline)) { io_ok = 0; break; }
             } else if (w == TRANSPORT_WANT_READ) {
-                if (!wait_io(fd, 0, deadline, cfg)) { io_ok = 0; break; }
+                if (!wait_io(fd, 0, deadline)) { io_ok = 0; break; }
             } else { io_ok = 0; break; }
         }
-        if (!io_ok) { result = SUBFETCH_ERR_TRANSPORT; break; }
+        if (!io_ok) {
+            fprintf(stderr, "senkod: subscription request write failed for %s\n", u->host);
+            result = SUBFETCH_ERR_TRANSPORT;
+            break;
+        }
 
         http_parser_t hp;
         http_parser_init(&hp, body, body_cap);
@@ -274,12 +286,28 @@ static subfetch_status_t fetch_once(const subfetch_cfg_t *cfg, const url_t *u,
                     }
                     break;
                 }
+                if (hs == HTTP_ERR_TOOBIG && hp.body_cut && info) {
+                    *body_len = hp.body_len;
+                    parser_info(&hp, info);
+                    info->body_cut = 1;
+                    result = SUBFETCH_OK;
+                    break;
+                }
                 if (hs == HTTP_ERR_TOOBIG) { result = SUBFETCH_ERR_TOOBIG; break; }
+                if (hs == HTTP_ERR_STATUS && info) info->http_status = hp.status_code;
                 if (hs != HTTP_NEED_MORE) { result = SUBFETCH_ERR_HTTP; break; }
             } else if (n == TRANSPORT_WANT_READ) {
-                if (!wait_io(fd, 0, deadline, cfg)) { result = SUBFETCH_ERR_TRANSPORT; break; }
+                if (!wait_io(fd, 0, deadline)) {
+                    fprintf(stderr, "senkod: subscription response wait failed for %s\n", u->host);
+                    result = SUBFETCH_ERR_TRANSPORT;
+                    break;
+                }
             } else if (n == TRANSPORT_WANT_WRITE) {
-                if (!wait_io(fd, 1, deadline, cfg)) { result = SUBFETCH_ERR_TRANSPORT; break; }
+                if (!wait_io(fd, 1, deadline)) {
+                    fprintf(stderr, "senkod: subscription response write wait failed for %s\n", u->host);
+                    result = SUBFETCH_ERR_TRANSPORT;
+                    break;
+                }
             } else if (n == TRANSPORT_EOF) {
                 http_status_t hs = http_parser_eof(&hp);
                 if (hs == HTTP_DONE) {
@@ -299,6 +327,7 @@ static subfetch_status_t fetch_once(const subfetch_cfg_t *cfg, const url_t *u,
                 }
                 break;
             } else {
+                fprintf(stderr, "senkod: subscription response read failed for %s\n", u->host);
                 result = SUBFETCH_ERR_TRANSPORT;
                 break;
             }
@@ -327,7 +356,7 @@ subfetch_status_t subfetch_get_info(const subfetch_cfg_t *cfg, const char *url,
     if (info) memset(info, 0, sizeof *info);
 
     int max_redir = cfg->max_redirects > 0 ? cfg->max_redirects : 5;
-    long deadline = now_ms() + (timeout_ms > 0 ? timeout_ms : 15000);
+    int64_t deadline = senko_now_ms() + (timeout_ms > 0 ? timeout_ms : 15000);
 
     char current[HTTP_MAX_LOCATION];
     size_t ul = strlen(url);
@@ -352,8 +381,11 @@ subfetch_status_t subfetch_get_info(const subfetch_cfg_t *cfg, const char *url,
                                          redir, sizeof redir, deadline,
                                          cookie_jar, sizeof cookie_jar, info);
         if (r == SUBFETCH_OK) {
-            if (maybe_gunzip_body(body_buf, body_len, body_cap) != 0)
+            int cut = info ? info->body_cut : 0;
+            if (maybe_gunzip_body(body_buf, body_len, body_cap, &cut) != 0)
                 return SUBFETCH_ERR_HTTP;
+            if (cut && !info) return SUBFETCH_ERR_TOOBIG;
+            if (info) info->body_cut = cut;
             return SUBFETCH_OK;
         }
         if (r != SUBFETCH_ERR_REDIRECT) return r;

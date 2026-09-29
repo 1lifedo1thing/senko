@@ -10,8 +10,9 @@
 #include <netdb.h>
 #include <sys/socket.h>
 
-static int real_dial(void *ctx, const char *host, uint16_t port) {
+static int real_dial(void *ctx, const char *host, uint16_t port, int budget_ms) {
     (void)ctx;
+    (void)budget_ms; /* the cli dials blocking, the fetch deadline still bounds io */
     char portstr[8];
     snprintf(portstr, sizeof portstr, "%u", port);
 
@@ -46,7 +47,9 @@ int main(int argc, char **argv) {
     cfg.tls = &transport_tls;
     cfg.max_redirects = 5;
 
-    static uint8_t body[256 * 1024];
+    /* match the daemon's subscription body limit, or large valid feeds look
+       like transport failures only in this diagnostic tool */
+    static uint8_t body[512 * 1024];
     size_t blen = 0;
     subfetch_status_t r = subfetch_get(&cfg, argv[1], body, sizeof body, &blen, 10000);
     if (r != SUBFETCH_OK) {

@@ -8,9 +8,8 @@
 
 #include "hpack_huffman.inc"
 
-/* a real response header block is capped at ~1 KiB by the transport; refuse a
-   single huffman literal larger than four blocks instead of sizing a scratch
-   from an unbounded length field */
+/* refuse a single huffman literal larger than four blocks instead of sizing a
+   scratch from an unbounded length field */
 #define HPACK_HUFF_INPUT_MAX 4096
 
 typedef struct {

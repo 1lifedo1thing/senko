@@ -83,6 +83,9 @@ typedef struct {
     uint8_t *body;
     size_t   body_cap;
     size_t   body_len;
+/* set with HTTP_ERR_TOOBIG once the body filled body_cap; the buffer then
+   holds the first body_cap bytes */
+    int      body_cut;
 } http_parser_t;
 
 void http_parser_init(http_parser_t *p, uint8_t *body_buf, size_t body_cap);

@@ -113,7 +113,7 @@ int hc_feed(http_client_t *c, const uint8_t *in, size_t in_len, size_t *consumed
     }
 
     if (!hdr_end) {
-        if (room == 0) {
+        if (c->rbuf_len == sizeof c->rbuf) {
             c->state = HC_ST_ERROR;
             return HC_ERR_PROTO;
         }

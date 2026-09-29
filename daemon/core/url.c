@@ -6,6 +6,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <sys/sysctl.h>
+#include "../legacy_ios.h"
+#endif
 
 url_status_t url_parse(const char *url, url_t *out) {
     if (!url || !out) return URL_ERR_ARG;
@@ -253,6 +257,11 @@ url_status_t url_build_get_cookie_header(const url_t *u, const char *cookie,
     int custom_accept = header_name_is(hdr, "Accept");
     int custom_cookie = header_name_is(hdr, "Cookie");
     int custom_hwid = header_name_is(hdr, "x-hwid") || header_name_is(hdr, "X-HWID");
+    int custom_os = header_name_is(hdr, "x-device-os");
+#if defined(__APPLE__)
+    int custom_version = header_name_is(hdr, "x-ver-os");
+    int custom_model = header_name_is(hdr, "x-device-model");
+#endif
     int custom_encoding = header_name_is(hdr, "Accept-Encoding");
     size_t off = 0;
     int n = strchr(u->host, ':') ?
@@ -271,25 +280,57 @@ url_status_t url_build_get_cookie_header(const url_t *u, const char *cookie,
     if (n < 0 || (size_t)n >= cap - off) return URL_ERR_TOOLONG;
     off += (size_t)n;
     if (!custom_ua) {
-        /* providers use the client id to select a compatible feed format */
-        n = snprintf(buf + off, cap - off, "User-Agent: Happ/3.26.1\r\n");
+        /* panels pick the feed format from the client id. remnawave answers a
+           bare "Happ/x" with its landing page or a link list whose balancer
+           profiles are placeholder hosts; "Happ/x/ios" gets the xray json
+           that names every node */
+        n = snprintf(buf + off, cap - off, "User-Agent: Happ/3.26.1/ios\r\n");
         if (n < 0 || (size_t)n >= cap - off) return URL_ERR_TOOLONG;
         off += (size_t)n;
     }
     if (!custom_hwid) {
         char hwid[65];
         url_device_hwid(hwid, sizeof hwid);
-        n = snprintf(buf + off, cap - off,
-                     "x-hwid: %s\r\n"
-                     "x-device-os: iOS\r\n"
-                     "x-ver-os: 15.0\r\n"
-                     "x-device-model: iPhone10,3\r\n",
-                     hwid);
+        n = snprintf(buf + off, cap - off, "x-hwid: %s\r\n", hwid);
         if (n < 0 || (size_t)n >= cap - off) return URL_ERR_TOOLONG;
         off += (size_t)n;
     }
+    if (!custom_os) {
+        n = snprintf(buf + off, cap - off, "x-device-os: iOS\r\n");
+        if (n < 0 || (size_t)n >= cap - off) return URL_ERR_TOOLONG;
+        off += (size_t)n;
+    }
+#if defined(__APPLE__)
+    if (!custom_version) {
+        int ios_major = senko_ios_major();
+        if (ios_major > 0) {
+            n = snprintf(buf + off, cap - off, "x-ver-os: %d.0\r\n", ios_major);
+            if (n < 0 || (size_t)n >= cap - off) return URL_ERR_TOOLONG;
+            off += (size_t)n;
+        }
+    }
+    if (!custom_model) {
+        char model[64];
+        size_t model_len = sizeof model;
+        if (sysctlbyname("hw.machine", model, &model_len, NULL, 0) == 0 &&
+            model_len > 1 && model_len <= sizeof model && model[model_len - 1] == '\0') {
+            size_t i;
+            for (i = 0; i + 1 < model_len; ++i) {
+                char c = model[i];
+                if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                      (c >= '0' && c <= '9') || c == ',')) break;
+            }
+            if (i + 1 == model_len) {
+                n = snprintf(buf + off, cap - off, "x-device-model: %s\r\n", model);
+                if (n < 0 || (size_t)n >= cap - off) return URL_ERR_TOOLONG;
+                off += (size_t)n;
+            }
+        }
+    }
+#endif
     if (!custom_accept) {
-        n = snprintf(buf + off, cap - off, "Accept: */*\r\n");
+        n = snprintf(buf + off, cap - off,
+                     "Accept: application/json, text/plain;q=0.9, */*;q=0.8\r\n");
         if (n < 0 || (size_t)n >= cap - off) return URL_ERR_TOOLONG;
         off += (size_t)n;
     }

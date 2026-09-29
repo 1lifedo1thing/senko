@@ -29,15 +29,17 @@ static const char *skip_ws(const char *s) {
     return s;
 }
 
-/* cap response lengths */
-#define HTTP_LEN_CAP (64L * 1024 * 1024)
+/* a length the parser can still hold in a 32-bit long. the body itself is
+   bounded by body_cap; a public feed announcing 100 MB is still read up to that
+   cap instead of failing as unreadable */
+#define HTTP_LEN_CAP (1024L * 1024 * 1024)
 
 static long parse_dec(const char *s) {
     long v = 0;
     if (*s < '0' || *s > '9') return -1;
     for (; *s >= '0' && *s <= '9'; ++s) {
+        if (v > (HTTP_LEN_CAP - (*s - '0')) / 10) return -1;
         v = v * 10 + (*s - '0');
-        if (v > HTTP_LEN_CAP) return -1; /* reject oversized values */
     }
     return v;
 }
@@ -51,9 +53,9 @@ static long parse_hex(const char *s) {
         else if (*s >= 'a' && *s <= 'f') d = *s - 'a' + 10;
         else if (*s >= 'A' && *s <= 'F') d = *s - 'A' + 10;
         else break;
+        if (v > HTTP_LEN_CAP >> 4) return -1;
         v = (v << 4) | d;
         any = 1;
-        if (v > HTTP_LEN_CAP) return -1;
     }
     if (!any) return -1;
     return v;
@@ -206,7 +208,13 @@ static http_status_t line_push(http_parser_t *p, char c) {
 }
 
 static http_status_t body_push(http_parser_t *p, const uint8_t *b, size_t n) {
-    if (p->body_len + n > p->body_cap) return HTTP_ERR_TOOBIG;
+    if (p->body_len + n > p->body_cap) {
+        if (p->body_cap > p->body_len)
+            memcpy(p->body + p->body_len, b, p->body_cap - p->body_len);
+        p->body_len = p->body_cap;
+        p->body_cut = 1;
+        return HTTP_ERR_TOOBIG;
+    }
     memcpy(p->body + p->body_len, b, n);
     p->body_len += n;
     p->body_got += n;

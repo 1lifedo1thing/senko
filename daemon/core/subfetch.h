@@ -10,14 +10,17 @@
 extern "C" {
 #endif
 
-typedef int (*subfetch_dial_fn)(void *ctx, const char *host, uint16_t port);
-
-typedef void (*subfetch_pump_fn)(void *ctx);
+/* budget_ms is what is left of the fetch timeout, not a deadline, because the
+   daemon's dialer times itself on a different clock. a dialer that keeps its
+   own budget instead spends the whole fetch on the dial and leaves nothing
+   for the request, which is how one dead tunnel timed out every refresh */
+typedef int (*subfetch_dial_fn)(void *ctx, const char *host, uint16_t port,
+                                int budget_ms);
 
 typedef enum {
     SUBFETCH_OK         =  0,
     SUBFETCH_ERR_ARG    = -1,
-    SUBFETCH_ERR_URL    = -2, /* bad url */
+    SUBFETCH_ERR_URL    = -2, /* the url text itself does not parse */
     SUBFETCH_ERR_DIAL   = -3, /* dial failed */
     SUBFETCH_ERR_TRANSPORT = -4,/* transport failed */
     SUBFETCH_ERR_HTTP   = -5, /* bad response */
@@ -28,8 +31,6 @@ typedef enum {
 typedef struct {
     subfetch_dial_fn dial;
     void            *dial_ctx;
-    subfetch_pump_fn pump;
-    void            *pump_ctx;
     const transport_vt_t *tcp;
     const transport_vt_t *tls;
     const char *request_header; /* only for the subscription HTTP request */
@@ -50,6 +51,12 @@ typedef struct {
    of the real node list; gate_reason carries the panel's own wording */
     int  gated;
     char gate_reason[256];
+/* the non-2xx status that ended the fetch, 0 when there was none */
+    int  http_status;
+/* the body did not fit body_cap: the buffer holds its first body_cap bytes
+   and the caller decides whether a prefix is usable. only reported through
+   subfetch_get_info; subfetch_get still fails such a body with TOOBIG */
+    int  body_cut;
 } subfetch_info_t;
 
 subfetch_status_t subfetch_get(const subfetch_cfg_t *cfg, const char *url,
