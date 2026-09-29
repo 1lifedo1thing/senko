@@ -73,6 +73,13 @@ awg_cfg_status_t awg_config_parse(const char *text, size_t len, awg_config_t *cf
                                   char *reason, size_t reason_cap);
 
 /* keep config-file parsing outside the ui so root owns validation and reads */
+/* where the app stores amneziawg profiles. root code only reads a profile
+   from here, so a request cannot point it at another file */
+#define AWG_CONFIG_DIR "/var/mobile/Library/Preferences/Senko/"
+
+/* 1 when path is a .conf file directly inside AWG_CONFIG_DIR */
+int awg_config_path_ok(const char *path);
+
 awg_cfg_status_t awg_config_load_file(const char *path, awg_config_t *cfg,
                                       char *reason, size_t reason_cap);
 

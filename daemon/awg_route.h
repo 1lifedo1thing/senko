@@ -12,6 +12,7 @@ typedef struct {
     char endpoint[64];
     char gateway[64];
     char ipv4[64];
+    char peer4[64];
     char ipv6[64];
     uint16_t mtu;
     int has_ipv4;

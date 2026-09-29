@@ -188,6 +188,21 @@ int main(void) {
         /* optional external fixture - not shipped in the source tree */
         fprintf(stderr, "skip: warp.conf not present (%s)\n", reason);
     }
+    /* root code opens only profiles the app saved in its own directory */
+    static const struct { const char *path; int ok; } paths[] = {
+        { "/var/mobile/Library/Preferences/Senko/home.conf", 1 },
+        { "/var/mobile/Library/Preferences/Senko/.conf", 0 },
+        { "/var/mobile/Library/Preferences/Senko/home.txt", 0 },
+        { "/var/mobile/Library/Preferences/Senko/sub/home.conf", 0 },
+        { "/var/mobile/Library/Preferences/Senko/../../../root/x.conf", 0 },
+        { "/var/root/Library/Preferences/senko.conf", 0 },
+        { "/var/mobile/Library/Preferences/Senkox/home.conf", 0 },
+        { "", 0 },
+    };
+    for (size_t i = 0; i < sizeof paths / sizeof paths[0]; ++i)
+        bad |= expect(awg_config_path_ok(paths[i].path) == paths[i].ok, paths[i].path);
+    bad |= expect(!awg_config_path_ok(NULL), "no path");
+
     if (!bad) puts("all awg config checks passed");
     return bad ? 1 : 0;
 }

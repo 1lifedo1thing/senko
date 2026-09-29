@@ -435,3 +435,11 @@ awg_cfg_status_t awg_config_load_file(const char *path, awg_config_t *cfg,
     }
     return awg_config_parse(buf, len, cfg, reason, reason_cap);
 }
+
+int awg_config_path_ok(const char *path) {
+    size_t dir = strlen(AWG_CONFIG_DIR);
+    if (!path || strncmp(path, AWG_CONFIG_DIR, dir) != 0) return 0;
+    size_t n = strlen(path);
+    return n > dir + 5 && n < 256 && strcmp(path + n - 5, ".conf") == 0 &&
+           strchr(path + dir, '/') == NULL && strstr(path, "..") == NULL;
+}

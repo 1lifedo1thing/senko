@@ -22,7 +22,8 @@ typedef enum {
     AWG_HS_ERR_FORMAT = -4,
     AWG_HS_ERR_AUTH = -5,
     AWG_HS_ERR_IO = -6,
-    AWG_HS_ERR_TIMEOUT = -7
+    AWG_HS_ERR_TIMEOUT = -7,
+    AWG_HS_CANCELLED = -8
 } awg_hs_status_t;
 
 typedef struct {
@@ -59,12 +60,19 @@ awg_hs_status_t awg_handshake_build_initiation(awg_handshake_t *hs,
 awg_hs_status_t awg_handshake_consume_response(awg_handshake_t *hs,
                                                 const uint8_t *packet, size_t packet_len);
 
+/* the junk train, then a fresh initiation on a connected udp socket. hs must
+   have been through awg_handshake_init; its keys are replaced once
+   awg_handshake_consume_response accepts the answer */
+awg_hs_status_t awg_handshake_send_initiation(int fd, awg_handshake_t *hs,
+                                              char *reason, size_t reason_cap);
+
 /* prove endpoint compatibility before the backend changes any system route */
 awg_hs_status_t awg_handshake_probe(const awg_config_t *cfg, int timeout_ms,
                                     char *reason, size_t reason_cap);
 
-/* retain accepted keys for the packet engine after the endpoint preflight */
-awg_hs_status_t awg_handshake_establish_fd(int fd, const awg_config_t *cfg,
+/* retain accepted keys for the packet engine after the endpoint preflight.
+   cancel_fd, when not -1, ends the wait as soon as it becomes readable */
+awg_hs_status_t awg_handshake_establish_fd(int fd, int cancel_fd, const awg_config_t *cfg,
                                            int timeout_ms, awg_handshake_t *hs,
                                            char *reason, size_t reason_cap);
 

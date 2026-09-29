@@ -126,7 +126,9 @@ int awg_route_interface_up(const awg_route_plan_t *plan) {
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) return -1;
     int ok = set_ifaddr4(fd, plan->ifname, plan->ipv4, SIOCSIFADDR) == 0 &&
-             set_ifaddr4(fd, plan->ifname, plan->ipv4, SIOCSIFDSTADDR) == 0;
+             set_ifaddr4(fd, plan->ifname,
+                         plan->peer4[0] ? plan->peer4 : plan->ipv4,
+                         SIOCSIFDSTADDR) == 0;
     if (ok) {
         struct ifreq ifr;
         memset(&ifr, 0, sizeof ifr);
@@ -173,6 +175,11 @@ int awg_route_plan_up(const awg_route_plan_t *plan) {
         awg_pfroute_net4_if(1, "128.0.0.0", "128.0.0.0", plan->ifname) != 0 ||
         (plan->has_ipv6 && (awg_pfroute_net6_if(1, "::", "8000::", plan->ifname) != 0 ||
                             awg_pfroute_net6_if(1, "8000::", "8000::", plan->ifname) != 0)))
+        goto rollback;
+    /* split defaults must not route the outbound server back into its own utun */
+    char gateway[64];
+    if (awg_pfroute_gateway4(plan->endpoint, gateway, sizeof gateway) != 0 ||
+        strcmp(gateway, plan->gateway) != 0)
         goto rollback;
     return 0;
 rollback:

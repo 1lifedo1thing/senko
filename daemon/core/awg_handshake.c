@@ -3,6 +3,7 @@
 #include "awg_handshake.h"
 
 #include "reality_crypto.h"
+#include "senko_time.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -413,11 +414,7 @@ awg_hs_status_t awg_signature_expand(const char *spec, uint8_t *out, size_t cap,
     return AWG_HS_OK;
 }
 
-static long now_ms(void) {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (long)tv.tv_sec * 1000L + tv.tv_usec / 1000L;
-}
+
 
 static void set_reason(char *reason, size_t cap, const char *text) {
     if (reason && cap) snprintf(reason, cap, "%s", text);
@@ -472,58 +469,68 @@ static awg_hs_status_t send_obfuscation(int fd, const awg_config_t *cfg,
     return AWG_HS_OK;
 }
 
-awg_hs_status_t awg_handshake_establish_fd(int fd, const awg_config_t *cfg,
+awg_hs_status_t awg_handshake_send_initiation(int fd, awg_handshake_t *hs,
+                                              char *reason, size_t reason_cap) {
+    if (fd < 0 || !hs || !hs->cfg) return AWG_HS_ERR_ARG;
+    uint8_t *initial = malloc(AWG_DATAGRAM_MAX);
+    if (!initial) {
+        set_reason(reason, reason_cap, "handshake memory allocation failed");
+        return AWG_HS_ERR_CRYPTO;
+    }
+    size_t initial_len = 0;
+    awg_hs_status_t r = send_obfuscation(fd, hs->cfg, reason, reason_cap);
+    if (r == AWG_HS_OK)
+        r = awg_handshake_build_initiation(hs, initial, AWG_DATAGRAM_MAX, &initial_len);
+    if (r == AWG_HS_ERR_SPACE && reason && reason_cap && !reason[0])
+        snprintf(reason, reason_cap, "initiation size=%lu mtu=%u s1=%u cap=%u",
+                 (unsigned long)(AWG_INIT_PACKET_LEN + hs->cfg->padding[0]),
+                 (unsigned)hs->cfg->mtu, (unsigned)hs->cfg->padding[0], AWG_DATAGRAM_MAX);
+    if (r == AWG_HS_ERR_CRYPTO && reason && reason_cap && !reason[0])
+        snprintf(reason, reason_cap, "initiation crypto stage %d", hs->debug_stage);
+    if (r == AWG_HS_OK && send(fd, initial, initial_len, 0) != (ssize_t)initial_len)
+        r = AWG_HS_ERR_IO;
+    OPENSSL_cleanse(initial, AWG_DATAGRAM_MAX);
+    free(initial);
+    return r;
+}
+
+awg_hs_status_t awg_handshake_establish_fd(int fd, int cancel_fd, const awg_config_t *cfg,
                                            int timeout_ms, awg_handshake_t *hs,
                                            char *reason, size_t reason_cap) {
     if (fd < 0 || !cfg || !hs) return AWG_HS_ERR_ARG;
     if (reason && reason_cap) reason[0] = '\0';
     awg_handshake_init(hs, cfg);
-    uint8_t *initial = malloc(AWG_DATAGRAM_MAX);
     uint8_t *response = malloc(AWG_DATAGRAM_MAX);
-    if (!initial || !response) {
-        free(initial);
-        free(response);
+    if (!response) {
         set_reason(reason, reason_cap, "handshake memory allocation failed");
         return AWG_HS_ERR_CRYPTO;
     }
-    size_t initial_len = 0;
-    awg_hs_status_t r = send_obfuscation(fd, cfg, reason, reason_cap);
-    if (r == AWG_HS_OK)
-        r = awg_handshake_build_initiation(hs, initial, AWG_DATAGRAM_MAX, &initial_len);
-    if (r == AWG_HS_ERR_SPACE && (!reason || !reason[0]) && reason && reason_cap)
-        snprintf(reason, reason_cap, "initiation size=%lu mtu=%u s1=%u cap=%u",
-                 (unsigned long)(AWG_INIT_PACKET_LEN + cfg->padding[0]),
-                 (unsigned)cfg->mtu, (unsigned)cfg->padding[0], AWG_DATAGRAM_MAX);
-    if (r == AWG_HS_ERR_CRYPTO && (!reason || !reason[0]) && reason && reason_cap)
-        snprintf(reason, reason_cap, "initiation crypto stage %d", hs->debug_stage);
-    if (r == AWG_HS_OK && send(fd, initial, initial_len, 0) != (ssize_t)initial_len)
-        r = AWG_HS_ERR_IO;
+    awg_hs_status_t r = awg_handshake_send_initiation(fd, hs, reason, reason_cap);
 
-    long deadline = now_ms() + (timeout_ms > 0 ? timeout_ms : 5000);
+    int64_t deadline = senko_now_ms() + (timeout_ms > 0 ? timeout_ms : 5000);
     /* itime is how often awg 1.5 re-emits the junk train while a handshake is
        still unanswered. a repeat of the same initiation would be refused as a
-       replayed timestamp, so the initiation is rebuilt with it */
-    long resend_at = cfg->itime ? now_ms() + (long)cfg->itime * 1000L : 0;
-    while (r == AWG_HS_OK && now_ms() < deadline) {
-        if (resend_at && now_ms() >= resend_at) {
-            r = send_obfuscation(fd, cfg, reason, reason_cap);
-            if (r == AWG_HS_OK)
-                r = awg_handshake_build_initiation(hs, initial, AWG_DATAGRAM_MAX,
-                                                   &initial_len);
-            if (r == AWG_HS_OK &&
-                send(fd, initial, initial_len, 0) != (ssize_t)initial_len)
-                r = AWG_HS_ERR_IO;
+       replayed timestamp, so the initiation is rebuilt with it. without itime
+       it is still resent every second: while the kernel resolves the next hop
+       it holds only the first packet of a burst, so after an idle spell the
+       junk went out and the initiation behind it was dropped (ios 5.1.1) */
+    const int64_t resend_ms = cfg->itime ? (int64_t)cfg->itime * 1000 : 1000;
+    int64_t resend_at = senko_now_ms() + resend_ms;
+    while (r == AWG_HS_OK && senko_now_ms() < deadline) {
+        if (resend_at && senko_now_ms() >= resend_at) {
+            r = awg_handshake_send_initiation(fd, hs, reason, reason_cap);
             if (r != AWG_HS_OK) break;
-            resend_at = now_ms() + (long)cfg->itime * 1000L;
+            resend_at = senko_now_ms() + resend_ms;
         }
-        long remaining = deadline - now_ms();
-        struct pollfd pfd = { fd, POLLIN, 0 };
-        int pr = poll(&pfd, 1, remaining > 250 ? 250 : (int)remaining);
+        int64_t remaining = deadline - senko_now_ms();
+        struct pollfd pfd[2] = { { fd, POLLIN, 0 }, { cancel_fd, POLLIN, 0 } };
+        int pr = poll(pfd, cancel_fd >= 0 ? 2 : 1, remaining > 250 ? 250 : (int)remaining);
         if (pr < 0 && errno == EINTR) continue;
         if (pr < 0) { r = AWG_HS_ERR_IO; break; }
-        if (pr == 0) continue;
+        if (cancel_fd >= 0 && pfd[1].revents) { r = AWG_HS_CANCELLED; break; }
+        if (pr == 0 || !(pfd[0].revents & POLLIN)) continue;
         ssize_t got = recv(fd, response, AWG_DATAGRAM_MAX, 0);
-        if (got < 0 && errno == EINTR) continue;
+        if (got < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
         if (got < 0) { r = AWG_HS_ERR_IO; break; }
         ++hs->received_datagrams;
         r = awg_handshake_consume_response(hs, response, (size_t)got);
@@ -533,6 +540,9 @@ awg_hs_status_t awg_handshake_establish_fd(int fd, const awg_config_t *cfg,
             hs->last_unrelated_type = got >= 4 ? read_le32(response) : 0;
             r = AWG_HS_OK;
         }
+        /* the answer is in; waiting out the deadline cost every connect and
+           every probe the whole timeout */
+        if (r == AWG_HS_OK && hs->established) break;
     }
     int established = hs->established;
     if (r == AWG_HS_OK && !established) r = AWG_HS_ERR_TIMEOUT;
@@ -547,12 +557,11 @@ awg_hs_status_t awg_handshake_establish_fd(int fd, const awg_config_t *cfg,
     else if (r == AWG_HS_ERR_AUTH) set_reason(reason, reason_cap, "handshake authentication failed");
     else if (r == AWG_HS_ERR_FORMAT) set_reason(reason, reason_cap, "invalid response packet");
     else if (r == AWG_HS_ERR_IO) set_reason(reason, reason_cap, "udp transport failed");
+    else if (r == AWG_HS_CANCELLED) set_reason(reason, reason_cap, "handshake cancelled");
     else if (r == AWG_HS_ERR_SPACE && (!reason || !reason[0]))
         set_reason(reason, reason_cap, "awg packet exceeds mtu");
     else if (!reason || !reason[0]) set_reason(reason, reason_cap, "handshake crypto failed");
-    OPENSSL_cleanse(initial, AWG_DATAGRAM_MAX);
     OPENSSL_cleanse(response, AWG_DATAGRAM_MAX);
-    free(initial);
     free(response);
     return r;
 }
@@ -579,7 +588,7 @@ awg_hs_status_t awg_handshake_probe(const awg_config_t *cfg, int timeout_ms,
             continue;
         }
         awg_handshake_t hs;
-        r = awg_handshake_establish_fd(fd, cfg, timeout_ms, &hs, reason, reason_cap);
+        r = awg_handshake_establish_fd(fd, -1, cfg, timeout_ms, &hs, reason, reason_cap);
         OPENSSL_cleanse(&hs, sizeof hs);
         close(fd);
         if (r == AWG_HS_OK) {
