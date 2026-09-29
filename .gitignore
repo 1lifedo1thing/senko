@@ -4,16 +4,12 @@ app/build/
 app/build-arm64/
 daemon/build/
 .build-slices/
-.ipa-build/
 
 # host / device binaries (rebuild via Makefile / build_deb.sh)
 daemon/senkod
 daemon/senkod-arm
 daemon/senkoctl
-daemon/senkoawgd
-daemon/senko-awgd
 daemon/vless4sd
-daemon/senko-kick
 tests/test_*
 !tests/test_*.c
 !tests/test_*.h
