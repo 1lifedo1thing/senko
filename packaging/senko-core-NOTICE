@@ -1,0 +1,14 @@
+Senko includes an executable build of XTLS/Xray-core plus the Darwin TUN wait
+fix at commit 2ec1657c03a4c368bfabc31e04df0d2c3f1d50a5, modified by the two
+patches installed beside this notice:
+
+  senko-core-trim-distro.patch  registers only the features senko configures
+  senko-core-trim-conf.patch    moves the unused config loaders, finalmask
+                                types and the ECH dns lookup behind the
+                                senko_trim build tag the executable is built with
+
+The unmodified source is available at:
+https://github.com/XTLS/Xray-core/tree/2ec1657c03a4c368bfabc31e04df0d2c3f1d50a5
+
+This component is distributed under the Mozilla Public License 2.0. Its license
+text is installed beside this notice as senko-core-LICENSE.

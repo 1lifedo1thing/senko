@@ -1,4 +1,4 @@
-#include "go_config.h"
+#include "senko_core_config.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -288,7 +288,7 @@ static void append_routing(json_out_t *j, const ruleset_t *rules) {
     append_raw(j, "]}");
 }
 
-int go_config_render_rules(const vl_server_t *server, const char *endpoint_ip,
+int senko_core_config_render_rules(const vl_server_t *server, const char *endpoint_ip,
                            const char *ifname, const ruleset_t *rules,
                            char *out, size_t out_cap) {
     json_out_t j;
@@ -313,8 +313,8 @@ int go_config_render_rules(const vl_server_t *server, const char *endpoint_ip,
     return j.failed ? -1 : 0;
 }
 
-int go_config_render(const vl_server_t *server, const char *endpoint_ip,
+int senko_core_config_render(const vl_server_t *server, const char *endpoint_ip,
                      const char *ifname,
                      char *out, size_t out_cap) {
-    return go_config_render_rules(server, endpoint_ip, ifname, NULL, out, out_cap);
+    return senko_core_config_render_rules(server, endpoint_ip, ifname, NULL, out, out_cap);
 }

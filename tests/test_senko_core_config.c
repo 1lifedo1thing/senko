@@ -1,4 +1,4 @@
-#include "go_config.h"
+#include "senko_core_config.h"
 #include "cJSON.h"
 
 #include <assert.h>
@@ -8,7 +8,7 @@
 static cJSON *render(const char *link, char *buffer, size_t cap) {
     vl_server_t server;
     assert(cfg_parse_link(link, &server) == CFG_OK);
-    assert(go_config_render(&server, "203.0.113.7", "utun12", buffer, cap) == 0);
+    assert(senko_core_config_render(&server, "203.0.113.7", "utun12", buffer, cap) == 0);
     cJSON *root = cJSON_Parse(buffer);
     assert(root != NULL);
     return root;
@@ -18,7 +18,7 @@ static cJSON *render_rules(const char *link, ruleset_t *rules,
                            char *buffer, size_t cap) {
     vl_server_t server;
     assert(cfg_parse_link(link, &server) == CFG_OK);
-    assert(go_config_render_rules(&server, "203.0.113.7", "utun12",
+    assert(senko_core_config_render_rules(&server, "203.0.113.7", "utun12",
                                   rules, buffer, cap) == 0);
     cJSON *root = cJSON_Parse(buffer);
     assert(root != NULL);
@@ -48,7 +48,7 @@ int main(int argc, char **argv) {
     assert(ruleset_add_text(&rules, "proxy domain-suffix shared.example", 34, NULL) == RULES_OK);
     assert(ruleset_add_text(&rules, "direct domain-keyword video", 27, NULL) == RULES_OK);
     assert(ruleset_add_text(&rules, "block domain-suffix ads.example", 31, NULL) == RULES_OK);
-    assert(ruleset_add_text(&rules, "block ip-cidr 192.0.2.0/24", 28, NULL) == RULES_OK);
+    assert(ruleset_add_text(&rules, "block ip-cidr 192.0.2.0/24", 26, NULL) == RULES_OK);
     root = render_rules(
         "vless://11111111-1111-4111-8111-111111111111@example.com:443"
         "?type=tcp&security=tls", &rules, json, sizeof json);
@@ -168,6 +168,6 @@ int main(int argc, char **argv) {
     }
     cJSON_Delete(root);
 
-    puts("go config tests passed");
+    puts("senko-core config tests passed");
     return 0;
 }

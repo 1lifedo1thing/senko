@@ -9,6 +9,8 @@ int SenkoNativeStart(char *config, int configLen, int tunFD,
                      char *errorOut, int errorCap);
 int SenkoNativeStop(char *errorOut, int errorCap);
 int SenkoNativeIsRunning(void);
+/* senko-core's `run -c <path>`; returns the process exit status */
+int SenkoNativeRunFile(char *path);
 
 #ifdef __cplusplus
 }

@@ -7,9 +7,14 @@ package main
 import "C"
 
 import (
+	"fmt"
 	"os"
+	"os/signal"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"sync"
+	"syscall"
 	"unsafe"
 
 	"github.com/xtls/xray-core/core"
@@ -86,6 +91,40 @@ func SenkoNativeIsRunning() C.int {
 	running := nativeState.instance != nil
 	nativeState.Unlock()
 	if running {
+		return 1
+	}
+	return 0
+}
+
+// SenkoNativeRunFile is senko-core's `run -c <path>` for senkod on jailbroken
+// ios 12+: the tunnel descriptor arrives in XRAY_TUN_FD, and SIGTERM or SIGINT
+// stops the core. the extension binary carries it so the package ships one go
+// core instead of two copies of the same xray build
+//
+//export SenkoNativeRunFile
+func SenkoNativeRunFile(path *C.char) C.int {
+	if path == nil {
+		fmt.Fprintln(os.Stderr, "Failed to start: no config path")
+		return 23
+	}
+	bytes, err := os.ReadFile(C.GoString(path))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Failed to start:", err)
+		return 23
+	}
+	// subscribed before the core starts, so a stop sent while it comes up is kept
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	instance, err := core.StartInstance("json", bytes)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Failed to start:", err)
+		return 23
+	}
+	runtime.GC()
+	debug.FreeOSMemory()
+	<-stop
+	if err := instance.Close(); err != nil {
+		fmt.Fprintln(os.Stderr, "Failed to stop:", err)
 		return 1
 	}
 	return 0

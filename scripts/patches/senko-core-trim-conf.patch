@@ -1,0 +1,3188 @@
+diff --git a/infra/conf/api.go b/infra/conf/api.go
+index dca34910..7c3a8467 100644
+--- a/infra/conf/api.go
++++ b/infra/conf/api.go
+@@ -1,3 +1,5 @@
++//go:build !senko_trim
++
+ package conf
+ 
+ import (
+diff --git a/infra/conf/dns.go b/infra/conf/dns.go
+index d55dada6..679c63b8 100644
+--- a/infra/conf/dns.go
++++ b/infra/conf/dns.go
+@@ -1,3 +1,5 @@
++//go:build !senko_trim
++
+ package conf
+ 
+ import (
+diff --git a/infra/conf/dns_proxy.go b/infra/conf/dns_proxy.go
+index aabdea86..f4017552 100644
+--- a/infra/conf/dns_proxy.go
++++ b/infra/conf/dns_proxy.go
+@@ -1,3 +1,5 @@
++//go:build !senko_trim
++
+ package conf
+ 
+ import (
+diff --git a/infra/conf/dokodemo.go b/infra/conf/dokodemo.go
+index f1bd1e37..4ea04897 100644
+--- a/infra/conf/dokodemo.go
++++ b/infra/conf/dokodemo.go
+@@ -1,3 +1,5 @@
++//go:build !senko_trim
++
+ package conf
+ 
+ import (
+@@ -19,6 +21,10 @@ type DokodemoConfig struct {
+ 	UserLevel      uint32            `json:"userLevel"`
+ }
+ 
++func (v *DokodemoConfig) receiveOriginalDestination() bool {
++	return v.FollowRedirect
++}
++
+ func (v *DokodemoConfig) Build() (proto.Message, error) {
+ 	if v.Network != nil {
+ 		v.AllowedNetwork = v.Network
+diff --git a/infra/conf/fakedns.go b/infra/conf/fakedns.go
+index e22c483d..d6c2683a 100644
+--- a/infra/conf/fakedns.go
++++ b/infra/conf/fakedns.go
+@@ -1,3 +1,5 @@
++//go:build !senko_trim
++
+ package conf
+ 
+ import (
+diff --git a/infra/conf/geodata.go b/infra/conf/geodata.go
+index 3e80967a..c907414e 100644
+--- a/infra/conf/geodata.go
++++ b/infra/conf/geodata.go
+@@ -1,3 +1,5 @@
++//go:build !senko_trim
++
+ package conf
+ 
+ import (
+diff --git a/infra/conf/init.go b/infra/conf/init.go
+index 519d9fb2..4469db88 100644
+--- a/infra/conf/init.go
++++ b/infra/conf/init.go
+@@ -1,3 +1,5 @@
++//go:build !senko_trim
++
+ package conf
+ 
+ func init() {
+diff --git a/infra/conf/loopback.go b/infra/conf/loopback.go
+index ef30ddc3..799be208 100644
+--- a/infra/conf/loopback.go
++++ b/infra/conf/loopback.go
+@@ -1,3 +1,5 @@
++//go:build !senko_trim
++
+ package conf
+ 
+ import (
+diff --git a/infra/conf/metrics.go b/infra/conf/metrics.go
+index 75965206..48b82954 100644
+--- a/infra/conf/metrics.go
++++ b/infra/conf/metrics.go
+@@ -1,3 +1,5 @@
++//go:build !senko_trim
++
+ package conf
+ 
+ import (
+diff --git a/infra/conf/observatory.go b/infra/conf/observatory.go
+index 62d6aaba..ccf72db3 100644
+--- a/infra/conf/observatory.go
++++ b/infra/conf/observatory.go
+@@ -1,3 +1,5 @@
++//go:build !senko_trim
++
+ package conf
+ 
+ import (
+diff --git a/infra/conf/reverse.go b/infra/conf/reverse.go
+index f44c9992..4a1a62fa 100644
+--- a/infra/conf/reverse.go
++++ b/infra/conf/reverse.go
+@@ -1,3 +1,5 @@
++//go:build !senko_trim
++
+ package conf
+ 
+ import (
+diff --git a/infra/conf/serial/builder.go b/infra/conf/serial/builder.go
+index 755b3469..ca040879 100644
+--- a/infra/conf/serial/builder.go
++++ b/infra/conf/serial/builder.go
+@@ -72,8 +72,6 @@ var ReaderDecoderByFormat = make(map[string]readerDecoder)
+ 
+ func init() {
+ 	ReaderDecoderByFormat["json"] = DecodeJSONConfig
+-	ReaderDecoderByFormat["yaml"] = DecodeYAMLConfig
+-	ReaderDecoderByFormat["toml"] = DecodeTOMLConfig
+ 
+ 	core.ConfigBuilderForFiles = BuildConfig
+ 	core.ConfigMergedFormFiles = MergeConfigFromFiles
+diff --git a/infra/conf/serial/loader_toml_yaml.go b/infra/conf/serial/loader_toml_yaml.go
+new file mode 100644
+index 00000000..c114482a
+--- /dev/null
++++ b/infra/conf/serial/loader_toml_yaml.go
+@@ -0,0 +1,10 @@
++//go:build !senko_trim
++
++package serial
++
++// senko_trim builds read json only. without this registration nothing
++// reaches the toml and yaml decoders and the linker drops both libraries
++func init() {
++	ReaderDecoderByFormat["yaml"] = DecodeYAMLConfig
++	ReaderDecoderByFormat["toml"] = DecodeTOMLConfig
++}
+diff --git a/infra/conf/shadowsocks.go b/infra/conf/shadowsocks.go
+index 18451ab5..e4c3d074 100644
+--- a/infra/conf/shadowsocks.go
++++ b/infra/conf/shadowsocks.go
+@@ -3,14 +3,11 @@ package conf
+ import (
+ 	"strings"
+ 
+-	"github.com/sagernet/sing-shadowsocks/shadowaead_2022"
+-	C "github.com/sagernet/sing/common"
+ 	"github.com/xtls/xray-core/common/errors"
+ 	"github.com/xtls/xray-core/common/protocol"
+ 	"github.com/xtls/xray-core/common/serial"
+ 	"github.com/xtls/xray-core/common/task"
+ 	"github.com/xtls/xray-core/proxy/shadowsocks"
+-	"github.com/xtls/xray-core/proxy/shadowsocks_2022"
+ 	"google.golang.org/protobuf/proto"
+ )
+ 
+@@ -55,7 +52,7 @@ func (v *ShadowsocksServerConfig) Build() (proto.Message, error) {
+ 		v.Users = v.Clients
+ 	}
+ 
+-	if C.Contains(shadowaead_2022.List, v.Cipher) {
++	if isShadowsocks2022(v.Cipher) {
+ 		return buildShadowsocks2022(v)
+ 	}
+ 
+@@ -110,72 +107,6 @@ func (v *ShadowsocksServerConfig) Build() (proto.Message, error) {
+ 	return config, nil
+ }
+ 
+-func buildShadowsocks2022(v *ShadowsocksServerConfig) (proto.Message, error) {
+-	if len(v.Users) == 0 {
+-		config := new(shadowsocks_2022.ServerConfig)
+-		config.Method = v.Cipher
+-		config.Key = v.Password
+-		config.Network = v.NetworkList.Build()
+-		config.Email = v.Email
+-		return config, nil
+-	}
+-
+-	if v.Cipher == "" {
+-		return nil, errors.New("shadowsocks 2022 (multi-user): missing server method")
+-	}
+-	if !strings.Contains(v.Cipher, "aes") {
+-		return nil, errors.New("shadowsocks 2022 (multi-user): only blake3-aes-*-gcm methods are supported")
+-	}
+-
+-	if v.Users[0].Address == nil {
+-		config := new(shadowsocks_2022.MultiUserServerConfig)
+-		config.Method = v.Cipher
+-		config.Key = v.Password
+-		config.Network = v.NetworkList.Build()
+-
+-		config.Users = make([]*protocol.User, len(v.Users))
+-		processUser := func(idx int) error {
+-			user := v.Users[idx]
+-			if user.Cipher != "" {
+-				return errors.New("shadowsocks 2022 (multi-user): users must have empty method")
+-			}
+-			account := &shadowsocks_2022.Account{
+-				Key: user.Password,
+-			}
+-			config.Users[idx] = &protocol.User{
+-				Email:   user.Email,
+-				Level:   uint32(user.Level),
+-				Account: serial.ToTypedMessage(account),
+-			}
+-			return nil
+-		}
+-		if err := task.ParallelForN(len(v.Users), processUser); err != nil {
+-			return nil, err
+-		}
+-		return config, nil
+-	}
+-
+-	config := new(shadowsocks_2022.RelayServerConfig)
+-	config.Method = v.Cipher
+-	config.Key = v.Password
+-	config.Network = v.NetworkList.Build()
+-	for _, user := range v.Users {
+-		if user.Cipher != "" {
+-			return nil, errors.New("shadowsocks 2022 (relay): users must have empty method")
+-		}
+-		if user.Address == nil {
+-			return nil, errors.New("shadowsocks 2022 (relay): all users must have relay address")
+-		}
+-		config.Destinations = append(config.Destinations, &shadowsocks_2022.RelayDestination{
+-			Key:     user.Password,
+-			Email:   user.Email,
+-			Address: user.Address.Build(),
+-			Port:    uint32(user.Port),
+-		})
+-	}
+-	return config, nil
+-}
+-
+ type ShadowsocksServerTarget struct {
+ 	Address  *Address `json:"address"`
+ 	Port     uint16   `json:"port"`
+@@ -216,29 +147,14 @@ func (v *ShadowsocksClientConfig) Build() (proto.Message, error) {
+ 
+ 	if len(v.Servers) == 1 {
+ 		server := v.Servers[0]
+-		if C.Contains(shadowaead_2022.List, server.Cipher) {
+-			if server.Address == nil {
+-				return nil, errors.New("Shadowsocks server address is not set.")
+-			}
+-			if server.Port == 0 {
+-				return nil, errors.New("Invalid Shadowsocks port.")
+-			}
+-			if server.Password == "" {
+-				return nil, errors.New("Shadowsocks password is not specified.")
+-			}
+-
+-			config := new(shadowsocks_2022.ClientConfig)
+-			config.Address = server.Address.Build()
+-			config.Port = uint32(server.Port)
+-			config.Method = server.Cipher
+-			config.Key = server.Password
+-			return config, nil
++		if isShadowsocks2022(server.Cipher) {
++			return buildShadowsocks2022Client(server)
+ 		}
+ 	}
+ 
+ 	config := new(shadowsocks.ClientConfig)
+ 	for _, server := range v.Servers {
+-		if C.Contains(shadowaead_2022.List, server.Cipher) {
++		if isShadowsocks2022(server.Cipher) {
+ 			return nil, errors.New("Shadowsocks 2022 accept no multi servers")
+ 		}
+ 		if server.Address == nil {
+diff --git a/infra/conf/shadowsocks_2022_full.go b/infra/conf/shadowsocks_2022_full.go
+new file mode 100644
+index 00000000..cd6483e6
+--- /dev/null
++++ b/infra/conf/shadowsocks_2022_full.go
+@@ -0,0 +1,105 @@
++//go:build !senko_trim
++
++package conf
++
++import (
++	"strings"
++
++	"github.com/sagernet/sing-shadowsocks/shadowaead_2022"
++	C "github.com/sagernet/sing/common"
++	"github.com/xtls/xray-core/common/errors"
++	"github.com/xtls/xray-core/common/protocol"
++	"github.com/xtls/xray-core/common/serial"
++	"github.com/xtls/xray-core/common/task"
++	"github.com/xtls/xray-core/proxy/shadowsocks_2022"
++	"google.golang.org/protobuf/proto"
++)
++
++func isShadowsocks2022(cipher string) bool {
++	return C.Contains(shadowaead_2022.List, cipher)
++}
++
++func buildShadowsocks2022Client(server *ShadowsocksServerTarget) (proto.Message, error) {
++	if server.Address == nil {
++		return nil, errors.New("Shadowsocks server address is not set.")
++	}
++	if server.Port == 0 {
++		return nil, errors.New("Invalid Shadowsocks port.")
++	}
++	if server.Password == "" {
++		return nil, errors.New("Shadowsocks password is not specified.")
++	}
++
++	config := new(shadowsocks_2022.ClientConfig)
++	config.Address = server.Address.Build()
++	config.Port = uint32(server.Port)
++	config.Method = server.Cipher
++	config.Key = server.Password
++	return config, nil
++}
++
++func buildShadowsocks2022(v *ShadowsocksServerConfig) (proto.Message, error) {
++	if len(v.Users) == 0 {
++		config := new(shadowsocks_2022.ServerConfig)
++		config.Method = v.Cipher
++		config.Key = v.Password
++		config.Network = v.NetworkList.Build()
++		config.Email = v.Email
++		return config, nil
++	}
++
++	if v.Cipher == "" {
++		return nil, errors.New("shadowsocks 2022 (multi-user): missing server method")
++	}
++	if !strings.Contains(v.Cipher, "aes") {
++		return nil, errors.New("shadowsocks 2022 (multi-user): only blake3-aes-*-gcm methods are supported")
++	}
++
++	if v.Users[0].Address == nil {
++		config := new(shadowsocks_2022.MultiUserServerConfig)
++		config.Method = v.Cipher
++		config.Key = v.Password
++		config.Network = v.NetworkList.Build()
++
++		config.Users = make([]*protocol.User, len(v.Users))
++		processUser := func(idx int) error {
++			user := v.Users[idx]
++			if user.Cipher != "" {
++				return errors.New("shadowsocks 2022 (multi-user): users must have empty method")
++			}
++			account := &shadowsocks_2022.Account{
++				Key: user.Password,
++			}
++			config.Users[idx] = &protocol.User{
++				Email:   user.Email,
++				Level:   uint32(user.Level),
++				Account: serial.ToTypedMessage(account),
++			}
++			return nil
++		}
++		if err := task.ParallelForN(len(v.Users), processUser); err != nil {
++			return nil, err
++		}
++		return config, nil
++	}
++
++	config := new(shadowsocks_2022.RelayServerConfig)
++	config.Method = v.Cipher
++	config.Key = v.Password
++	config.Network = v.NetworkList.Build()
++	for _, user := range v.Users {
++		if user.Cipher != "" {
++			return nil, errors.New("shadowsocks 2022 (relay): users must have empty method")
++		}
++		if user.Address == nil {
++			return nil, errors.New("shadowsocks 2022 (relay): all users must have relay address")
++		}
++		config.Destinations = append(config.Destinations, &shadowsocks_2022.RelayDestination{
++			Key:     user.Password,
++			Email:   user.Email,
++			Address: user.Address.Build(),
++			Port:    uint32(user.Port),
++		})
++	}
++	return config, nil
++}
+diff --git a/infra/conf/transport_finalmask.go b/infra/conf/transport_finalmask.go
+index e4c579dd..81b28f9e 100644
+--- a/infra/conf/transport_finalmask.go
++++ b/infra/conf/transport_finalmask.go
+@@ -1,632 +1,23 @@
+ package conf
+ 
+ import (
+-	"crypto/x509"
+-	"encoding/base64"
+-	"encoding/hex"
+ 	"encoding/json"
+-	"fmt"
+-	"net/netip"
+-	"net/url"
+-	"regexp"
+-	"strings"
+ 
+-	googleuuid "github.com/google/uuid"
+ 	"github.com/xtls/xray-core/common/errors"
+-	"github.com/xtls/xray-core/common/net"
+-	"github.com/xtls/xray-core/transport/internet/finalmask/fragment"
+-	"github.com/xtls/xray-core/transport/internet/finalmask/header/custom"
+-	"github.com/xtls/xray-core/transport/internet/finalmask/mkcp/aes128gcm"
+-	"github.com/xtls/xray-core/transport/internet/finalmask/mkcp/header"
+-	"github.com/xtls/xray-core/transport/internet/finalmask/mkcp/original"
+-	"github.com/xtls/xray-core/transport/internet/finalmask/noise"
+-	"github.com/xtls/xray-core/transport/internet/finalmask/realm"
+ 	"github.com/xtls/xray-core/transport/internet/finalmask/salamander"
+-	"github.com/xtls/xray-core/transport/internet/finalmask/sudoku"
+-	"github.com/xtls/xray-core/transport/internet/finalmask/xdns"
+-	"github.com/xtls/xray-core/transport/internet/finalmask/xicmp"
+-	"github.com/xtls/xray-core/transport/internet/finalmask/xmc"
+-	"github.com/xtls/xray-core/transport/internet/tls"
+ 	"google.golang.org/protobuf/proto"
+ )
+ 
+-func PraseByteSlice(data json.RawMessage, typ string) ([]byte, error) {
+-	switch strings.ToLower(typ) {
+-	case "", "array":
+-		if len(data) == 0 {
+-			return data, nil
+-		}
+-		var packet []byte
+-		if err := json.Unmarshal(data, &packet); err != nil {
+-			return nil, err
+-		}
+-		return packet, nil
+-	case "str":
+-		var str string
+-		if err := json.Unmarshal(data, &str); err != nil {
+-			return nil, err
+-		}
+-		return []byte(str), nil
+-	case "hex":
+-		var str string
+-		if err := json.Unmarshal(data, &str); err != nil {
+-			return nil, err
+-		}
+-		return hex.DecodeString(str)
+-	case "base64":
+-		var str string
+-		if err := json.Unmarshal(data, &str); err != nil {
+-			return nil, err
+-		}
+-		return base64.StdEncoding.DecodeString(str)
+-	default:
+-		return nil, errors.New("unknown type")
+-	}
+-}
+-
++// senko's hysteria2 outbound only ever names salamander; the other masks live
++// in transport_finalmask_full.go, which a senko_trim build leaves out
+ var (
+-	customVarNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+-
+-	tcpmaskLoader = NewJSONConfigLoader(ConfigCreatorCache{
+-		"header-custom": func() interface{} { return new(HeaderCustomTCP) },
+-		"fragment":      func() interface{} { return new(FragmentMask) },
+-		"sudoku":        func() interface{} { return new(Sudoku) },
+-		"xmc":           func() interface{} { return new(XMC) },
+-	}, "type", "settings")
++	tcpmaskLoader = NewJSONConfigLoader(ConfigCreatorCache{}, "type", "settings")
+ 
+ 	udpmaskLoader = NewJSONConfigLoader(ConfigCreatorCache{
+-		"header-custom": func() interface{} { return new(HeaderCustomUDP) },
+-		"mkcp-legacy":   func() interface{} { return new(MkcpLegacy) },
+-		"noise":         func() interface{} { return new(NoiseMask) },
+-		"salamander":    func() interface{} { return new(Salamander) },
+-		"sudoku":        func() interface{} { return new(Sudoku) },
+-		"xdns":          func() interface{} { return new(Xdns) },
+-		"xicmp":         func() interface{} { return new(Xicmp) },
+-		"realm":         func() interface{} { return new(Realm) },
++		"salamander": func() interface{} { return new(Salamander) },
+ 	}, "type", "settings")
+ )
+ 
+-type TCPItem struct {
+-	Delay     Int32Range       `json:"delay"`
+-	Rand      int32            `json:"rand"`
+-	RandRange *Int32Range      `json:"randRange"`
+-	Capture   string           `json:"capture"`
+-	Type      string           `json:"type"`
+-	Reuse     string           `json:"reuse"`
+-	Transform *CustomTransform `json:"transform"`
+-	Packet    json.RawMessage  `json:"packet"`
+-}
+-
+-type HeaderCustomTCP struct {
+-	Clients [][]TCPItem `json:"clients"`
+-	Servers [][]TCPItem `json:"servers"`
+-	Errors  [][]TCPItem `json:"errors"`
+-}
+-
+-func (c *HeaderCustomTCP) Build() (proto.Message, error) {
+-	for _, value := range c.Clients {
+-		for _, item := range value {
+-			if err := validateCustomItemSpec(item.Capture, item.Packet, item.Rand, item.Reuse, item.Transform); err != nil {
+-				return nil, err
+-			}
+-		}
+-	}
+-	for _, value := range c.Servers {
+-		for _, item := range value {
+-			if err := validateCustomItemSpec(item.Capture, item.Packet, item.Rand, item.Reuse, item.Transform); err != nil {
+-				return nil, err
+-			}
+-		}
+-	}
+-	for _, value := range c.Errors {
+-		for _, item := range value {
+-			if err := validateCustomItemSpec(item.Capture, item.Packet, item.Rand, item.Reuse, item.Transform); err != nil {
+-				return nil, err
+-			}
+-		}
+-	}
+-
+-	errInvalidRange := errors.New("invalid randRange")
+-
+-	clients := make([]*custom.TCPSequence, len(c.Clients))
+-	for i, value := range c.Clients {
+-		clients[i] = &custom.TCPSequence{}
+-		for _, item := range value {
+-			if item.RandRange == nil {
+-				item.RandRange = &Int32Range{From: 0, To: 255}
+-			}
+-			if item.RandRange.From < 0 || item.RandRange.To > 255 {
+-				return nil, errInvalidRange
+-			}
+-			var err error
+-			if item.Packet, err = PraseByteSlice(item.Packet, item.Type); err != nil {
+-				return nil, err
+-			}
+-			transform, err := buildCustomTransform(item.Transform)
+-			if err != nil {
+-				return nil, err
+-			}
+-			clients[i].Sequence = append(clients[i].Sequence, &custom.TCPItem{
+-				DelayMin: int64(item.Delay.From),
+-				DelayMax: int64(item.Delay.To),
+-				Rand:     item.Rand,
+-				RandMin:  item.RandRange.From,
+-				RandMax:  item.RandRange.To,
+-				Packet:   item.Packet,
+-				Save:     item.Capture,
+-				Var:      item.Reuse,
+-				Expr:     transform,
+-			})
+-		}
+-	}
+-
+-	servers := make([]*custom.TCPSequence, len(c.Servers))
+-	for i, value := range c.Servers {
+-		servers[i] = &custom.TCPSequence{}
+-		for _, item := range value {
+-			if item.RandRange == nil {
+-				item.RandRange = &Int32Range{From: 0, To: 255}
+-			}
+-			if item.RandRange.From < 0 || item.RandRange.To > 255 {
+-				return nil, errInvalidRange
+-			}
+-			var err error
+-			if item.Packet, err = PraseByteSlice(item.Packet, item.Type); err != nil {
+-				return nil, err
+-			}
+-			transform, err := buildCustomTransform(item.Transform)
+-			if err != nil {
+-				return nil, err
+-			}
+-			servers[i].Sequence = append(servers[i].Sequence, &custom.TCPItem{
+-				DelayMin: int64(item.Delay.From),
+-				DelayMax: int64(item.Delay.To),
+-				Rand:     item.Rand,
+-				RandMin:  item.RandRange.From,
+-				RandMax:  item.RandRange.To,
+-				Packet:   item.Packet,
+-				Save:     item.Capture,
+-				Var:      item.Reuse,
+-				Expr:     transform,
+-			})
+-		}
+-	}
+-
+-	errors := make([]*custom.TCPSequence, len(c.Errors))
+-	for i, value := range c.Errors {
+-		errors[i] = &custom.TCPSequence{}
+-		for _, item := range value {
+-			if item.RandRange == nil {
+-				item.RandRange = &Int32Range{From: 0, To: 255}
+-			}
+-			if item.RandRange.From < 0 || item.RandRange.To > 255 {
+-				return nil, errInvalidRange
+-			}
+-			var err error
+-			if item.Packet, err = PraseByteSlice(item.Packet, item.Type); err != nil {
+-				return nil, err
+-			}
+-			transform, err := buildCustomTransform(item.Transform)
+-			if err != nil {
+-				return nil, err
+-			}
+-			errors[i].Sequence = append(errors[i].Sequence, &custom.TCPItem{
+-				DelayMin: int64(item.Delay.From),
+-				DelayMax: int64(item.Delay.To),
+-				Rand:     item.Rand,
+-				RandMin:  item.RandRange.From,
+-				RandMax:  item.RandRange.To,
+-				Packet:   item.Packet,
+-				Save:     item.Capture,
+-				Var:      item.Reuse,
+-				Expr:     transform,
+-			})
+-		}
+-	}
+-
+-	return &custom.TCPConfig{
+-		Clients: clients,
+-		Servers: servers,
+-		Errors:  errors,
+-	}, nil
+-}
+-
+-type FragmentMask struct {
+-	Packets  string       `json:"packets"`
+-	Length   Int32Range   `json:"length"`
+-	Delay    Int32Range   `json:"delay"`
+-	Lengths  []Int32Range `json:"lengths"`
+-	Delays   []Int32Range `json:"delays"`
+-	MaxSplit Int32Range   `json:"maxSplit"`
+-}
+-
+-func (c *FragmentMask) Build() (proto.Message, error) {
+-	config := &fragment.Config{}
+-
+-	switch strings.ToLower(c.Packets) {
+-	case "tlshello":
+-		config.PacketsFrom = 0
+-		config.PacketsTo = 1
+-	case "":
+-		config.PacketsFrom = 0
+-		config.PacketsTo = 0
+-	default:
+-		from, to, err := ParseRangeString(c.Packets)
+-		if err != nil {
+-			return nil, errors.New("Invalid PacketsFrom").Base(err)
+-		}
+-		config.PacketsFrom = int64(from)
+-		config.PacketsTo = int64(to)
+-		if config.PacketsFrom == 0 {
+-			return nil, errors.New("PacketsFrom can't be 0")
+-		}
+-	}
+-
+-	if len(c.Lengths) > 0 {
+-		for _, r := range c.Lengths {
+-			config.LengthsMin = append(config.LengthsMin, int64(r.From))
+-			config.LengthsMax = append(config.LengthsMax, int64(r.To))
+-		}
+-	} else {
+-		config.LengthsMin = append(config.LengthsMin, int64(c.Length.From))
+-		config.LengthsMax = append(config.LengthsMax, int64(c.Length.To))
+-	}
+-
+-	if config.LengthsMin[len(config.LengthsMin)-1] == 0 {
+-		return nil, errors.New("last lengths entry min can't be 0")
+-	}
+-
+-	if len(c.Delays) > 0 {
+-		for _, r := range c.Delays {
+-			config.DelaysMin = append(config.DelaysMin, int64(r.From))
+-			config.DelaysMax = append(config.DelaysMax, int64(r.To))
+-		}
+-	} else {
+-		config.DelaysMin = append(config.DelaysMin, int64(c.Delay.From))
+-		config.DelaysMax = append(config.DelaysMax, int64(c.Delay.To))
+-	}
+-
+-	config.MaxSplitMin = int64(c.MaxSplit.From)
+-	config.MaxSplitMax = int64(c.MaxSplit.To)
+-
+-	return config, nil
+-}
+-
+-type NoiseItem struct {
+-	Rand      Int32Range      `json:"rand"`
+-	RandRange *Int32Range     `json:"randRange"`
+-	Type      string          `json:"type"`
+-	Packet    json.RawMessage `json:"packet"`
+-	Delay     Int32Range      `json:"delay"`
+-}
+-
+-type NoiseMask struct {
+-	Reset Int32Range  `json:"reset"`
+-	Noise []NoiseItem `json:"noise"`
+-}
+-
+-func (c *NoiseMask) Build() (proto.Message, error) {
+-	for _, item := range c.Noise {
+-		if len(item.Packet) > 0 && item.Rand.To > 0 {
+-			return nil, errors.New("len(item.Packet) > 0 && item.Rand.To > 0")
+-		}
+-	}
+-
+-	noiseSlice := make([]*noise.Item, 0, len(c.Noise))
+-	for _, item := range c.Noise {
+-		if item.RandRange == nil {
+-			item.RandRange = &Int32Range{From: 0, To: 255}
+-		}
+-		if item.RandRange.From < 0 || item.RandRange.To > 255 {
+-			return nil, errors.New("invalid randRange")
+-		}
+-		var err error
+-		if item.Packet, err = PraseByteSlice(item.Packet, item.Type); err != nil {
+-			return nil, err
+-		}
+-		noiseSlice = append(noiseSlice, &noise.Item{
+-			RandMin:      int64(item.Rand.From),
+-			RandMax:      int64(item.Rand.To),
+-			RandRangeMin: item.RandRange.From,
+-			RandRangeMax: item.RandRange.To,
+-			Packet:       item.Packet,
+-			DelayMin:     int64(item.Delay.From),
+-			DelayMax:     int64(item.Delay.To),
+-		})
+-	}
+-
+-	return &noise.Config{
+-		ResetMin: int64(c.Reset.From),
+-		ResetMax: int64(c.Reset.To),
+-		Items:    noiseSlice,
+-	}, nil
+-}
+-
+-type UDPItem struct {
+-	Rand      int32            `json:"rand"`
+-	RandRange *Int32Range      `json:"randRange"`
+-	Capture   string           `json:"capture"`
+-	Type      string           `json:"type"`
+-	Reuse     string           `json:"reuse"`
+-	Transform *CustomTransform `json:"transform"`
+-	Packet    json.RawMessage  `json:"packet"`
+-}
+-
+-type CustomTransform struct {
+-	Op   string               `json:"op"`
+-	Args []CustomTransformArg `json:"args"`
+-}
+-
+-type CustomTransformArg struct {
+-	Type      string           `json:"type"`
+-	Bytes     json.RawMessage  `json:"bytes"`
+-	U64       *uint64          `json:"u64"`
+-	Reuse     string           `json:"reuse"`
+-	Metadata  string           `json:"metadata"`
+-	Transform *CustomTransform `json:"transform"`
+-}
+-
+-func validateCustomVarName(name string) error {
+-	if name == "" {
+-		return nil
+-	}
+-	if !customVarNamePattern.MatchString(name) {
+-		return errors.New("invalid variable name")
+-	}
+-	return nil
+-}
+-
+-func validateCustomItemSpec(capture string, packet json.RawMessage, rand int32, reuse string, transform *CustomTransform) error {
+-	if err := validateCustomVarName(capture); err != nil {
+-		return err
+-	}
+-	if err := validateCustomVarName(reuse); err != nil {
+-		return err
+-	}
+-
+-	kindCount := 0
+-	if len(packet) > 0 {
+-		kindCount++
+-	}
+-	if rand > 0 {
+-		kindCount++
+-	}
+-	if reuse != "" {
+-		kindCount++
+-	}
+-	if transform != nil {
+-		kindCount++
+-	}
+-	if kindCount > 1 {
+-		return errors.New("exactly one item kind must be set")
+-	}
+-	if kindCount == 0 && capture != "" {
+-		return errors.New("exactly one item kind must be set")
+-	}
+-
+-	return nil
+-}
+-
+-func buildCustomTransform(transform *CustomTransform) (*custom.Expr, error) {
+-	if transform == nil {
+-		return nil, nil
+-	}
+-	if transform.Op == "" {
+-		return nil, errors.New("transform op is required")
+-	}
+-	if len(transform.Args) == 0 {
+-		return nil, errors.New("transform args are required")
+-	}
+-
+-	args := make([]*custom.ExprArg, 0, len(transform.Args))
+-	for _, arg := range transform.Args {
+-		parsedArg, err := buildCustomTransformArg(arg)
+-		if err != nil {
+-			return nil, err
+-		}
+-		args = append(args, parsedArg)
+-	}
+-
+-	return &custom.Expr{
+-		Op:   transform.Op,
+-		Args: args,
+-	}, nil
+-}
+-
+-func buildCustomTransformArg(arg CustomTransformArg) (*custom.ExprArg, error) {
+-	kindCount := 0
+-	if len(arg.Bytes) > 0 {
+-		kindCount++
+-	}
+-	if arg.U64 != nil {
+-		kindCount++
+-	}
+-	if arg.Reuse != "" {
+-		kindCount++
+-	}
+-	if arg.Metadata != "" {
+-		kindCount++
+-	}
+-	if arg.Transform != nil {
+-		kindCount++
+-	}
+-	if kindCount != 1 {
+-		return nil, errors.New("transform arg must set exactly one value")
+-	}
+-
+-	if len(arg.Bytes) > 0 {
+-		value, err := PraseByteSlice(arg.Bytes, arg.Type)
+-		if err != nil {
+-			return nil, err
+-		}
+-		return &custom.ExprArg{
+-			Value: &custom.ExprArg_Bytes{
+-				Bytes: value,
+-			},
+-		}, nil
+-	}
+-	if arg.U64 != nil {
+-		return &custom.ExprArg{
+-			Value: &custom.ExprArg_U64{
+-				U64: *arg.U64,
+-			},
+-		}, nil
+-	}
+-	if arg.Reuse != "" {
+-		if err := validateCustomVarName(arg.Reuse); err != nil {
+-			return nil, err
+-		}
+-		return &custom.ExprArg{
+-			Value: &custom.ExprArg_Var{
+-				Var: arg.Reuse,
+-			},
+-		}, nil
+-	}
+-	if arg.Metadata != "" {
+-		return &custom.ExprArg{
+-			Value: &custom.ExprArg_Metadata{
+-				Metadata: arg.Metadata,
+-			},
+-		}, nil
+-	}
+-
+-	parsedExpr, err := buildCustomTransform(arg.Transform)
+-	if err != nil {
+-		return nil, err
+-	}
+-	return &custom.ExprArg{
+-		Value: &custom.ExprArg_Expr{
+-			Expr: parsedExpr,
+-		},
+-	}, nil
+-}
+-
+-type HeaderCustomUDP struct {
+-	Mode   string    `json:"mode"`
+-	Client []UDPItem `json:"client"`
+-	Server []UDPItem `json:"server"`
+-}
+-
+-func (c *HeaderCustomUDP) Build() (proto.Message, error) {
+-	switch c.Mode {
+-	case "", "prefix", "standalone":
+-	default:
+-		return nil, errors.New("unknown udp mode")
+-	}
+-
+-	for _, item := range c.Client {
+-		if err := validateCustomItemSpec(item.Capture, item.Packet, item.Rand, item.Reuse, item.Transform); err != nil {
+-			return nil, err
+-		}
+-	}
+-	for _, item := range c.Server {
+-		if err := validateCustomItemSpec(item.Capture, item.Packet, item.Rand, item.Reuse, item.Transform); err != nil {
+-			return nil, err
+-		}
+-	}
+-
+-	client := make([]*custom.UDPItem, 0, len(c.Client))
+-	for _, item := range c.Client {
+-		if item.RandRange == nil {
+-			item.RandRange = &Int32Range{From: 0, To: 255}
+-		}
+-		if item.RandRange.From < 0 || item.RandRange.To > 255 {
+-			return nil, errors.New("invalid randRange")
+-		}
+-		var err error
+-		if item.Packet, err = PraseByteSlice(item.Packet, item.Type); err != nil {
+-			return nil, err
+-		}
+-		transform, err := buildCustomTransform(item.Transform)
+-		if err != nil {
+-			return nil, err
+-		}
+-		client = append(client, &custom.UDPItem{
+-			Rand:    item.Rand,
+-			RandMin: item.RandRange.From,
+-			RandMax: item.RandRange.To,
+-			Packet:  item.Packet,
+-			Save:    item.Capture,
+-			Var:     item.Reuse,
+-			Expr:    transform,
+-		})
+-	}
+-
+-	server := make([]*custom.UDPItem, 0, len(c.Server))
+-	for _, item := range c.Server {
+-		if item.RandRange == nil {
+-			item.RandRange = &Int32Range{From: 0, To: 255}
+-		}
+-		if item.RandRange.From < 0 || item.RandRange.To > 255 {
+-			return nil, errors.New("invalid randRange")
+-		}
+-		var err error
+-		if item.Packet, err = PraseByteSlice(item.Packet, item.Type); err != nil {
+-			return nil, err
+-		}
+-		transform, err := buildCustomTransform(item.Transform)
+-		if err != nil {
+-			return nil, err
+-		}
+-		server = append(server, &custom.UDPItem{
+-			Rand:    item.Rand,
+-			RandMin: item.RandRange.From,
+-			RandMax: item.RandRange.To,
+-			Packet:  item.Packet,
+-			Save:    item.Capture,
+-			Var:     item.Reuse,
+-			Expr:    transform,
+-		})
+-	}
+-
+-	if c.Mode == "standalone" {
+-		return &custom.UDPStandaloneConfig{
+-			Client: client,
+-			Server: server,
+-		}, nil
+-	} else {
+-		return &custom.UDPConfig{
+-			Client: client,
+-			Server: server,
+-		}, nil
+-	}
+-}
+-
+-type MkcpLegacy struct {
+-	Header string `json:"header"`
+-	Value  string `json:"value"`
+-}
+-
+-func (c *MkcpLegacy) Build() (proto.Message, error) {
+-	if len(c.Header) == 0 {
+-		if len(c.Value) == 0 {
+-			return &original.Config{}, nil
+-		} else {
+-			return &aes128gcm.Config{Password: c.Value}, nil
+-		}
+-	}
+-	switch strings.ToLower(c.Header) {
+-	case "dns":
+-		domain := c.Value
+-		if len(domain) == 0 {
+-			domain = "www.baidu.com"
+-		}
+-		return &header.Config{ID: 0, Domain: domain}, nil
+-	case "dtls":
+-		return &header.Config{ID: 1}, nil
+-	case "srtp":
+-		return &header.Config{ID: 2}, nil
+-	case "utp":
+-		return &header.Config{ID: 3}, nil
+-	case "wechat":
+-		return &header.Config{ID: 4}, nil
+-	case "wireguard":
+-		return &header.Config{ID: 5}, nil
+-	default:
+-		return nil, errors.New("invalid header ", c.Header)
+-	}
+-}
+-
+ type Salamander struct {
+ 	Password   string     `json:"password"`
+ 	PacketSize Int32Range `json:"packetSize"`
+@@ -648,259 +39,6 @@ func (c *Salamander) Build() (proto.Message, error) {
+ 	}, nil
+ }
+ 
+-type Sudoku struct {
+-	Password string `json:"password"`
+-	ASCII    string `json:"ascii"`
+-
+-	CustomTable       string   `json:"customTable"`
+-	LegacyCustomTable string   `json:"custom_table"`
+-	CustomTables      []string `json:"customTables"`
+-	LegacyCustomSets  []string `json:"custom_tables"`
+-
+-	PaddingMin       uint32 `json:"paddingMin"`
+-	LegacyPaddingMin uint32 `json:"padding_min"`
+-	PaddingMax       uint32 `json:"paddingMax"`
+-	LegacyPaddingMax uint32 `json:"padding_max"`
+-}
+-
+-func (c *Sudoku) Build() (proto.Message, error) {
+-	customTable := c.CustomTable
+-	if customTable == "" {
+-		customTable = c.LegacyCustomTable
+-	}
+-	customTables := c.CustomTables
+-	if len(customTables) == 0 {
+-		customTables = c.LegacyCustomSets
+-	}
+-
+-	paddingMin := c.PaddingMin
+-	if paddingMin == 0 {
+-		paddingMin = c.LegacyPaddingMin
+-	}
+-	paddingMax := c.PaddingMax
+-	if paddingMax == 0 {
+-		paddingMax = c.LegacyPaddingMax
+-	}
+-
+-	return &sudoku.Config{
+-		Password:     c.Password,
+-		Ascii:        c.ASCII,
+-		CustomTable:  customTable,
+-		CustomTables: customTables,
+-		PaddingMin:   paddingMin,
+-		PaddingMax:   paddingMax,
+-	}, nil
+-}
+-
+-type Xdns struct {
+-	Domain json.RawMessage `json:"domain"`
+-
+-	Domains   []string `json:"domains"`
+-	Resolvers []string `json:"resolvers"`
+-}
+-
+-func (c *Xdns) Build() (proto.Message, error) {
+-	if c.Domain != nil {
+-		return nil, errors.PrintRemovedFeatureError("domain", "domains(server) & resolvers(client)")
+-	}
+-
+-	if len(c.Domains) == 0 && len(c.Resolvers) == 0 {
+-		return nil, errors.New("empty domains & empty resolvers")
+-	}
+-
+-	for _, r := range c.Resolvers {
+-		if !strings.Contains(r, "+udp://") {
+-			return nil, errors.New("invalid resolver ", r)
+-		}
+-	}
+-
+-	return &xdns.Config{
+-		Domains:   c.Domains,
+-		Resolvers: c.Resolvers,
+-	}, nil
+-}
+-
+-type XMC struct {
+-	Hostname string       `json:"hostname"`
+-	Profiles []XMCProfile `json:"profiles"`
+-	Password string       `json:"password"`
+-}
+-
+-type XMCProfile struct {
+-	// Resolve the UUID by username, then request the session profile with
+-	// unsigned=false. Client and server must use the same signed profile.
+-	Username          string `json:"username"`
+-	UUID              string `json:"uuid"`
+-	TexturesValue     string `json:"texturesValue"`
+-	TexturesSignature string `json:"texturesSignature"`
+-}
+-
+-var xmcUsernamePattern = regexp.MustCompile(`^[A-Za-z0-9_]{3,16}$`)
+-
+-func (c *XMCProfile) Build() (*xmc.Profile, error) {
+-	if !xmcUsernamePattern.MatchString(c.Username) {
+-		return nil, fmt.Errorf("invalid minecraft profile username: %q", c.Username)
+-	}
+-
+-	profileUUID, err := googleuuid.Parse(c.UUID)
+-	if err != nil {
+-		return nil, fmt.Errorf("invalid minecraft profile UUID: %w", err)
+-	}
+-	if c.TexturesValue == "" || c.TexturesSignature == "" {
+-		return nil, fmt.Errorf("incomplete minecraft profile textures")
+-	}
+-
+-	return &xmc.Profile{
+-		Username:          c.Username,
+-		Uuid:              append([]byte(nil), profileUUID[:]...),
+-		TexturesValue:     c.TexturesValue,
+-		TexturesSignature: c.TexturesSignature,
+-	}, nil
+-}
+-
+-func (c *XMC) Build() (proto.Message, error) {
+-	if len(c.Profiles) == 0 {
+-		return nil, fmt.Errorf("minecraft profiles are required")
+-	}
+-
+-	if c.Password == "" {
+-		return nil, fmt.Errorf("empty password")
+-	}
+-
+-	rsaPrivateKey, err := xmc.DeriveRSAKey(c.Password)
+-	if err != nil {
+-		return nil, fmt.Errorf("derive minecraft rsa key: %w", err)
+-	}
+-
+-	rsaPublicKey, err := x509.MarshalPKIXPublicKey(&rsaPrivateKey.PublicKey)
+-	if err != nil {
+-		return nil, fmt.Errorf("marshal minecraft rsa public key: %w", err)
+-	}
+-
+-	profiles := make([]*xmc.Profile, 0, len(c.Profiles))
+-	for i := range c.Profiles {
+-		profile, err := c.Profiles[i].Build()
+-		if err != nil {
+-			return nil, fmt.Errorf("build minecraft profile %d: %w", i, err)
+-		}
+-		profiles = append(profiles, profile)
+-	}
+-
+-	return &xmc.Config{
+-		Password:      c.Password,
+-		Hostname:      c.Hostname,
+-		RsaPrivateKey: x509.MarshalPKCS1PrivateKey(rsaPrivateKey),
+-		RsaPublicKey:  rsaPublicKey,
+-		Profiles:      profiles,
+-	}, nil
+-}
+-
+-type Xicmp struct {
+-	DGRAM bool     `json:"dgram"`
+-	IPs   []string `json:"ips"`
+-}
+-
+-func (c *Xicmp) Build() (proto.Message, error) {
+-	for _, ip := range c.IPs {
+-		if _, err := netip.ParseAddr(ip); err != nil {
+-			return nil, err
+-		}
+-	}
+-
+-	config := &xicmp.Config{
+-		DGRAM: c.DGRAM,
+-		IPs:   c.IPs,
+-	}
+-
+-	return config, nil
+-}
+-
+-type Realm struct {
+-	Url         string     `json:"url"`
+-	StunServers []string   `json:"stunServers"`
+-	TlsConfig   *TLSConfig `json:"tlsConfig"`
+-}
+-
+-func (c *Realm) Build() (proto.Message, error) {
+-	var scheme, host, port, token, id string
+-	var stunServers []string
+-	var tlsConfig *tls.Config
+-
+-	u, err := url.Parse(c.Url)
+-	if err != nil {
+-		return nil, err
+-	}
+-
+-	switch u.Scheme {
+-	case "realm":
+-		scheme = "https"
+-	case "realm+http":
+-		scheme = "http"
+-	default:
+-		return nil, errors.New("invalid scheme", u.Scheme)
+-	}
+-
+-	host = u.Hostname()
+-	if host == "" {
+-		return nil, errors.New("invalid host", host)
+-	}
+-
+-	port = u.Port()
+-	if port == "" {
+-		port = "443"
+-		if scheme == "http" {
+-			port = "80"
+-		}
+-	}
+-
+-	token, err = url.PathUnescape(u.User.String())
+-	if err != nil {
+-		return nil, err
+-	}
+-	if token == "" {
+-		return nil, errors.New("invalid token", token)
+-	}
+-
+-	id, err = url.PathUnescape(strings.TrimPrefix(u.EscapedPath(), "/"))
+-	if err != nil {
+-		return nil, err
+-	}
+-	if id == "" {
+-		return nil, errors.New("invalid id", id)
+-	}
+-
+-	if len(c.StunServers) == 0 {
+-		return nil, errors.New("empty stunServers")
+-	}
+-
+-	for _, s := range c.StunServers {
+-		_, _, err = net.SplitHostPort(s)
+-		if err != nil {
+-			return nil, err
+-		}
+-	}
+-
+-	stunServers = c.StunServers
+-
+-	if c.TlsConfig != nil {
+-		tc, err := c.TlsConfig.Build()
+-		if err != nil {
+-			return nil, err
+-		}
+-		tlsConfig = tc.(*tls.Config)
+-	}
+-
+-	return &realm.Config{
+-		Scheme:      scheme,
+-		Host:        host,
+-		Port:        port,
+-		Token:       token,
+-		ID:          id,
+-		StunServers: stunServers,
+-		TlsConfig:   tlsConfig,
+-	}, nil
+-}
+-
+ type Mask struct {
+ 	Type     string           `json:"type"`
+ 	Settings *json.RawMessage `json:"settings"`
+diff --git a/infra/conf/transport_finalmask_full.go b/infra/conf/transport_finalmask_full.go
+new file mode 100644
+index 00000000..c17d3b26
+--- /dev/null
++++ b/infra/conf/transport_finalmask_full.go
+@@ -0,0 +1,884 @@
++//go:build !senko_trim
++
++package conf
++
++import (
++	"crypto/x509"
++	"encoding/base64"
++	"encoding/hex"
++	"encoding/json"
++	"fmt"
++	"net/netip"
++	"net/url"
++	"regexp"
++	"strings"
++
++	googleuuid "github.com/google/uuid"
++	"github.com/xtls/xray-core/common/errors"
++	"github.com/xtls/xray-core/common/net"
++	"github.com/xtls/xray-core/transport/internet/finalmask/fragment"
++	"github.com/xtls/xray-core/transport/internet/finalmask/header/custom"
++	"github.com/xtls/xray-core/transport/internet/finalmask/mkcp/aes128gcm"
++	"github.com/xtls/xray-core/transport/internet/finalmask/mkcp/header"
++	"github.com/xtls/xray-core/transport/internet/finalmask/mkcp/original"
++	"github.com/xtls/xray-core/transport/internet/finalmask/noise"
++	"github.com/xtls/xray-core/transport/internet/finalmask/realm"
++	"github.com/xtls/xray-core/transport/internet/finalmask/sudoku"
++	"github.com/xtls/xray-core/transport/internet/finalmask/xdns"
++	"github.com/xtls/xray-core/transport/internet/finalmask/xicmp"
++	"github.com/xtls/xray-core/transport/internet/finalmask/xmc"
++	"github.com/xtls/xray-core/transport/internet/tls"
++	"google.golang.org/protobuf/proto"
++)
++
++func PraseByteSlice(data json.RawMessage, typ string) ([]byte, error) {
++	switch strings.ToLower(typ) {
++	case "", "array":
++		if len(data) == 0 {
++			return data, nil
++		}
++		var packet []byte
++		if err := json.Unmarshal(data, &packet); err != nil {
++			return nil, err
++		}
++		return packet, nil
++	case "str":
++		var str string
++		if err := json.Unmarshal(data, &str); err != nil {
++			return nil, err
++		}
++		return []byte(str), nil
++	case "hex":
++		var str string
++		if err := json.Unmarshal(data, &str); err != nil {
++			return nil, err
++		}
++		return hex.DecodeString(str)
++	case "base64":
++		var str string
++		if err := json.Unmarshal(data, &str); err != nil {
++			return nil, err
++		}
++		return base64.StdEncoding.DecodeString(str)
++	default:
++		return nil, errors.New("unknown type")
++	}
++}
++
++var customVarNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
++
++func init() {
++	for id, creator := range map[string]ConfigCreator{
++		"header-custom": func() interface{} { return new(HeaderCustomTCP) },
++		"fragment":      func() interface{} { return new(FragmentMask) },
++		"sudoku":        func() interface{} { return new(Sudoku) },
++		"xmc":           func() interface{} { return new(XMC) },
++	} {
++		tcpmaskLoader.cache[id] = creator
++	}
++	for id, creator := range map[string]ConfigCreator{
++		"header-custom": func() interface{} { return new(HeaderCustomUDP) },
++		"mkcp-legacy":   func() interface{} { return new(MkcpLegacy) },
++		"noise":         func() interface{} { return new(NoiseMask) },
++		"sudoku":        func() interface{} { return new(Sudoku) },
++		"xdns":          func() interface{} { return new(Xdns) },
++		"xicmp":         func() interface{} { return new(Xicmp) },
++		"realm":         func() interface{} { return new(Realm) },
++	} {
++		udpmaskLoader.cache[id] = creator
++	}
++}
++
++type TCPItem struct {
++	Delay     Int32Range       `json:"delay"`
++	Rand      int32            `json:"rand"`
++	RandRange *Int32Range      `json:"randRange"`
++	Capture   string           `json:"capture"`
++	Type      string           `json:"type"`
++	Reuse     string           `json:"reuse"`
++	Transform *CustomTransform `json:"transform"`
++	Packet    json.RawMessage  `json:"packet"`
++}
++
++type HeaderCustomTCP struct {
++	Clients [][]TCPItem `json:"clients"`
++	Servers [][]TCPItem `json:"servers"`
++	Errors  [][]TCPItem `json:"errors"`
++}
++
++func (c *HeaderCustomTCP) Build() (proto.Message, error) {
++	for _, value := range c.Clients {
++		for _, item := range value {
++			if err := validateCustomItemSpec(item.Capture, item.Packet, item.Rand, item.Reuse, item.Transform); err != nil {
++				return nil, err
++			}
++		}
++	}
++	for _, value := range c.Servers {
++		for _, item := range value {
++			if err := validateCustomItemSpec(item.Capture, item.Packet, item.Rand, item.Reuse, item.Transform); err != nil {
++				return nil, err
++			}
++		}
++	}
++	for _, value := range c.Errors {
++		for _, item := range value {
++			if err := validateCustomItemSpec(item.Capture, item.Packet, item.Rand, item.Reuse, item.Transform); err != nil {
++				return nil, err
++			}
++		}
++	}
++
++	errInvalidRange := errors.New("invalid randRange")
++
++	clients := make([]*custom.TCPSequence, len(c.Clients))
++	for i, value := range c.Clients {
++		clients[i] = &custom.TCPSequence{}
++		for _, item := range value {
++			if item.RandRange == nil {
++				item.RandRange = &Int32Range{From: 0, To: 255}
++			}
++			if item.RandRange.From < 0 || item.RandRange.To > 255 {
++				return nil, errInvalidRange
++			}
++			var err error
++			if item.Packet, err = PraseByteSlice(item.Packet, item.Type); err != nil {
++				return nil, err
++			}
++			transform, err := buildCustomTransform(item.Transform)
++			if err != nil {
++				return nil, err
++			}
++			clients[i].Sequence = append(clients[i].Sequence, &custom.TCPItem{
++				DelayMin: int64(item.Delay.From),
++				DelayMax: int64(item.Delay.To),
++				Rand:     item.Rand,
++				RandMin:  item.RandRange.From,
++				RandMax:  item.RandRange.To,
++				Packet:   item.Packet,
++				Save:     item.Capture,
++				Var:      item.Reuse,
++				Expr:     transform,
++			})
++		}
++	}
++
++	servers := make([]*custom.TCPSequence, len(c.Servers))
++	for i, value := range c.Servers {
++		servers[i] = &custom.TCPSequence{}
++		for _, item := range value {
++			if item.RandRange == nil {
++				item.RandRange = &Int32Range{From: 0, To: 255}
++			}
++			if item.RandRange.From < 0 || item.RandRange.To > 255 {
++				return nil, errInvalidRange
++			}
++			var err error
++			if item.Packet, err = PraseByteSlice(item.Packet, item.Type); err != nil {
++				return nil, err
++			}
++			transform, err := buildCustomTransform(item.Transform)
++			if err != nil {
++				return nil, err
++			}
++			servers[i].Sequence = append(servers[i].Sequence, &custom.TCPItem{
++				DelayMin: int64(item.Delay.From),
++				DelayMax: int64(item.Delay.To),
++				Rand:     item.Rand,
++				RandMin:  item.RandRange.From,
++				RandMax:  item.RandRange.To,
++				Packet:   item.Packet,
++				Save:     item.Capture,
++				Var:      item.Reuse,
++				Expr:     transform,
++			})
++		}
++	}
++
++	errors := make([]*custom.TCPSequence, len(c.Errors))
++	for i, value := range c.Errors {
++		errors[i] = &custom.TCPSequence{}
++		for _, item := range value {
++			if item.RandRange == nil {
++				item.RandRange = &Int32Range{From: 0, To: 255}
++			}
++			if item.RandRange.From < 0 || item.RandRange.To > 255 {
++				return nil, errInvalidRange
++			}
++			var err error
++			if item.Packet, err = PraseByteSlice(item.Packet, item.Type); err != nil {
++				return nil, err
++			}
++			transform, err := buildCustomTransform(item.Transform)
++			if err != nil {
++				return nil, err
++			}
++			errors[i].Sequence = append(errors[i].Sequence, &custom.TCPItem{
++				DelayMin: int64(item.Delay.From),
++				DelayMax: int64(item.Delay.To),
++				Rand:     item.Rand,
++				RandMin:  item.RandRange.From,
++				RandMax:  item.RandRange.To,
++				Packet:   item.Packet,
++				Save:     item.Capture,
++				Var:      item.Reuse,
++				Expr:     transform,
++			})
++		}
++	}
++
++	return &custom.TCPConfig{
++		Clients: clients,
++		Servers: servers,
++		Errors:  errors,
++	}, nil
++}
++
++type FragmentMask struct {
++	Packets  string       `json:"packets"`
++	Length   Int32Range   `json:"length"`
++	Delay    Int32Range   `json:"delay"`
++	Lengths  []Int32Range `json:"lengths"`
++	Delays   []Int32Range `json:"delays"`
++	MaxSplit Int32Range   `json:"maxSplit"`
++}
++
++func (c *FragmentMask) Build() (proto.Message, error) {
++	config := &fragment.Config{}
++
++	switch strings.ToLower(c.Packets) {
++	case "tlshello":
++		config.PacketsFrom = 0
++		config.PacketsTo = 1
++	case "":
++		config.PacketsFrom = 0
++		config.PacketsTo = 0
++	default:
++		from, to, err := ParseRangeString(c.Packets)
++		if err != nil {
++			return nil, errors.New("Invalid PacketsFrom").Base(err)
++		}
++		config.PacketsFrom = int64(from)
++		config.PacketsTo = int64(to)
++		if config.PacketsFrom == 0 {
++			return nil, errors.New("PacketsFrom can't be 0")
++		}
++	}
++
++	if len(c.Lengths) > 0 {
++		for _, r := range c.Lengths {
++			config.LengthsMin = append(config.LengthsMin, int64(r.From))
++			config.LengthsMax = append(config.LengthsMax, int64(r.To))
++		}
++	} else {
++		config.LengthsMin = append(config.LengthsMin, int64(c.Length.From))
++		config.LengthsMax = append(config.LengthsMax, int64(c.Length.To))
++	}
++
++	if config.LengthsMin[len(config.LengthsMin)-1] == 0 {
++		return nil, errors.New("last lengths entry min can't be 0")
++	}
++
++	if len(c.Delays) > 0 {
++		for _, r := range c.Delays {
++			config.DelaysMin = append(config.DelaysMin, int64(r.From))
++			config.DelaysMax = append(config.DelaysMax, int64(r.To))
++		}
++	} else {
++		config.DelaysMin = append(config.DelaysMin, int64(c.Delay.From))
++		config.DelaysMax = append(config.DelaysMax, int64(c.Delay.To))
++	}
++
++	config.MaxSplitMin = int64(c.MaxSplit.From)
++	config.MaxSplitMax = int64(c.MaxSplit.To)
++
++	return config, nil
++}
++
++type NoiseItem struct {
++	Rand      Int32Range      `json:"rand"`
++	RandRange *Int32Range     `json:"randRange"`
++	Type      string          `json:"type"`
++	Packet    json.RawMessage `json:"packet"`
++	Delay     Int32Range      `json:"delay"`
++}
++
++type NoiseMask struct {
++	Reset Int32Range  `json:"reset"`
++	Noise []NoiseItem `json:"noise"`
++}
++
++func (c *NoiseMask) Build() (proto.Message, error) {
++	for _, item := range c.Noise {
++		if len(item.Packet) > 0 && item.Rand.To > 0 {
++			return nil, errors.New("len(item.Packet) > 0 && item.Rand.To > 0")
++		}
++	}
++
++	noiseSlice := make([]*noise.Item, 0, len(c.Noise))
++	for _, item := range c.Noise {
++		if item.RandRange == nil {
++			item.RandRange = &Int32Range{From: 0, To: 255}
++		}
++		if item.RandRange.From < 0 || item.RandRange.To > 255 {
++			return nil, errors.New("invalid randRange")
++		}
++		var err error
++		if item.Packet, err = PraseByteSlice(item.Packet, item.Type); err != nil {
++			return nil, err
++		}
++		noiseSlice = append(noiseSlice, &noise.Item{
++			RandMin:      int64(item.Rand.From),
++			RandMax:      int64(item.Rand.To),
++			RandRangeMin: item.RandRange.From,
++			RandRangeMax: item.RandRange.To,
++			Packet:       item.Packet,
++			DelayMin:     int64(item.Delay.From),
++			DelayMax:     int64(item.Delay.To),
++		})
++	}
++
++	return &noise.Config{
++		ResetMin: int64(c.Reset.From),
++		ResetMax: int64(c.Reset.To),
++		Items:    noiseSlice,
++	}, nil
++}
++
++type UDPItem struct {
++	Rand      int32            `json:"rand"`
++	RandRange *Int32Range      `json:"randRange"`
++	Capture   string           `json:"capture"`
++	Type      string           `json:"type"`
++	Reuse     string           `json:"reuse"`
++	Transform *CustomTransform `json:"transform"`
++	Packet    json.RawMessage  `json:"packet"`
++}
++
++type CustomTransform struct {
++	Op   string               `json:"op"`
++	Args []CustomTransformArg `json:"args"`
++}
++
++type CustomTransformArg struct {
++	Type      string           `json:"type"`
++	Bytes     json.RawMessage  `json:"bytes"`
++	U64       *uint64          `json:"u64"`
++	Reuse     string           `json:"reuse"`
++	Metadata  string           `json:"metadata"`
++	Transform *CustomTransform `json:"transform"`
++}
++
++func validateCustomVarName(name string) error {
++	if name == "" {
++		return nil
++	}
++	if !customVarNamePattern.MatchString(name) {
++		return errors.New("invalid variable name")
++	}
++	return nil
++}
++
++func validateCustomItemSpec(capture string, packet json.RawMessage, rand int32, reuse string, transform *CustomTransform) error {
++	if err := validateCustomVarName(capture); err != nil {
++		return err
++	}
++	if err := validateCustomVarName(reuse); err != nil {
++		return err
++	}
++
++	kindCount := 0
++	if len(packet) > 0 {
++		kindCount++
++	}
++	if rand > 0 {
++		kindCount++
++	}
++	if reuse != "" {
++		kindCount++
++	}
++	if transform != nil {
++		kindCount++
++	}
++	if kindCount > 1 {
++		return errors.New("exactly one item kind must be set")
++	}
++	if kindCount == 0 && capture != "" {
++		return errors.New("exactly one item kind must be set")
++	}
++
++	return nil
++}
++
++func buildCustomTransform(transform *CustomTransform) (*custom.Expr, error) {
++	if transform == nil {
++		return nil, nil
++	}
++	if transform.Op == "" {
++		return nil, errors.New("transform op is required")
++	}
++	if len(transform.Args) == 0 {
++		return nil, errors.New("transform args are required")
++	}
++
++	args := make([]*custom.ExprArg, 0, len(transform.Args))
++	for _, arg := range transform.Args {
++		parsedArg, err := buildCustomTransformArg(arg)
++		if err != nil {
++			return nil, err
++		}
++		args = append(args, parsedArg)
++	}
++
++	return &custom.Expr{
++		Op:   transform.Op,
++		Args: args,
++	}, nil
++}
++
++func buildCustomTransformArg(arg CustomTransformArg) (*custom.ExprArg, error) {
++	kindCount := 0
++	if len(arg.Bytes) > 0 {
++		kindCount++
++	}
++	if arg.U64 != nil {
++		kindCount++
++	}
++	if arg.Reuse != "" {
++		kindCount++
++	}
++	if arg.Metadata != "" {
++		kindCount++
++	}
++	if arg.Transform != nil {
++		kindCount++
++	}
++	if kindCount != 1 {
++		return nil, errors.New("transform arg must set exactly one value")
++	}
++
++	if len(arg.Bytes) > 0 {
++		value, err := PraseByteSlice(arg.Bytes, arg.Type)
++		if err != nil {
++			return nil, err
++		}
++		return &custom.ExprArg{
++			Value: &custom.ExprArg_Bytes{
++				Bytes: value,
++			},
++		}, nil
++	}
++	if arg.U64 != nil {
++		return &custom.ExprArg{
++			Value: &custom.ExprArg_U64{
++				U64: *arg.U64,
++			},
++		}, nil
++	}
++	if arg.Reuse != "" {
++		if err := validateCustomVarName(arg.Reuse); err != nil {
++			return nil, err
++		}
++		return &custom.ExprArg{
++			Value: &custom.ExprArg_Var{
++				Var: arg.Reuse,
++			},
++		}, nil
++	}
++	if arg.Metadata != "" {
++		return &custom.ExprArg{
++			Value: &custom.ExprArg_Metadata{
++				Metadata: arg.Metadata,
++			},
++		}, nil
++	}
++
++	parsedExpr, err := buildCustomTransform(arg.Transform)
++	if err != nil {
++		return nil, err
++	}
++	return &custom.ExprArg{
++		Value: &custom.ExprArg_Expr{
++			Expr: parsedExpr,
++		},
++	}, nil
++}
++
++type HeaderCustomUDP struct {
++	Mode   string    `json:"mode"`
++	Client []UDPItem `json:"client"`
++	Server []UDPItem `json:"server"`
++}
++
++func (c *HeaderCustomUDP) Build() (proto.Message, error) {
++	switch c.Mode {
++	case "", "prefix", "standalone":
++	default:
++		return nil, errors.New("unknown udp mode")
++	}
++
++	for _, item := range c.Client {
++		if err := validateCustomItemSpec(item.Capture, item.Packet, item.Rand, item.Reuse, item.Transform); err != nil {
++			return nil, err
++		}
++	}
++	for _, item := range c.Server {
++		if err := validateCustomItemSpec(item.Capture, item.Packet, item.Rand, item.Reuse, item.Transform); err != nil {
++			return nil, err
++		}
++	}
++
++	client := make([]*custom.UDPItem, 0, len(c.Client))
++	for _, item := range c.Client {
++		if item.RandRange == nil {
++			item.RandRange = &Int32Range{From: 0, To: 255}
++		}
++		if item.RandRange.From < 0 || item.RandRange.To > 255 {
++			return nil, errors.New("invalid randRange")
++		}
++		var err error
++		if item.Packet, err = PraseByteSlice(item.Packet, item.Type); err != nil {
++			return nil, err
++		}
++		transform, err := buildCustomTransform(item.Transform)
++		if err != nil {
++			return nil, err
++		}
++		client = append(client, &custom.UDPItem{
++			Rand:    item.Rand,
++			RandMin: item.RandRange.From,
++			RandMax: item.RandRange.To,
++			Packet:  item.Packet,
++			Save:    item.Capture,
++			Var:     item.Reuse,
++			Expr:    transform,
++		})
++	}
++
++	server := make([]*custom.UDPItem, 0, len(c.Server))
++	for _, item := range c.Server {
++		if item.RandRange == nil {
++			item.RandRange = &Int32Range{From: 0, To: 255}
++		}
++		if item.RandRange.From < 0 || item.RandRange.To > 255 {
++			return nil, errors.New("invalid randRange")
++		}
++		var err error
++		if item.Packet, err = PraseByteSlice(item.Packet, item.Type); err != nil {
++			return nil, err
++		}
++		transform, err := buildCustomTransform(item.Transform)
++		if err != nil {
++			return nil, err
++		}
++		server = append(server, &custom.UDPItem{
++			Rand:    item.Rand,
++			RandMin: item.RandRange.From,
++			RandMax: item.RandRange.To,
++			Packet:  item.Packet,
++			Save:    item.Capture,
++			Var:     item.Reuse,
++			Expr:    transform,
++		})
++	}
++
++	if c.Mode == "standalone" {
++		return &custom.UDPStandaloneConfig{
++			Client: client,
++			Server: server,
++		}, nil
++	} else {
++		return &custom.UDPConfig{
++			Client: client,
++			Server: server,
++		}, nil
++	}
++}
++
++type MkcpLegacy struct {
++	Header string `json:"header"`
++	Value  string `json:"value"`
++}
++
++func (c *MkcpLegacy) Build() (proto.Message, error) {
++	if len(c.Header) == 0 {
++		if len(c.Value) == 0 {
++			return &original.Config{}, nil
++		} else {
++			return &aes128gcm.Config{Password: c.Value}, nil
++		}
++	}
++	switch strings.ToLower(c.Header) {
++	case "dns":
++		domain := c.Value
++		if len(domain) == 0 {
++			domain = "www.baidu.com"
++		}
++		return &header.Config{ID: 0, Domain: domain}, nil
++	case "dtls":
++		return &header.Config{ID: 1}, nil
++	case "srtp":
++		return &header.Config{ID: 2}, nil
++	case "utp":
++		return &header.Config{ID: 3}, nil
++	case "wechat":
++		return &header.Config{ID: 4}, nil
++	case "wireguard":
++		return &header.Config{ID: 5}, nil
++	default:
++		return nil, errors.New("invalid header ", c.Header)
++	}
++}
++
++type Sudoku struct {
++	Password string `json:"password"`
++	ASCII    string `json:"ascii"`
++
++	CustomTable       string   `json:"customTable"`
++	LegacyCustomTable string   `json:"custom_table"`
++	CustomTables      []string `json:"customTables"`
++	LegacyCustomSets  []string `json:"custom_tables"`
++
++	PaddingMin       uint32 `json:"paddingMin"`
++	LegacyPaddingMin uint32 `json:"padding_min"`
++	PaddingMax       uint32 `json:"paddingMax"`
++	LegacyPaddingMax uint32 `json:"padding_max"`
++}
++
++func (c *Sudoku) Build() (proto.Message, error) {
++	customTable := c.CustomTable
++	if customTable == "" {
++		customTable = c.LegacyCustomTable
++	}
++	customTables := c.CustomTables
++	if len(customTables) == 0 {
++		customTables = c.LegacyCustomSets
++	}
++
++	paddingMin := c.PaddingMin
++	if paddingMin == 0 {
++		paddingMin = c.LegacyPaddingMin
++	}
++	paddingMax := c.PaddingMax
++	if paddingMax == 0 {
++		paddingMax = c.LegacyPaddingMax
++	}
++
++	return &sudoku.Config{
++		Password:     c.Password,
++		Ascii:        c.ASCII,
++		CustomTable:  customTable,
++		CustomTables: customTables,
++		PaddingMin:   paddingMin,
++		PaddingMax:   paddingMax,
++	}, nil
++}
++
++type Xdns struct {
++	Domain json.RawMessage `json:"domain"`
++
++	Domains   []string `json:"domains"`
++	Resolvers []string `json:"resolvers"`
++}
++
++func (c *Xdns) Build() (proto.Message, error) {
++	if c.Domain != nil {
++		return nil, errors.PrintRemovedFeatureError("domain", "domains(server) & resolvers(client)")
++	}
++
++	if len(c.Domains) == 0 && len(c.Resolvers) == 0 {
++		return nil, errors.New("empty domains & empty resolvers")
++	}
++
++	for _, r := range c.Resolvers {
++		if !strings.Contains(r, "+udp://") {
++			return nil, errors.New("invalid resolver ", r)
++		}
++	}
++
++	return &xdns.Config{
++		Domains:   c.Domains,
++		Resolvers: c.Resolvers,
++	}, nil
++}
++
++type XMC struct {
++	Hostname string       `json:"hostname"`
++	Profiles []XMCProfile `json:"profiles"`
++	Password string       `json:"password"`
++}
++
++type XMCProfile struct {
++	// Resolve the UUID by username, then request the session profile with
++	// unsigned=false. Client and server must use the same signed profile.
++	Username          string `json:"username"`
++	UUID              string `json:"uuid"`
++	TexturesValue     string `json:"texturesValue"`
++	TexturesSignature string `json:"texturesSignature"`
++}
++
++var xmcUsernamePattern = regexp.MustCompile(`^[A-Za-z0-9_]{3,16}$`)
++
++func (c *XMCProfile) Build() (*xmc.Profile, error) {
++	if !xmcUsernamePattern.MatchString(c.Username) {
++		return nil, fmt.Errorf("invalid minecraft profile username: %q", c.Username)
++	}
++
++	profileUUID, err := googleuuid.Parse(c.UUID)
++	if err != nil {
++		return nil, fmt.Errorf("invalid minecraft profile UUID: %w", err)
++	}
++	if c.TexturesValue == "" || c.TexturesSignature == "" {
++		return nil, fmt.Errorf("incomplete minecraft profile textures")
++	}
++
++	return &xmc.Profile{
++		Username:          c.Username,
++		Uuid:              append([]byte(nil), profileUUID[:]...),
++		TexturesValue:     c.TexturesValue,
++		TexturesSignature: c.TexturesSignature,
++	}, nil
++}
++
++func (c *XMC) Build() (proto.Message, error) {
++	if len(c.Profiles) == 0 {
++		return nil, fmt.Errorf("minecraft profiles are required")
++	}
++
++	if c.Password == "" {
++		return nil, fmt.Errorf("empty password")
++	}
++
++	rsaPrivateKey, err := xmc.DeriveRSAKey(c.Password)
++	if err != nil {
++		return nil, fmt.Errorf("derive minecraft rsa key: %w", err)
++	}
++
++	rsaPublicKey, err := x509.MarshalPKIXPublicKey(&rsaPrivateKey.PublicKey)
++	if err != nil {
++		return nil, fmt.Errorf("marshal minecraft rsa public key: %w", err)
++	}
++
++	profiles := make([]*xmc.Profile, 0, len(c.Profiles))
++	for i := range c.Profiles {
++		profile, err := c.Profiles[i].Build()
++		if err != nil {
++			return nil, fmt.Errorf("build minecraft profile %d: %w", i, err)
++		}
++		profiles = append(profiles, profile)
++	}
++
++	return &xmc.Config{
++		Password:      c.Password,
++		Hostname:      c.Hostname,
++		RsaPrivateKey: x509.MarshalPKCS1PrivateKey(rsaPrivateKey),
++		RsaPublicKey:  rsaPublicKey,
++		Profiles:      profiles,
++	}, nil
++}
++
++type Xicmp struct {
++	DGRAM bool     `json:"dgram"`
++	IPs   []string `json:"ips"`
++}
++
++func (c *Xicmp) Build() (proto.Message, error) {
++	for _, ip := range c.IPs {
++		if _, err := netip.ParseAddr(ip); err != nil {
++			return nil, err
++		}
++	}
++
++	config := &xicmp.Config{
++		DGRAM: c.DGRAM,
++		IPs:   c.IPs,
++	}
++
++	return config, nil
++}
++
++type Realm struct {
++	Url         string     `json:"url"`
++	StunServers []string   `json:"stunServers"`
++	TlsConfig   *TLSConfig `json:"tlsConfig"`
++}
++
++func (c *Realm) Build() (proto.Message, error) {
++	var scheme, host, port, token, id string
++	var stunServers []string
++	var tlsConfig *tls.Config
++
++	u, err := url.Parse(c.Url)
++	if err != nil {
++		return nil, err
++	}
++
++	switch u.Scheme {
++	case "realm":
++		scheme = "https"
++	case "realm+http":
++		scheme = "http"
++	default:
++		return nil, errors.New("invalid scheme", u.Scheme)
++	}
++
++	host = u.Hostname()
++	if host == "" {
++		return nil, errors.New("invalid host", host)
++	}
++
++	port = u.Port()
++	if port == "" {
++		port = "443"
++		if scheme == "http" {
++			port = "80"
++		}
++	}
++
++	token, err = url.PathUnescape(u.User.String())
++	if err != nil {
++		return nil, err
++	}
++	if token == "" {
++		return nil, errors.New("invalid token", token)
++	}
++
++	id, err = url.PathUnescape(strings.TrimPrefix(u.EscapedPath(), "/"))
++	if err != nil {
++		return nil, err
++	}
++	if id == "" {
++		return nil, errors.New("invalid id", id)
++	}
++
++	if len(c.StunServers) == 0 {
++		return nil, errors.New("empty stunServers")
++	}
++
++	for _, s := range c.StunServers {
++		_, _, err = net.SplitHostPort(s)
++		if err != nil {
++			return nil, err
++		}
++	}
++
++	stunServers = c.StunServers
++
++	if c.TlsConfig != nil {
++		tc, err := c.TlsConfig.Build()
++		if err != nil {
++			return nil, err
++		}
++		tlsConfig = tc.(*tls.Config)
++	}
++
++	return &realm.Config{
++		Scheme:      scheme,
++		Host:        host,
++		Port:        port,
++		Token:       token,
++		ID:          id,
++		StunServers: stunServers,
++		TlsConfig:   tlsConfig,
++	}, nil
++}
+diff --git a/infra/conf/transport_method.go b/infra/conf/transport_method.go
+index 19cb496e..f55f7096 100644
+--- a/infra/conf/transport_method.go
++++ b/infra/conf/transport_method.go
+@@ -9,18 +9,14 @@ import (
+ 	"strconv"
+ 	"strings"
+ 
+-	"github.com/xtls/xray-core/common"
+ 	"github.com/xtls/xray-core/common/errors"
+ 	"github.com/xtls/xray-core/common/platform/filesystem"
+ 	"github.com/xtls/xray-core/common/serial"
+ 	"github.com/xtls/xray-core/common/utils"
+-	"github.com/xtls/xray-core/transport/internet"
+ 	"github.com/xtls/xray-core/transport/internet/grpc"
+ 	"github.com/xtls/xray-core/transport/internet/headers/http"
+ 	"github.com/xtls/xray-core/transport/internet/headers/noop"
+-	"github.com/xtls/xray-core/transport/internet/httpupgrade"
+ 	"github.com/xtls/xray-core/transport/internet/hysteria"
+-	"github.com/xtls/xray-core/transport/internet/kcp"
+ 	"github.com/xtls/xray-core/transport/internet/splithttp"
+ 	"github.com/xtls/xray-core/transport/internet/tcp"
+ 	"github.com/xtls/xray-core/transport/internet/websocket"
+@@ -520,61 +516,6 @@ func roomSize(tableSize int, min, max int32) *big.Int {
+ 	return sum
+ }
+ 
+-type KCPConfig struct {
+-	Mtu              *uint32 `json:"mtu"`
+-	Tti              *uint32 `json:"tti"`
+-	UpCap            *uint32 `json:"uplinkCapacity"`
+-	DownCap          *uint32 `json:"downlinkCapacity"`
+-	CwndMultiplier   *uint32 `json:"cwndMultiplier"`
+-	MaxSendingWindow *uint32 `json:"maxSendingWindow"`
+-
+-	HeaderConfig json.RawMessage `json:"header"`
+-	Seed         *string         `json:"seed"`
+-}
+-
+-// Build implements Buildable.
+-func (c *KCPConfig) Build() (proto.Message, error) {
+-	if c.HeaderConfig != nil || c.Seed != nil {
+-		return nil, errors.PrintRemovedFeatureError("mkcp header & seed", "finalmask/udp header-* & mkcp-original & mkcp-aes128gcm")
+-	}
+-
+-	config := common.Must2(internet.CreateTransportConfig(kcp.ProtocolName)).(*kcp.Config)
+-
+-	if c.Mtu != nil {
+-		config.Mtu = *c.Mtu
+-	}
+-	if c.Tti != nil {
+-		config.Tti = *c.Tti
+-	}
+-	if c.UpCap != nil {
+-		config.UplinkCapacity = *c.UpCap
+-	}
+-	if c.DownCap != nil {
+-		config.DownlinkCapacity = *c.DownCap
+-	}
+-	if c.CwndMultiplier != nil {
+-		config.CwndMultiplier = *c.CwndMultiplier
+-	}
+-	if c.MaxSendingWindow != nil {
+-		config.MaxSendingWindow = *c.MaxSendingWindow
+-	}
+-
+-	if config.Mtu < 21 {
+-		return nil, errors.New("Mtu must be at least 21").AtError()
+-	}
+-	if config.Tti < 10 || config.Tti > 1000 {
+-		return nil, errors.New("invalid mKCP TTI: ", c.Tti).AtError()
+-	}
+-	if config.CwndMultiplier < 1 {
+-		return nil, errors.New("CwndMultiplier must be at least 1").AtError()
+-	}
+-	if config.GetSendingBufferSize() == 0 {
+-		return nil, errors.New("MaxSendingWindow must be >= Mtu").AtError()
+-	}
+-
+-	return config, nil
+-}
+-
+ type GRPCConfig struct {
+ 	Authority           string `json:"authority"`
+ 	ServiceName         string `json:"serviceName"`
+@@ -652,42 +593,6 @@ func (c *WebSocketConfig) Build() (proto.Message, error) {
+ 	return config, nil
+ }
+ 
+-type HttpUpgradeConfig struct {
+-	Host                string            `json:"host"`
+-	Path                string            `json:"path"`
+-	Headers             map[string]string `json:"headers"`
+-	AcceptProxyProtocol bool              `json:"acceptProxyProtocol"`
+-}
+-
+-// Build implements Buildable.
+-func (c *HttpUpgradeConfig) Build() (proto.Message, error) {
+-	path := c.Path
+-	var ed uint32
+-	if u, err := url.Parse(path); err == nil {
+-		if q := u.Query(); q.Get("ed") != "" {
+-			Ed, _ := strconv.Atoi(q.Get("ed"))
+-			ed = uint32(Ed)
+-			q.Del("ed")
+-			u.RawQuery = q.Encode()
+-			path = u.String()
+-		}
+-	}
+-	// Priority (client): host > serverName > address
+-	for k := range c.Headers {
+-		if strings.ToLower(k) == "host" {
+-			return nil, errors.New(`"headers" can't contain "host"`)
+-		}
+-	}
+-	config := &httpupgrade.Config{
+-		Path:                path,
+-		Host:                c.Host,
+-		Header:              c.Headers,
+-		AcceptProxyProtocol: c.AcceptProxyProtocol,
+-		Ed:                  ed,
+-	}
+-	return config, nil
+-}
+-
+ const (
+ 	Byte     = 1
+ 	Kilobyte = 1024 * Byte
+diff --git a/infra/conf/transport_method_full.go b/infra/conf/transport_method_full.go
+new file mode 100644
+index 00000000..fa4c7c2c
+--- /dev/null
++++ b/infra/conf/transport_method_full.go
+@@ -0,0 +1,108 @@
++//go:build !senko_trim
++
++package conf
++
++import (
++	"encoding/json"
++	"net/url"
++	"strconv"
++	"strings"
++
++	"github.com/xtls/xray-core/common"
++	"github.com/xtls/xray-core/common/errors"
++	"github.com/xtls/xray-core/transport/internet"
++	"github.com/xtls/xray-core/transport/internet/httpupgrade"
++	"github.com/xtls/xray-core/transport/internet/kcp"
++	"google.golang.org/protobuf/proto"
++)
++
++type KCPConfig struct {
++	Mtu              *uint32 `json:"mtu"`
++	Tti              *uint32 `json:"tti"`
++	UpCap            *uint32 `json:"uplinkCapacity"`
++	DownCap          *uint32 `json:"downlinkCapacity"`
++	CwndMultiplier   *uint32 `json:"cwndMultiplier"`
++	MaxSendingWindow *uint32 `json:"maxSendingWindow"`
++
++	HeaderConfig json.RawMessage `json:"header"`
++	Seed         *string         `json:"seed"`
++}
++
++// Build implements Buildable.
++func (c *KCPConfig) Build() (proto.Message, error) {
++	if c.HeaderConfig != nil || c.Seed != nil {
++		return nil, errors.PrintRemovedFeatureError("mkcp header & seed", "finalmask/udp header-* & mkcp-original & mkcp-aes128gcm")
++	}
++
++	config := common.Must2(internet.CreateTransportConfig(kcp.ProtocolName)).(*kcp.Config)
++
++	if c.Mtu != nil {
++		config.Mtu = *c.Mtu
++	}
++	if c.Tti != nil {
++		config.Tti = *c.Tti
++	}
++	if c.UpCap != nil {
++		config.UplinkCapacity = *c.UpCap
++	}
++	if c.DownCap != nil {
++		config.DownlinkCapacity = *c.DownCap
++	}
++	if c.CwndMultiplier != nil {
++		config.CwndMultiplier = *c.CwndMultiplier
++	}
++	if c.MaxSendingWindow != nil {
++		config.MaxSendingWindow = *c.MaxSendingWindow
++	}
++
++	if config.Mtu < 21 {
++		return nil, errors.New("Mtu must be at least 21").AtError()
++	}
++	if config.Tti < 10 || config.Tti > 1000 {
++		return nil, errors.New("invalid mKCP TTI: ", c.Tti).AtError()
++	}
++	if config.CwndMultiplier < 1 {
++		return nil, errors.New("CwndMultiplier must be at least 1").AtError()
++	}
++	if config.GetSendingBufferSize() == 0 {
++		return nil, errors.New("MaxSendingWindow must be >= Mtu").AtError()
++	}
++
++	return config, nil
++}
++
++type HttpUpgradeConfig struct {
++	Host                string            `json:"host"`
++	Path                string            `json:"path"`
++	Headers             map[string]string `json:"headers"`
++	AcceptProxyProtocol bool              `json:"acceptProxyProtocol"`
++}
++
++// Build implements Buildable.
++func (c *HttpUpgradeConfig) Build() (proto.Message, error) {
++	path := c.Path
++	var ed uint32
++	if u, err := url.Parse(path); err == nil {
++		if q := u.Query(); q.Get("ed") != "" {
++			Ed, _ := strconv.Atoi(q.Get("ed"))
++			ed = uint32(Ed)
++			q.Del("ed")
++			u.RawQuery = q.Encode()
++			path = u.String()
++		}
++	}
++	// Priority (client): host > serverName > address
++	for k := range c.Headers {
++		if strings.ToLower(k) == "host" {
++			return nil, errors.New(`"headers" can't contain "host"`)
++		}
++	}
++	config := &httpupgrade.Config{
++		Path:                path,
++		Host:                c.Host,
++		Header:              c.Headers,
++		AcceptProxyProtocol: c.AcceptProxyProtocol,
++		Ed:                  ed,
++	}
++	return config, nil
++}
+diff --git a/infra/conf/version.go b/infra/conf/version.go
+index 3cbe9215..d361b566 100644
+--- a/infra/conf/version.go
++++ b/infra/conf/version.go
+@@ -1,3 +1,5 @@
++//go:build !senko_trim
++
+ package conf
+ 
+ import (
+diff --git a/infra/conf/vmess.go b/infra/conf/vmess.go
+index 6ff27469..a1c5a865 100644
+--- a/infra/conf/vmess.go
++++ b/infra/conf/vmess.go
+@@ -1,3 +1,5 @@
++//go:build !senko_trim
++
+ package conf
+ 
+ import (
+diff --git a/infra/conf/wireguard.go b/infra/conf/wireguard.go
+index 8131be28..a0701962 100644
+--- a/infra/conf/wireguard.go
++++ b/infra/conf/wireguard.go
+@@ -1,3 +1,5 @@
++//go:build !senko_trim
++
+ package conf
+ 
+ import (
+diff --git a/infra/conf/xray.go b/infra/conf/xray.go
+index bdcabbd5..64c29a00 100644
+--- a/infra/conf/xray.go
++++ b/infra/conf/xray.go
+@@ -20,38 +20,36 @@ import (
+ 
+ var (
+ 	inboundConfigLoader = NewJSONConfigLoader(ConfigCreatorCache{
+-		"tunnel":        func() interface{} { return new(DokodemoConfig) },
+-		"dokodemo-door": func() interface{} { return new(DokodemoConfig) },
+-		"http":          func() interface{} { return new(HTTPServerConfig) },
+-		"shadowsocks":   func() interface{} { return new(ShadowsocksServerConfig) },
+-		"mixed":         func() interface{} { return new(SocksServerConfig) },
+-		"socks":         func() interface{} { return new(SocksServerConfig) },
+-		"vless":         func() interface{} { return new(VLessInboundConfig) },
+-		"vmess":         func() interface{} { return new(VMessInboundConfig) },
+-		"trojan":        func() interface{} { return new(TrojanServerConfig) },
+-		"wireguard":     func() interface{} { return &WireGuardConfig{IsClient: false} },
+-		"hysteria":      func() interface{} { return new(HysteriaServerConfig) },
+-		"tun":           func() interface{} { return new(TunConfig) },
++		"http":        func() interface{} { return new(HTTPServerConfig) },
++		"shadowsocks": func() interface{} { return new(ShadowsocksServerConfig) },
++		"mixed":       func() interface{} { return new(SocksServerConfig) },
++		"socks":       func() interface{} { return new(SocksServerConfig) },
++		"vless":       func() interface{} { return new(VLessInboundConfig) },
++		"trojan":      func() interface{} { return new(TrojanServerConfig) },
++		"hysteria":    func() interface{} { return new(HysteriaServerConfig) },
++		"tun":         func() interface{} { return new(TunConfig) },
+ 	}, "protocol", "settings")
+ 
+ 	outboundConfigLoader = NewJSONConfigLoader(ConfigCreatorCache{
+ 		"block":       func() interface{} { return new(BlackholeConfig) },
+ 		"blackhole":   func() interface{} { return new(BlackholeConfig) },
+-		"loopback":    func() interface{} { return new(LoopbackConfig) },
+ 		"direct":      func() interface{} { return new(FreedomConfig) },
+ 		"freedom":     func() interface{} { return new(FreedomConfig) },
+ 		"http":        func() interface{} { return new(HTTPClientConfig) },
+ 		"shadowsocks": func() interface{} { return new(ShadowsocksClientConfig) },
+ 		"socks":       func() interface{} { return new(SocksClientConfig) },
+ 		"vless":       func() interface{} { return new(VLessOutboundConfig) },
+-		"vmess":       func() interface{} { return new(VMessOutboundConfig) },
+ 		"trojan":      func() interface{} { return new(TrojanClientConfig) },
+ 		"hysteria":    func() interface{} { return new(HysteriaClientConfig) },
+-		"dns":         func() interface{} { return new(DNSOutboundConfig) },
+-		"wireguard":   func() interface{} { return &WireGuardConfig{IsClient: true} },
+ 	}, "protocol", "settings")
+ )
+ 
++// originalDestinationReceiver is an inbound config that can ask for the
++// pre-redirect destination (dokodemo-door with followRedirect)
++type originalDestinationReceiver interface {
++	receiveOriginalDestination() bool
++}
++
+ type SniffingConfig struct {
+ 	Enabled         bool       `json:"enabled"`
+ 	DestOverride    StringList `json:"destOverride"`
+@@ -195,8 +193,8 @@ func (c *InboundDetourConfig) Build() (*core.InboundHandlerConfig, error) {
+ 	if err != nil {
+ 		return nil, errors.New("failed to load inbound detour config for protocol ", c.Protocol).Base(err)
+ 	}
+-	if dokodemoConfig, ok := rawConfig.(*DokodemoConfig); ok {
+-		receiverSettings.ReceiveOriginalDestination = dokodemoConfig.FollowRedirect
++	if redirect, ok := rawConfig.(originalDestinationReceiver); ok {
++		receiverSettings.ReceiveOriginalDestination = redirect.receiveOriginalDestination()
+ 	}
+ 	ts, err := rawConfig.(Buildable).Build()
+ 	if err != nil {
+diff --git a/infra/conf/xray_full.go b/infra/conf/xray_full.go
+new file mode 100644
+index 00000000..79553f31
+--- /dev/null
++++ b/infra/conf/xray_full.go
+@@ -0,0 +1,24 @@
++//go:build !senko_trim
++
++package conf
++
++// the protocols a senko_trim build leaves out; a full build registers them
++// here so the loaders in xray.go keep their upstream behaviour
++func init() {
++	for id, creator := range map[string]ConfigCreator{
++		"tunnel":        func() interface{} { return new(DokodemoConfig) },
++		"dokodemo-door": func() interface{} { return new(DokodemoConfig) },
++		"vmess":         func() interface{} { return new(VMessInboundConfig) },
++		"wireguard":     func() interface{} { return &WireGuardConfig{IsClient: false} },
++	} {
++		inboundConfigLoader.cache[id] = creator
++	}
++	for id, creator := range map[string]ConfigCreator{
++		"loopback":  func() interface{} { return new(LoopbackConfig) },
++		"vmess":     func() interface{} { return new(VMessOutboundConfig) },
++		"dns":       func() interface{} { return new(DNSOutboundConfig) },
++		"wireguard": func() interface{} { return &WireGuardConfig{IsClient: true} },
++	} {
++		outboundConfigLoader.cache[id] = creator
++	}
++}
+diff --git a/infra/conf/xray_trim.go b/infra/conf/xray_trim.go
+new file mode 100644
+index 00000000..f6f7037b
+--- /dev/null
++++ b/infra/conf/xray_trim.go
+@@ -0,0 +1,76 @@
++//go:build senko_trim
++
++package conf
++
++import (
++	"github.com/xtls/xray-core/common/errors"
++	"google.golang.org/protobuf/proto"
++)
++
++// senko_trim builds carry only what senko's generated config uses
++// (daemon/senko_core_config.c). a config that still names one of these
++// top level sections fails to build instead of starting without it
++
++func errTrimmed(section string) error {
++	return errors.New(`"`, section, `" is not built into senko-core`)
++}
++
++type DNSConfig struct{}
++
++func (*DNSConfig) Build() (proto.Message, error) { return nil, errTrimmed("dns") }
++
++type APIConfig struct{}
++
++func (*APIConfig) Build() (proto.Message, error) { return nil, errTrimmed("api") }
++
++type MetricsConfig struct{}
++
++func (*MetricsConfig) Build() (proto.Message, error) { return nil, errTrimmed("metrics") }
++
++type ReverseConfig struct{}
++
++func (*ReverseConfig) Build() (proto.Message, error) { return nil, errTrimmed("reverse") }
++
++type FakeDNSConfig struct{}
++
++func (*FakeDNSConfig) Build() (proto.Message, error) { return nil, errTrimmed("fakeDns") }
++
++type ObservatoryConfig struct{}
++
++func (*ObservatoryConfig) Build() (proto.Message, error) { return nil, errTrimmed("observatory") }
++
++type BurstObservatoryConfig struct{}
++
++func (*BurstObservatoryConfig) Build() (proto.Message, error) {
++	return nil, errTrimmed("burstObservatory")
++}
++
++type VersionConfig struct{}
++
++func (*VersionConfig) Build() (proto.Message, error) { return nil, errTrimmed("version") }
++
++type GeodataConfig struct{}
++
++func (*GeodataConfig) Build() (proto.Message, error) { return nil, errTrimmed("geodata") }
++
++type KCPConfig struct{}
++
++func (*KCPConfig) Build() (proto.Message, error) { return nil, errTrimmed("kcpSettings") }
++
++type HttpUpgradeConfig struct{}
++
++func (*HttpUpgradeConfig) Build() (proto.Message, error) {
++	return nil, errTrimmed("httpupgradeSettings")
++}
++
++// senkod only hands senko-core aes-gcm and chacha20 shadowsocks nodes; a 2022
++// cipher falls through to cipherFromString, which rejects it by name
++func isShadowsocks2022(string) bool { return false }
++
++func buildShadowsocks2022(*ShadowsocksServerConfig) (proto.Message, error) {
++	return nil, errTrimmed("shadowsocks 2022")
++}
++
++func buildShadowsocks2022Client(*ShadowsocksServerTarget) (proto.Message, error) {
++	return nil, errTrimmed("shadowsocks 2022")
++}
+diff --git a/transport/internet/tls/ech.go b/transport/internet/tls/ech.go
+index b9b7deb2..0019f564 100644
+--- a/transport/internet/tls/ech.go
++++ b/transport/internet/tls/ech.go
+@@ -1,29 +1,13 @@
+ package tls
+ 
+ import (
+-	"bytes"
+-	"context"
+ 	"crypto/tls"
+ 	"encoding/base64"
+ 	"encoding/binary"
+-	"fmt"
+-	"io"
+-	"net/http"
+-	"net/url"
+ 	"strings"
+-	"sync"
+-	"sync/atomic"
+-	"time"
+ 
+-	utls "github.com/refraction-networking/utls"
+-	"github.com/xtls/xray-core/common/crypto"
+-	"golang.org/x/net/http2"
+-
+-	"github.com/miekg/dns"
+ 	"github.com/xtls/xray-core/common/errors"
+ 	"github.com/xtls/xray-core/common/net"
+-	"github.com/xtls/xray-core/common/utils"
+-	"github.com/xtls/xray-core/transport/internet"
+ 	"golang.org/x/crypto/cryptobyte"
+ )
+ 
+@@ -85,233 +69,6 @@ func ApplyECH(c *Config, config *tls.Config) error {
+ 	return nil
+ }
+ 
+-type ECHConfigCache struct {
+-	configRecord atomic.Pointer[echConfigRecord]
+-	// updateLock is not for preventing concurrent read/write, but for preventing concurrent update
+-	UpdateLock sync.Mutex
+-}
+-
+-type echConfigRecord struct {
+-	config []byte
+-	expire time.Time
+-}
+-
+-var (
+-	// The keys for both maps must be generated by ECHCacheKey().
+-	GlobalECHConfigCache = utils.NewTypedSyncMap[string, *ECHConfigCache]()
+-	clientForECHDOH      = utils.NewTypedSyncMap[string, *http.Client]()
+-)
+-
+-// sockopt can be nil if not specified.
+-// if for clientForECHDOH, domain can be empty.
+-func ECHCacheKey(server, domain string, sockopt *internet.SocketConfig) string {
+-	return server + "|" + domain + "|" + fmt.Sprintf("%p", sockopt)
+-}
+-
+-// Update updates the ECH config for given domain and server.
+-// this method is concurrent safe, only one update request will be sent, others get the cache.
+-// if isLockedUpdate is true, it will not try to acquire the lock.
+-func (c *ECHConfigCache) Update(domain string, server string, isLockedUpdate bool, sockopt *internet.SocketConfig) ([]byte, error) {
+-	if !isLockedUpdate {
+-		c.UpdateLock.Lock()
+-		defer c.UpdateLock.Unlock()
+-	}
+-	// Double check cache after acquiring lock
+-	configRecord := c.configRecord.Load()
+-	if configRecord.expire.After(time.Now()) {
+-		errors.LogDebug(context.Background(), "Cache hit for domain after double check: ", domain)
+-		return configRecord.config, nil
+-	}
+-	// Query ECH config from DNS server
+-	errors.LogDebug(context.Background(), "Trying to query ECH config for domain: ", domain, " with ECH server: ", server)
+-	echConfig, ttl, err := dnsQuery(server, domain, sockopt)
+-	if err != nil {
+-		return nil, err
+-	}
+-	configRecord = &echConfigRecord{
+-		config: echConfig,
+-		expire: time.Now().Add(time.Duration(ttl) * time.Second),
+-	}
+-	c.configRecord.Store(configRecord)
+-	return configRecord.config, nil
+-}
+-
+-// QueryRecord returns the ECH config for given domain.
+-// If the record is not in cache or expired, it will query the DNS server and update the cache.
+-func QueryRecord(domain string, server string, sockopt *internet.SocketConfig) ([]byte, error) {
+-	GlobalECHConfigCacheKey := ECHCacheKey(server, domain, sockopt)
+-	echConfigCache, ok := GlobalECHConfigCache.Load(GlobalECHConfigCacheKey)
+-	if !ok {
+-		echConfigCache = &ECHConfigCache{}
+-		echConfigCache.configRecord.Store(&echConfigRecord{})
+-		echConfigCache, _ = GlobalECHConfigCache.LoadOrStore(GlobalECHConfigCacheKey, echConfigCache)
+-	}
+-	configRecord := echConfigCache.configRecord.Load()
+-	if configRecord.expire.After(time.Now()) {
+-		errors.LogDebug(context.Background(), "Cache hit for domain: ", domain)
+-		return configRecord.config, nil
+-	}
+-
+-	// If expire is zero value, it means we are in initial state, wait for the query to finish
+-	// otherwise return old value immediately and update in a goroutine
+-	// but if the cache is too old, wait for update
+-	if configRecord.expire.IsZero() || configRecord.expire.Add(time.Hour*4).Before(time.Now()) {
+-		return echConfigCache.Update(domain, server, false, sockopt)
+-	} else {
+-		// If someone already acquired the lock, it means it is updating, do not start another update goroutine
+-		if echConfigCache.UpdateLock.TryLock() {
+-			go func() {
+-				defer echConfigCache.UpdateLock.Unlock()
+-				echConfigCache.Update(domain, server, true, sockopt)
+-			}()
+-		}
+-		return configRecord.config, nil
+-	}
+-}
+-
+-// dnsQuery is the real func for sending type65 query for given domain to given DNS server.
+-// return ECH config, TTL and error
+-func dnsQuery(server string, domain string, sockopt *internet.SocketConfig) ([]byte, uint32, error) {
+-	m := new(dns.Msg)
+-	var dnsResolve []byte
+-	m.SetQuestion(dns.Fqdn(domain), dns.TypeHTTPS)
+-	// for DOH server
+-	if strings.HasPrefix(server, "https://") || strings.HasPrefix(server, "h2c://") {
+-		h2c := strings.HasPrefix(server, "h2c://")
+-		m.SetEdns0(4096, false) // 4096 is the buffer size, false means no DNSSEC
+-		padding := &dns.EDNS0_PADDING{Padding: make([]byte, int(crypto.RandBetween(100, 300)))}
+-		if opt := m.IsEdns0(); opt != nil {
+-			opt.Option = append(opt.Option, padding)
+-		}
+-		// always 0 in DOH
+-		m.Id = 0
+-		msg, err := m.Pack()
+-		if err != nil {
+-			return nil, 0, err
+-		}
+-		var client *http.Client
+-		serverKey := ECHCacheKey(server, "", sockopt)
+-		if client, _ = clientForECHDOH.Load(serverKey); client == nil {
+-			// All traffic sent by core should via xray's internet.DialSystem
+-			// This involves the behavior of some Android VPN GUI clients
+-			tr := &http2.Transport{
+-				IdleConnTimeout: net.ConnIdleTimeout,
+-				ReadIdleTimeout: net.ChromeH2KeepAlivePeriod,
+-				DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
+-					dest, err := net.ParseDestination(network + ":" + addr)
+-					if err != nil {
+-						return nil, err
+-					}
+-					var conn net.Conn
+-
+-					conn, err = internet.DialSystem(ctx, dest, sockopt)
+-					if err != nil {
+-						return nil, err
+-					}
+-
+-					if !h2c {
+-						u, err := url.Parse(server)
+-						if err != nil {
+-							return nil, err
+-						}
+-						conn = utls.UClient(conn, &utls.Config{ServerName: u.Hostname()}, utls.HelloChrome_Auto)
+-						if err := conn.(*utls.UConn).HandshakeContext(ctx); err != nil {
+-							return nil, err
+-						}
+-					}
+-					return conn, nil
+-				},
+-			}
+-			c := &http.Client{
+-				Timeout:   30 * time.Second,
+-				Transport: tr,
+-			}
+-			client, _ = clientForECHDOH.LoadOrStore(serverKey, c)
+-		}
+-		req, err := http.NewRequest("POST", server, bytes.NewReader(msg))
+-		if err != nil {
+-			return nil, 0, err
+-		}
+-		// h2c: in config is just for claim
+-		// change scheme to https and expect outbound to handle TLS (freedom + tlsSetting)
+-		req.URL.Scheme = "https"
+-		req.Header.Set("Accept", "application/dns-message")
+-		req.Header.Set("Content-Type", "application/dns-message")
+-		utils.TryDefaultHeadersWith(req.Header, "fetch")
+-		req.Header.Set("X-Padding", utils.H2Base62Pad(crypto.RandBetween(100, 1000)))
+-
+-		resp, err := client.Do(req)
+-		if err != nil {
+-			return nil, 0, err
+-		}
+-		defer resp.Body.Close()
+-		respBody, err := io.ReadAll(resp.Body)
+-		if err != nil {
+-			return nil, 0, err
+-		}
+-		if resp.StatusCode != http.StatusOK {
+-			return nil, 0, errors.New("query failed with response code:", resp.StatusCode)
+-		}
+-		dnsResolve = respBody
+-	} else if strings.HasPrefix(server, "udp://") { // for classic udp dns server
+-		udpServerURL, err := url.Parse(server)
+-		if err != nil {
+-			return nil, 0, errors.New("failed to parse udp dns server ", server, " for ECH: ", err)
+-		}
+-		// default port 53 if not specified
+-		if udpServerURL.Port() == "" {
+-			udpServerURL.Host = udpServerURL.Host + ":53"
+-		}
+-		dest, err := net.ParseDestination("udp" + ":" + udpServerURL.Host)
+-		if err != nil {
+-			return nil, 0, errors.New("failed to parse udp dns server ", udpServerURL.Host, " for ECH: ", err)
+-		}
+-		dnsTimeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+-		defer cancel()
+-		// use xray's internet.DialSystem as mentioned above
+-		conn, err := internet.DialSystem(dnsTimeoutCtx, dest, sockopt)
+-		if err != nil {
+-			return nil, 0, err
+-		}
+-		defer func() {
+-			err := conn.Close()
+-			if err != nil {
+-				errors.LogDebug(context.Background(), "Failed to close connection: ", err)
+-			}
+-		}()
+-		msg, err := m.Pack()
+-		if err != nil {
+-			return nil, 0, err
+-		}
+-		conn.Write(msg)
+-		udpResponse := make([]byte, 512)
+-		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+-		_, err = conn.Read(udpResponse)
+-		if err != nil {
+-			return nil, 0, err
+-		}
+-		dnsResolve = udpResponse
+-	}
+-	respMsg := new(dns.Msg)
+-	err := respMsg.Unpack(dnsResolve)
+-	if err != nil {
+-		return nil, 0, errors.New("failed to unpack dns response for ECH: ", err)
+-	}
+-	if len(respMsg.Answer) > 0 {
+-		for _, answer := range respMsg.Answer {
+-			if https, ok := answer.(*dns.HTTPS); ok && https.Hdr.Name == dns.Fqdn(domain) {
+-				for _, v := range https.Value {
+-					if echConfig, ok := v.(*dns.SVCBECHConfig); ok {
+-						errors.LogDebug(context.Background(), "Get ECH config:", echConfig.String(), " TTL:", respMsg.Answer[0].Header().Ttl)
+-						return echConfig.ECH, answer.Header().Ttl, nil
+-					}
+-				}
+-			}
+-		}
+-	}
+-	return nil, 0, errors.New("no valid ECH config found in DNS response")
+-}
+-
+ var ErrInvalidLen = errors.New("goech: invalid length")
+ 
+ func ConvertToGoECHKeys(data []byte) ([]tls.EncryptedClientHelloKey, error) {
+diff --git a/transport/internet/tls/ech_dns.go b/transport/internet/tls/ech_dns.go
+new file mode 100644
+index 00000000..f813093a
+--- /dev/null
++++ b/transport/internet/tls/ech_dns.go
+@@ -0,0 +1,254 @@
++//go:build !senko_trim
++
++package tls
++
++import (
++	"bytes"
++	"context"
++	"crypto/tls"
++	"fmt"
++	"io"
++	"net/http"
++	"net/url"
++	"strings"
++	"sync"
++	"sync/atomic"
++	"time"
++
++	utls "github.com/refraction-networking/utls"
++	"github.com/xtls/xray-core/common/crypto"
++	"golang.org/x/net/http2"
++
++	"github.com/miekg/dns"
++	"github.com/xtls/xray-core/common/errors"
++	"github.com/xtls/xray-core/common/net"
++	"github.com/xtls/xray-core/common/utils"
++	"github.com/xtls/xray-core/transport/internet"
++)
++
++type ECHConfigCache struct {
++	configRecord atomic.Pointer[echConfigRecord]
++	// updateLock is not for preventing concurrent read/write, but for preventing concurrent update
++	UpdateLock sync.Mutex
++}
++
++type echConfigRecord struct {
++	config []byte
++	expire time.Time
++}
++
++var (
++	// The keys for both maps must be generated by ECHCacheKey().
++	GlobalECHConfigCache = utils.NewTypedSyncMap[string, *ECHConfigCache]()
++	clientForECHDOH      = utils.NewTypedSyncMap[string, *http.Client]()
++)
++
++// sockopt can be nil if not specified.
++// if for clientForECHDOH, domain can be empty.
++func ECHCacheKey(server, domain string, sockopt *internet.SocketConfig) string {
++	return server + "|" + domain + "|" + fmt.Sprintf("%p", sockopt)
++}
++
++// Update updates the ECH config for given domain and server.
++// this method is concurrent safe, only one update request will be sent, others get the cache.
++// if isLockedUpdate is true, it will not try to acquire the lock.
++func (c *ECHConfigCache) Update(domain string, server string, isLockedUpdate bool, sockopt *internet.SocketConfig) ([]byte, error) {
++	if !isLockedUpdate {
++		c.UpdateLock.Lock()
++		defer c.UpdateLock.Unlock()
++	}
++	// Double check cache after acquiring lock
++	configRecord := c.configRecord.Load()
++	if configRecord.expire.After(time.Now()) {
++		errors.LogDebug(context.Background(), "Cache hit for domain after double check: ", domain)
++		return configRecord.config, nil
++	}
++	// Query ECH config from DNS server
++	errors.LogDebug(context.Background(), "Trying to query ECH config for domain: ", domain, " with ECH server: ", server)
++	echConfig, ttl, err := dnsQuery(server, domain, sockopt)
++	if err != nil {
++		return nil, err
++	}
++	configRecord = &echConfigRecord{
++		config: echConfig,
++		expire: time.Now().Add(time.Duration(ttl) * time.Second),
++	}
++	c.configRecord.Store(configRecord)
++	return configRecord.config, nil
++}
++
++// QueryRecord returns the ECH config for given domain.
++// If the record is not in cache or expired, it will query the DNS server and update the cache.
++func QueryRecord(domain string, server string, sockopt *internet.SocketConfig) ([]byte, error) {
++	GlobalECHConfigCacheKey := ECHCacheKey(server, domain, sockopt)
++	echConfigCache, ok := GlobalECHConfigCache.Load(GlobalECHConfigCacheKey)
++	if !ok {
++		echConfigCache = &ECHConfigCache{}
++		echConfigCache.configRecord.Store(&echConfigRecord{})
++		echConfigCache, _ = GlobalECHConfigCache.LoadOrStore(GlobalECHConfigCacheKey, echConfigCache)
++	}
++	configRecord := echConfigCache.configRecord.Load()
++	if configRecord.expire.After(time.Now()) {
++		errors.LogDebug(context.Background(), "Cache hit for domain: ", domain)
++		return configRecord.config, nil
++	}
++
++	// If expire is zero value, it means we are in initial state, wait for the query to finish
++	// otherwise return old value immediately and update in a goroutine
++	// but if the cache is too old, wait for update
++	if configRecord.expire.IsZero() || configRecord.expire.Add(time.Hour*4).Before(time.Now()) {
++		return echConfigCache.Update(domain, server, false, sockopt)
++	} else {
++		// If someone already acquired the lock, it means it is updating, do not start another update goroutine
++		if echConfigCache.UpdateLock.TryLock() {
++			go func() {
++				defer echConfigCache.UpdateLock.Unlock()
++				echConfigCache.Update(domain, server, true, sockopt)
++			}()
++		}
++		return configRecord.config, nil
++	}
++}
++
++// dnsQuery is the real func for sending type65 query for given domain to given DNS server.
++// return ECH config, TTL and error
++func dnsQuery(server string, domain string, sockopt *internet.SocketConfig) ([]byte, uint32, error) {
++	m := new(dns.Msg)
++	var dnsResolve []byte
++	m.SetQuestion(dns.Fqdn(domain), dns.TypeHTTPS)
++	// for DOH server
++	if strings.HasPrefix(server, "https://") || strings.HasPrefix(server, "h2c://") {
++		h2c := strings.HasPrefix(server, "h2c://")
++		m.SetEdns0(4096, false) // 4096 is the buffer size, false means no DNSSEC
++		padding := &dns.EDNS0_PADDING{Padding: make([]byte, int(crypto.RandBetween(100, 300)))}
++		if opt := m.IsEdns0(); opt != nil {
++			opt.Option = append(opt.Option, padding)
++		}
++		// always 0 in DOH
++		m.Id = 0
++		msg, err := m.Pack()
++		if err != nil {
++			return nil, 0, err
++		}
++		var client *http.Client
++		serverKey := ECHCacheKey(server, "", sockopt)
++		if client, _ = clientForECHDOH.Load(serverKey); client == nil {
++			// All traffic sent by core should via xray's internet.DialSystem
++			// This involves the behavior of some Android VPN GUI clients
++			tr := &http2.Transport{
++				IdleConnTimeout: net.ConnIdleTimeout,
++				ReadIdleTimeout: net.ChromeH2KeepAlivePeriod,
++				DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
++					dest, err := net.ParseDestination(network + ":" + addr)
++					if err != nil {
++						return nil, err
++					}
++					var conn net.Conn
++
++					conn, err = internet.DialSystem(ctx, dest, sockopt)
++					if err != nil {
++						return nil, err
++					}
++
++					if !h2c {
++						u, err := url.Parse(server)
++						if err != nil {
++							return nil, err
++						}
++						conn = utls.UClient(conn, &utls.Config{ServerName: u.Hostname()}, utls.HelloChrome_Auto)
++						if err := conn.(*utls.UConn).HandshakeContext(ctx); err != nil {
++							return nil, err
++						}
++					}
++					return conn, nil
++				},
++			}
++			c := &http.Client{
++				Timeout:   30 * time.Second,
++				Transport: tr,
++			}
++			client, _ = clientForECHDOH.LoadOrStore(serverKey, c)
++		}
++		req, err := http.NewRequest("POST", server, bytes.NewReader(msg))
++		if err != nil {
++			return nil, 0, err
++		}
++		// h2c: in config is just for claim
++		// change scheme to https and expect outbound to handle TLS (freedom + tlsSetting)
++		req.URL.Scheme = "https"
++		req.Header.Set("Accept", "application/dns-message")
++		req.Header.Set("Content-Type", "application/dns-message")
++		utils.TryDefaultHeadersWith(req.Header, "fetch")
++		req.Header.Set("X-Padding", utils.H2Base62Pad(crypto.RandBetween(100, 1000)))
++
++		resp, err := client.Do(req)
++		if err != nil {
++			return nil, 0, err
++		}
++		defer resp.Body.Close()
++		respBody, err := io.ReadAll(resp.Body)
++		if err != nil {
++			return nil, 0, err
++		}
++		if resp.StatusCode != http.StatusOK {
++			return nil, 0, errors.New("query failed with response code:", resp.StatusCode)
++		}
++		dnsResolve = respBody
++	} else if strings.HasPrefix(server, "udp://") { // for classic udp dns server
++		udpServerURL, err := url.Parse(server)
++		if err != nil {
++			return nil, 0, errors.New("failed to parse udp dns server ", server, " for ECH: ", err)
++		}
++		// default port 53 if not specified
++		if udpServerURL.Port() == "" {
++			udpServerURL.Host = udpServerURL.Host + ":53"
++		}
++		dest, err := net.ParseDestination("udp" + ":" + udpServerURL.Host)
++		if err != nil {
++			return nil, 0, errors.New("failed to parse udp dns server ", udpServerURL.Host, " for ECH: ", err)
++		}
++		dnsTimeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
++		defer cancel()
++		// use xray's internet.DialSystem as mentioned above
++		conn, err := internet.DialSystem(dnsTimeoutCtx, dest, sockopt)
++		if err != nil {
++			return nil, 0, err
++		}
++		defer func() {
++			err := conn.Close()
++			if err != nil {
++				errors.LogDebug(context.Background(), "Failed to close connection: ", err)
++			}
++		}()
++		msg, err := m.Pack()
++		if err != nil {
++			return nil, 0, err
++		}
++		conn.Write(msg)
++		udpResponse := make([]byte, 512)
++		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
++		_, err = conn.Read(udpResponse)
++		if err != nil {
++			return nil, 0, err
++		}
++		dnsResolve = udpResponse
++	}
++	respMsg := new(dns.Msg)
++	err := respMsg.Unpack(dnsResolve)
++	if err != nil {
++		return nil, 0, errors.New("failed to unpack dns response for ECH: ", err)
++	}
++	if len(respMsg.Answer) > 0 {
++		for _, answer := range respMsg.Answer {
++			if https, ok := answer.(*dns.HTTPS); ok && https.Hdr.Name == dns.Fqdn(domain) {
++				for _, v := range https.Value {
++					if echConfig, ok := v.(*dns.SVCBECHConfig); ok {
++						errors.LogDebug(context.Background(), "Get ECH config:", echConfig.String(), " TTL:", respMsg.Answer[0].Header().Ttl)
++						return echConfig.ECH, answer.Header().Ttl, nil
++					}
++				}
++			}
++		}
++	}
++	return nil, 0, errors.New("no valid ECH config found in DNS response")
++}
+diff --git a/transport/internet/tls/ech_trim.go b/transport/internet/tls/ech_trim.go
+new file mode 100644
+index 00000000..261484a8
+--- /dev/null
++++ b/transport/internet/tls/ech_trim.go
+@@ -0,0 +1,16 @@
++//go:build senko_trim
++
++package tls
++
++import (
++	"github.com/xtls/xray-core/common/errors"
++	"github.com/xtls/xray-core/transport/internet"
++)
++
++// senko never configures ECH, and the dns lookup behind a "://" echConfigList
++// is what links github.com/miekg/dns. ApplyECH turns this error into an
++// invalid config list, so such a connection fails instead of going out
++// without ECH
++func QueryRecord(domain string, server string, sockopt *internet.SocketConfig) ([]byte, error) {
++	return nil, errors.New("ECH dns lookup is not built into senko-core")
++}

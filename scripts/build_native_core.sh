@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="${SENKO_GO_CORE_SRC:?set SENKO_GO_CORE_SRC to the pinned go core source}"
+SRC="${SENKO_CORE_SRC:?set SENKO_CORE_SRC to the pinned senko-core source}"
 GO_BIN="${SENKO_GO:?set SENKO_GO to the Go executable}"
 TC="${SENKO_TC:?set SENKO_TC to the iOS toolchain bin directory}"
 SDK="${SENKO_SDK_V64:?set SENKO_SDK_V64 to the arm64 iPhoneOS SDK}"
@@ -15,22 +15,15 @@ if [[ "$(${GO_BIN} version)" != go\ version\ go1.27.1\ * ]]; then
   exit 1
 fi
 if [[ "$(git -C "${SRC}" rev-parse HEAD)" != "${PINNED_COMMIT}" ]]; then
-  echo "go core source must be at ${PINNED_COMMIT}" >&2
+  echo "senko-core source must be at ${PINNED_COMMIT}" >&2
   exit 1
 fi
 if [[ ! -f "${SRC}/LICENSE" ]]; then
-  echo "go core source license is missing" >&2
+  echo "senko-core source license is missing" >&2
   exit 1
 fi
 
-if [[ ! -f "${SRC}/main/distro/senko/senko.go" ]]; then
-  DISTRO_PATCH="${ROOT}/scripts/patches/go-core-trim-distro.patch"
-  if ! git -C "${SRC}" apply --check "${DISTRO_PATCH}"; then
-    echo "the trimmed senko distro is missing and the maintained patch does not apply" >&2
-    exit 1
-  fi
-  git -C "${SRC}" apply "${DISTRO_PATCH}"
-fi
+bash "${ROOT}/scripts/ensure_senko_core_distro.sh" "${SRC}"
 
 mkdir -p "$(dirname "${OUT_INPUT}")"
 OUT="$(cd "$(dirname "${OUT_INPUT}")" && pwd)/$(basename "${OUT_INPUT}")"
@@ -45,7 +38,7 @@ CC_CMD="${TC}/clang -target arm64-apple-darwin -B ${AR_OVERLAY} -B ${TC} -isysro
     SENKO_LLVM_AR="${TC}/llvm-ar" \
     CGO_CFLAGS="-isysroot ${SDK} -miphoneos-version-min=${MIN_IOS}" \
     CGO_LDFLAGS="-isysroot ${SDK} -miphoneos-version-min=${MIN_IOS}" \
-    "${GO_BIN}" build -buildvcs=false -trimpath -buildmode=c-archive \
+    "${GO_BIN}" build -tags senko_trim -buildvcs=false -trimpath -buildmode=c-archive \
       -ldflags='-s -w -buildid=' -o "${OUT}" .
 )
 "${TC}/ranlib" "${OUT}" 2>/dev/null || true
