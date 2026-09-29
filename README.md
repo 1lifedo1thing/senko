@@ -1,7 +1,7 @@
 # senko
 
 <p align="center">
-  <img src="assets/senko.png" width="420" alt="senko">
+  <img src="assets/senko-phone.png" width="420" alt="senko">
 </p>
 
 <p align="center"><b>vless, hysteria2 and amneziawg for the whole device, ios 5 to 16, one deb</b></p>
