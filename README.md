@@ -1,107 +1,65 @@
 # senko
 
-> [!WARNING]
-> Jailbreak is strictly required on some devices.
-> Senko needs it to route traffic for the whole device. On other supported
-> devices, it can work without a jailbreak.
-
-> [!NOTE]
-> Jailbreak is not required for all devices.
-> Check your device and ios version before installing to see which case applies.
-
 <p align="center">
   <img src="assets/senko-readme.png" width="420" alt="senko">
 </p>
 
-senko is a full-device client for ios 5-16. old devices use the universal deb,
-ios 14-16 uses the arm64 ipa with the native packet tunnel.
+<p align="center"><b>vless, hysteria2 and amneziawg for the whole device, ios 5 to 16, one deb</b></p>
 
-## supported devices
+> [!NOTE]
+> some devices need a jailbreak to route all traffic, others work without one.
 
-support depends on the device, ios version and jailbreak:
+## devices
 
 - ios 5-6: armv7
-- ios 7-11: armv7 or arm64
-- ios 12-16: arm64 or arm64e
-
-ios 12 and newer use system tls and native status handling. `senkotlsfix` and
-`senkostatus` are not injected there. old ios uses them only when the required
-substrate support is present.
+- ios 7-11: armv7, arm64
+- ios 12-16: arm64, arm64e
 
 ## protocols
 
-- vless: tcp, tls, reality, websocket, xhttp and grpc
+- vless: tcp, tls, reality, websocket, xhttp, grpc
 - hysteria2
-- socks5 and http(s) proxies
 - amneziawg
+- socks5, http(s)
 
-subscriptions accept uri lists, base64, happ links, xray/sing-box json, clash
-yaml and shadowrocket/surge ini. paste, qr and file import use the same parser.
+subscriptions: uri lists, base64, happ, xray/sing-box json, clash yaml, shadowrocket/surge ini.
 
 ## features
 
-- server and subscription management
-- parallel tcp checks, including while the vpn is active
-- routing rules: proxy, direct and block
-- failover and automatic reconnect
-- russian, english and chinese ui
-- diagnostics through the app or `senkoctl`
-
-## paths
-
-- config: `/var/root/Library/Preferences/senko.cfg`
-- control socket: `/var/tmp/senkod.sock`
-- system log: `/var/log/senko-system.log`
-- diagnostics: `Documents/senko-diagnostics.txt`
+- servers and subscriptions, paste, qr and file import
+- parallel checks, even with the vpn on
+- rules: proxy, direct, block
+- failover and auto reconnect
+- russian, english, chinese
+- diagnostics in the app or `senkoctl`
 
 ## install
 
-from a package repository:
-
-```text
-https://sqmrak.github.io/sqmrakdev/
-```
-
-or copy the deb to the device and install it:
+repo: `https://sqmrak.github.io/sqmrakdev/`
 
 ```bash
 scp senko-*.deb root@<device-ip>:/var/mobile/
 ssh root@<device-ip> dpkg -i /var/mobile/senko-*.deb
 ```
 
-## build
+remove: `dpkg -r com.senko.daemon`
 
-set the toolchain and dependency paths, then run:
+## paths
+
+- config: `/var/root/Library/Preferences/senko.cfg`
+- socket: `/var/tmp/senkod.sock`
+- log: `/var/log/senko-system.log`
+- diagnostics: `Documents/senko-diagnostics.txt`
+
+## build
 
 ```bash
 make -C tests test
 ./build_deb.sh
 ```
 
-the build needs these variables:
-
-```bash
-THEOS SENKO_SDK_V7 SENKO_SDK_V64 SENKO_SDK_VE SENKO_CRT_V7
-SENKO_OSSL_V7 SENKO_OSSL_V64 SENKO_OSSL_VE SENKO_MBED
-SENKO_GO SENKO_GO_CORE_SRC
-```
-
-the output is `senko-v<version>.deb`.
-
-for new ios, run:
-
-```bash
-./build_stock_ipa.sh
-```
-
-the output is `Senko-v<version>.ipa`.
-
-## uninstall
-
-```bash
-dpkg -r com.senko.daemon
-```
+needs `THEOS SENKO_SDK_V7 SENKO_SDK_V64 SENKO_SDK_VE SENKO_CRT_V7 SENKO_OSSL_V7 SENKO_OSSL_V64 SENKO_MBED SENKO_GO SENKO_CORE_SRC`, outputs `senko-v<version>.deb`.
 
 ## license
 
-senko is distributed under the [gnu general public license, version 2](LICENSE)
+[gpl v2](LICENSE). emoji: Twemoji, CC BY 4.0 (`app/emoji/`).
