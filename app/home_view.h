@@ -56,14 +56,8 @@
     UILabel          *serverTitle;
     UILabel          *serverSubtitle;
     UIImageView      *serverChevron;
-    SenkoReliefControl *downTile;
-    SenkoReliefControl *upTile;
-    UIImageView      *downIcon;
-    UIImageView      *upIcon;
-    UILabel          *downValue;
-    UILabel          *upValue;
-    UILabel          *downCaption;
-    UILabel          *upCaption;
+    UIView           *protocolDot;
+    UILabel          *protocolLine;
     BOOL              _serverIconIsFlag;
 }
 - (void)applyTheme;
@@ -73,10 +67,8 @@
               subtitle:(NSString *)subtitle
                   icon:(UIImage *)icon
                 isFlag:(BOOL)isFlag;
-- (void)setDownRate:(NSString *)down upRate:(NSString *)up;
-/* what the session moved so far, shown beside each caption; nil hides it */
-- (void)setDownTotal:(NSString *)down upTotal:(NSString *)up;
 - (void)relocalize;
+- (void)setProtocolLine:(NSString *)text;
 @end
 
 /* the rounded card every home and picker control sits on: list colours lit

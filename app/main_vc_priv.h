@@ -80,21 +80,14 @@
     NSUInteger    _autoPending;
     NSUInteger    _autoDone;
     NSUInteger    _autoGeneration;
-    /* tunnel age as the daemon last reported it, plus the monotonic instant it
-       arrived, so the label can tick between refreshes */
+    /* the server backend reports age; amneziawg starts from the first connected
+       reply, and both tick from this monotonic instant between polls */
     long          _tunnelUptime;
     CFTimeInterval _tunnelUptimeAt;
     /* whether the two above describe the tunnel now on screen. without it a
        zero age and "no age reported yet" are the same value */
     BOOL          _tunnelUptimeKnown;
     NSTimer      *_uptimeTimer;
-    BOOL          _trafficPending;
-    NSUInteger    _trafficGeneration;
-    uint64_t      _trafficUp;
-    uint64_t      _trafficDown;
-    BOOL          _trafficKnown;
-    /* the previous counter sample, the speed tiles are its derivative */
-    CFTimeInterval _rateAt;
     /* the daemon owns the tunnel, and nothing else asks it what happened: a
        tunnel that came up, dropped or was switched outside this screen left the
        card showing whatever the last user action had put there until the app
@@ -121,6 +114,7 @@
     NSUInteger     _pingCompleted;
     int            _pingSubIndex;
     UIActionSheet *_actionSheet;
+    NSArray       *_menuSubChoices;
     NSString      *_pendingUpdatePath;
     NSString      *_pendingInsecureURL;
     int            _dragSection;
@@ -298,8 +292,6 @@
 - (NSArray *)autoProbeCandidates;
 - (void)launchAutoProbes:(NSUInteger)generation;
 - (void)finishAutoProbes;
-- (void)resetRates;
-- (void)applyTrafficUp:(uint64_t)up down:(uint64_t)down;
 - (SenkoSub *)subscriptionForServer:(SenkoServer *)server;
 - (NSString *)sourceNameForServer:(SenkoServer *)server;
 - (NSString *)nameForServer:(SenkoServer *)server;

@@ -84,6 +84,7 @@ static const CGFloat kSenkoAutoHeaderHeight = 78.0f;
 
         closeButton = [self plainButton:@selector(closePressed)];
         addButton = [self plainButton:@selector(addPressed)];
+        subscriptionButton = [self plainButton:@selector(subscriptionPressed)];
         titleLabel = [[[UILabel alloc] initWithFrame:CGRectZero] autorelease];
         titleLabel.backgroundColor = [UIColor clearColor];
         titleLabel.textAlignment = NSTextAlignmentCenter;
@@ -151,6 +152,7 @@ static const CGFloat kSenkoAutoHeaderHeight = 78.0f;
     autoTitle.text = SenkoLocalizedText(@"Auto");
     closeButton.accessibilityLabel = SenkoLocalizedText(@"Close");
     addButton.accessibilityLabel = SenkoLocalizedText(@"Add");
+    subscriptionButton.accessibilityLabel = SenkoLocalizedText(@"Subscription");
     sortButton.accessibilityLabel = SenkoLocalizedText(@"Sort servers");
     pingButton.accessibilityLabel = SenkoLocalizedText(@"Check servers");
     [self applyTheme];
@@ -171,6 +173,9 @@ static const CGFloat kSenkoAutoHeaderHeight = 78.0f;
     titleLabel.shadowColor = nil;
     [closeButton setImage:SenkoIconClose(20.0f, kInk) forState:UIControlStateNormal];
     [addButton setImage:SenkoPlusIcon(22.0f, kInk) forState:UIControlStateNormal];
+    [subscriptionButton setTitle:@"•••" forState:UIControlStateNormal];
+    subscriptionButton.titleLabel.font = [UIFont boldSystemFontOfSize:18.0f];
+    [subscriptionButton setTitleColor:kInk forState:UIControlStateNormal];
     SenkoStyleHomePlate(searchPlate, searchPlate.bounds.size.height > 1.0f
                         ? searchPlate.bounds.size.height * 0.5f : 20.0f, nil);
     SenkoStyleHomePlate(pingButton, 12.0f, nil);
@@ -297,7 +302,8 @@ static const CGFloat kSenkoAutoHeaderHeight = 78.0f;
     CGFloat headerH = shortScreen ? 36.0f : 44.0f;
     closeButton.frame = CGRectMake(colX - 10.0f, headerY, 44.0f, headerH);
     addButton.frame = CGRectMake(colX + colW - 34.0f, headerY, 44.0f, headerH);
-    titleLabel.frame = CGRectMake(colX + 44.0f, headerY, colW - 88.0f, headerH);
+    subscriptionButton.frame = CGRectMake(colX + colW - 78.0f, headerY, 44.0f, headerH);
+    titleLabel.frame = CGRectMake(colX + 44.0f, headerY, colW - 132.0f, headerH);
 
     CGFloat ctl = shortScreen ? 36.0f : 40.0f;
     CGFloat y = headerY + headerH + (shortScreen ? 2.0f : 6.0f);
@@ -368,6 +374,11 @@ static const CGFloat kSenkoAutoHeaderHeight = 78.0f;
 - (void)addPressed {
     [searchField resignFirstResponder];
     [_delegate serverPickerAdd];
+}
+
+- (void)subscriptionPressed {
+    [searchField resignFirstResponder];
+    [_delegate serverPickerManageSubscriptions];
 }
 
 - (void)sortPressed {

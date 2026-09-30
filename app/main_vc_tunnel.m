@@ -89,55 +89,12 @@ static NSString *SenkoFormatUptime(long seconds) {
                                                    repeats:YES];
 }
 
-- (void)resetRates {
-    _rateAt = 0.0;
-    [_home setDownRate:SenkoFormatRate(0.0) upRate:SenkoFormatRate(0.0)];
-    [_home setDownTotal:nil upTotal:nil];
-}
-
-/* the daemon reports byte counters, so a speed is the change between two
-   samples over the time they were taken apart. a counter that went backwards
-   belongs to a new tunnel and only starts the next sample */
-- (void)applyTrafficUp:(uint64_t)up down:(uint64_t)down {
-    CFTimeInterval now = CACurrentMediaTime();
-    if (_rateAt > 0.0 && now - _rateAt > 0.2 &&
-        up >= _trafficUp && down >= _trafficDown) {
-        double dt = now - _rateAt;
-        [_home setDownRate:SenkoFormatRate((double)(down - _trafficDown) / dt)
-                    upRate:SenkoFormatRate((double)(up - _trafficUp) / dt)];
-    }
-    _rateAt = now;
-    _trafficUp = up;
-    _trafficDown = down;
-/* while senko is on screen nothing else on an ios 5 device is moving data, so
-   the speed reads 0 most of the time; the session total says the tunnel has
-   carried traffic at all */
-    [_home setDownTotal:SenkoFormatBytes(down) upTotal:SenkoFormatBytes(up)];
-}
-
 - (void)uptimeTick {
     if (![_state isEqualToString:@"connected"]) {
         [self syncUptimeTicker];
         return;
     }
     SetStatusDefault(_statusLabel, [self homeDetailText]);
-    if (_trafficPending || _busy || _selectedBackend == SenkoBackendAmneziaWG) return;
-    _trafficPending = YES;
-    NSUInteger generation = _trafficGeneration;
-    void (^received)(BOOL, uint64_t, uint64_t) = ^(BOOL known, uint64_t up, uint64_t down) {
-        _trafficPending = NO;
-        if (generation != _trafficGeneration || !_uptimeTimer ||
-            ![_state isEqualToString:@"connected"]) return;
-        _trafficKnown = known;
-        if (known) [self applyTrafficUp:up down:down];
-        else {
-            _rateAt = 0.0;
-            [_home setDownRate:@"—" upRate:@"—"];
-            [_home setDownTotal:nil upTotal:nil];
-        }
-    };
-    if ([SenkoNativeVPN available]) [_nativeVPN traffic:received];
-    else [_ctl traffic:received];
 }
 
 /* the line under the state answers "for how long", the card below answers
@@ -159,17 +116,13 @@ static NSString *SenkoFormatUptime(long seconds) {
 /* the connect reply carries a state but no clock, and nothing polled STATUS
    again while the tunnel stayed up, so the age never arrived and the ticker
    never started: it only appeared after leaving the screen and coming back.
-   the clock starts here at zero and the next status reply corrects it with the
-   daemon's own, which is the one that survives the app being closed */
+   the clock starts here at zero. the server backend later reports its own age;
+   amneziawg keeps the local clock because AWG STATUS reports only state */
     if (connected && !_tunnelUptimeKnown) {
         _tunnelUptime = 0;
         _tunnelUptimeAt = CACurrentMediaTime();
         _tunnelUptimeKnown = YES;
     } else if (!connected) {
-        ++_trafficGeneration;
-        _trafficKnown = NO;
-        _trafficUp = _trafficDown = 0;
-        [self resetRates];
         _tunnelUptimeKnown = NO;
         _tunnelUptime = 0;
         _tunnelUptimeAt = 0.0;
@@ -885,6 +838,7 @@ static const NSUInteger kSenkoAutoProbeLimit = 24;
     if (!_home) return;
     UIColor *accent = kAccentBlue;
     if (_selectedBackend == SenkoBackendAmneziaWG) {
+        [_home setProtocolLine:@"AMNEZIAWG  ·  UDP"];
         [_home setServerTitle:@"AmneziaWG"
                      subtitle:SenkoLocalizedText(@"AmneziaWG profile")
                          icon:SenkoIconShield(20.0f, accent)
@@ -892,6 +846,7 @@ static const NSUInteger kSenkoAutoProbeLimit = 24;
         return;
     }
     if ([_servers count] == 0 && ![self hasAWGProfile]) {
+        [_home setProtocolLine:nil];
         [_home setServerTitle:SenkoLocalizedText(@"No servers")
                      subtitle:SenkoLocalizedText(@"Add a subscription or a server")
                          icon:SenkoPlusIcon(20.0f, accent)
@@ -901,6 +856,10 @@ static const NSUInteger kSenkoAutoProbeLimit = 24;
     SenkoServer *picked = [self serverByIndex:_selectedSrvIdx];
     if (SenkoAutoServerEnabled()) {
         BOOL live = [self isTunnelActive] && _activeBackend == SenkoBackendServer && picked;
+        [_home setProtocolLine:live ? [[SenkoServerProtocolLabel(picked)
+            stringByReplacingOccurrencesOfString:@"/" withString:@"  ·  "] uppercaseString] :
+            [NSString stringWithFormat:SenkoLocalizedText(@"Available servers: %lu"),
+                                       (unsigned long)[_servers count]]];
         [_home setServerTitle:SenkoLocalizedText(@"Auto")
                      subtitle:live ? [self nameForServer:picked]
                                    : SenkoLocalizedText(@"Fastest server")
@@ -909,6 +868,7 @@ static const NSUInteger kSenkoAutoProbeLimit = 24;
         return;
     }
     if (!picked) {
+        [_home setProtocolLine:nil];
         [_home setServerTitle:SenkoLocalizedText(@"Choose a server")
                      subtitle:SenkoLocalizedText(@"Tap to open the list")
                          icon:TintedIconNamed(@"glyph-globe.png", 20.0f, accent)
@@ -917,6 +877,8 @@ static const NSUInteger kSenkoAutoProbeLimit = 24;
     }
     NSMutableString *subtitle = [NSMutableString stringWithString:
                                  [self sourceNameForServer:picked]];
+    [_home setProtocolLine:[[SenkoServerProtocolLabel(picked)
+        stringByReplacingOccurrencesOfString:@"/" withString:@"  ·  "] uppercaseString]];
     NSNumber *ms = [self bestPingForServer:picked];
     if (ms && [ms intValue] >= 0)
         [subtitle appendFormat:@" · %@", [NSString stringWithFormat:

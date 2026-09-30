@@ -532,23 +532,6 @@ static void SenkoHomeLayoutCard(SenkoHomeView *v, BOOL isFlag);
 
 @implementation SenkoHomeView
 
-- (SenkoReliefControl *)tileWithIcon:(UIImageView **)icon
-                   value:(UILabel **)value
-                 caption:(UILabel **)caption {
-    SenkoReliefControl *tile = [[[SenkoReliefControl alloc] initWithFrame:CGRectZero] autorelease];
-    tile.userInteractionEnabled = NO;
-    UIImageView *glyph = [[[UIImageView alloc] initWithFrame:CGRectZero] autorelease];
-    glyph.contentMode = UIViewContentModeCenter;
-    glyph.clipsToBounds = YES;
-    [tile addSubview:glyph];
-    *icon = glyph;
-    *value = SenkoHomeLabel(tile, NSTextAlignmentLeft);
-    (*value).adjustsFontSizeToFitWidth = YES;
-    *caption = SenkoHomeLabel(tile, NSTextAlignmentLeft);
-    [self addSubview:tile];
-    return tile;
-}
-
 - (void)pressDown:(UIView *)view { SenkoPressPop(view, YES); }
 - (void)pressUp:(UIView *)view { SenkoPressPop(view, NO); }
 
@@ -597,28 +580,18 @@ static void SenkoHomeLayoutCard(SenkoHomeView *v, BOOL isFlag);
         serverChevron = [[[UIImageView alloc] initWithFrame:CGRectZero] autorelease];
         serverChevron.contentMode = UIViewContentModeCenter;
         [serverCard addSubview:serverChevron];
-
-        downTile = [self tileWithIcon:&downIcon value:&downValue caption:&downCaption];
-        upTile = [self tileWithIcon:&upIcon value:&upValue caption:&upCaption];
+        protocolDot = [[[UIView alloc] initWithFrame:CGRectZero] autorelease];
+        [self addSubview:protocolDot];
+        protocolLine = SenkoHomeLabel(self, NSTextAlignmentLeft);
+        protocolLine.lineBreakMode = NSLineBreakByTruncatingTail;
 
         [self relocalize];
-        [self setDownRate:nil upRate:nil];
         [self applyTheme];
     }
     return self;
 }
 
-- (void)setDownTotal:(NSString *)down upTotal:(NSString *)up {
-    NSString *downWord = SenkoLocalizedText(@"Download");
-    NSString *upWord = SenkoLocalizedText(@"Upload");
-    downCaption.text = [down length]
-        ? [NSString stringWithFormat:@"%@ · %@", downWord, down] : downWord;
-    upCaption.text = [up length]
-        ? [NSString stringWithFormat:@"%@ · %@", upWord, up] : upWord;
-}
-
 - (void)relocalize {
-    [self setDownTotal:nil upTotal:nil];
     gear.accessibilityLabel = SenkoLocalizedText(@"Settings");
     stats.accessibilityLabel = SenkoLocalizedText(@"Statistics");
 }
@@ -628,8 +601,6 @@ static void SenkoHomeLayoutCard(SenkoHomeView *v, BOOL isFlag);
     SenkoStyleHomePlate(gear, 12.0f, nil);
     SenkoStyleHomePlate(stats, 12.0f, nil);
     SenkoStyleHomePlate(serverCard, radius, nil);
-    SenkoStyleHomePlate(downTile, radius, nil);
-    SenkoStyleHomePlate(upTile, radius, nil);
     [gear setImage:TintedIconNamed(@"glyph-gear.png", 22.0f, kInk)
           forState:UIControlStateNormal];
     [stats setImage:TintedIconNamed(@"glyph-chart.png", 22.0f, kInk)
@@ -640,17 +611,10 @@ static void SenkoHomeLayoutCard(SenkoHomeView *v, BOOL isFlag);
     SenkoHomePlainLabel(state, kInk);
     SenkoHomePlainLabel(serverTitle, kInk);
     SenkoHomePlainLabel(serverSubtitle, kInkMuted);
-    SenkoHomePlainLabel(downValue, kInk);
-    SenkoHomePlainLabel(upValue, kInk);
-    SenkoHomePlainLabel(downCaption, kInkMuted);
-    SenkoHomePlainLabel(upCaption, kInkMuted);
+    SenkoHomePlainLabel(protocolLine, kInkMuted);
+    protocolDot.backgroundColor = kAccentBlue;
     serverChevron.image = SenkoIconChevron(14.0f, kInkMuted);
 
-    UIColor *wash = [kAccentBlue colorWithAlphaComponent:0.14f];
-    downIcon.backgroundColor = wash;
-    upIcon.backgroundColor = wash;
-    downIcon.image = TintedIconNamed(@"glyph-arrow-down.png", 20.0f, kAccentBlue);
-    upIcon.image = TintedIconNamed(@"glyph-arrow-up.png", 20.0f, kAccentBlue);
     SenkoHomeLayoutCard(self, _serverIconIsFlag);
     [power applyTheme];
     [self setNeedsLayout];
@@ -669,9 +633,10 @@ static void SenkoHomeLayoutCard(SenkoHomeView *v, BOOL isFlag);
     SenkoHomeLayoutCard(self, isFlag);
 }
 
-- (void)setDownRate:(NSString *)down upRate:(NSString *)up {
-    downValue.text = [down length] ? down : @"0";
-    upValue.text = [up length] ? up : @"0";
+- (void)setProtocolLine:(NSString *)text {
+    protocolLine.text = text;
+    protocolLine.hidden = ![text length];
+    protocolDot.hidden = protocolLine.hidden;
 }
 
 static void SenkoHomeLayoutCard(SenkoHomeView *v, BOOL isFlag) {
@@ -706,29 +671,8 @@ static void SenkoHomeLayoutCard(SenkoHomeView *v, BOOL isFlag) {
     v->serverSubtitle.frame = CGRectMake(tx, top + titleH, tw, subH);
 }
 
-static void SenkoHomeLayoutTile(UIView *tile, UIImageView *icon, UILabel *value,
-                                UILabel *caption) {
-    CGRect b = tile.bounds;
-    CGFloat h = b.size.height;
-    CGFloat side = floorf(h - 24.0f);
-    if (side > 44.0f) side = 44.0f;
-    if (side < 26.0f) side = 26.0f;
-    icon.frame = CGRectMake(12.0f, floorf((h - side) * 0.5f), side, side);
-    icon.layer.cornerRadius = side * 0.5f;
-    CGFloat tx = 12.0f + side + 10.0f;
-    CGFloat tw = b.size.width - tx - 8.0f;
-    CGFloat valueSize = h >= 64.0f ? 17.0f : 15.0f;
-    value.font = SenkoFontBody(valueSize, YES);
-    caption.font = SenkoFontBody(valueSize - 4.0f, NO);
-    CGFloat valueH = ceilf(valueSize * 1.3f);
-    CGFloat captionH = ceilf((valueSize - 4.0f) * 1.35f);
-    CGFloat top = floorf((h - valueH - captionH) * 0.5f);
-    value.frame = CGRectMake(tx, top, tw, valueH);
-    caption.frame = CGRectMake(tx, top + valueH, tw, captionH);
-}
-
 /* a phone on its side has no height for a stacked screen, so the button takes
-   the left half and the status, server and speed column the right */
+   the left half and the status and server column the right */
 - (void)layoutWideFrom:(CGFloat)x0 to:(CGFloat)x1
                    top:(CGFloat)top bottom:(CGFloat)bottom {
     CGFloat H = self.bounds.size.height;
@@ -742,8 +686,9 @@ static void SenkoHomeLayoutTile(UIView *tile, UIImageView *icon, UILabel *value,
 
     CGFloat rx = x0 + leftW + 14.0f;
     CGFloat rw = x1 - rx;
-    CGFloat stateH = 24.0f, detailH = 18.0f, cardH = 56.0f, tileH = 52.0f, gap = 10.0f;
-    CGFloat blockH = stateH + detailH + gap + cardH + gap + tileH;
+    CGFloat stateH = 24.0f, detailH = 18.0f, cardH = 56.0f, gap = 10.0f;
+    CGFloat protocolH = 22.0f;
+    CGFloat blockH = stateH + detailH + gap + cardH + gap + protocolH;
     CGFloat y = top + floorf((availH - blockH) * 0.5f);
     if (y < top) y = top;
     state.font = SenkoFontBody(19.0f, YES);
@@ -754,9 +699,10 @@ static void SenkoHomeLayoutTile(UIView *tile, UIImageView *icon, UILabel *value,
     y += detailH + gap;
     serverCard.frame = CGRectMake(rx, y, rw, cardH);
     y += cardH + gap;
-    CGFloat tileW = floorf((rw - gap) * 0.5f);
-    downTile.frame = CGRectMake(rx, y, tileW, tileH);
-    upTile.frame = CGRectMake(rx + rw - tileW, y, tileW, tileH);
+    protocolDot.frame = CGRectMake(rx + 8.0f, y + 8.0f, 6.0f, 6.0f);
+    protocolDot.layer.cornerRadius = 3.0f;
+    protocolLine.font = SenkoFontBody(13.0f, NO);
+    protocolLine.frame = CGRectMake(rx + 22.0f, y, rw - 22.0f, protocolH);
 }
 
 - (void)layoutSubviews {
@@ -795,8 +741,6 @@ static void SenkoHomeLayoutTile(UIView *tile, UIImageView *icon, UILabel *value,
     if (wide) {
         [self layoutWideFrom:x0 to:x1 top:headerY + btn + 6.0f bottom:bottom];
         SenkoHomeLayoutCard(self, _serverIconIsFlag);
-        SenkoHomeLayoutTile(downTile, downIcon, downValue, downCaption);
-        SenkoHomeLayoutTile(upTile, upIcon, upValue, upCaption);
         return;
     }
     tagline.hidden = NO;
@@ -810,15 +754,15 @@ static void SenkoHomeLayoutTile(UIView *tile, UIImageView *icon, UILabel *value,
     CGFloat colW = x1 - x0;
     if (colW > (pad ? 480.0f : 440.0f)) colW = pad ? 480.0f : 440.0f;
     CGFloat colX = floorf((W - colW) * 0.5f);
-    CGFloat tileH = pad ? 76.0f : (compact ? 54.0f : 66.0f);
     CGFloat cardH = pad ? 78.0f : (compact ? 58.0f : 68.0f);
-    CGFloat gap = compact ? 10.0f : 14.0f;
-
-    CGFloat y = H - bottom - tileH;
-    CGFloat tileW = floorf((colW - gap) * 0.5f);
-    downTile.frame = CGRectMake(colX, y, tileW, tileH);
-    upTile.frame = CGRectMake(colX + colW - tileW, y, tileW, tileH);
-    y -= gap + cardH;
+    CGFloat protocolH = compact ? 20.0f : 24.0f;
+    CGFloat y = H - bottom - protocolH;
+    protocolDot.frame = CGRectMake(colX + 8.0f, y + floorf((protocolH - 6.0f) * 0.5f),
+                                   6.0f, 6.0f);
+    protocolDot.layer.cornerRadius = 3.0f;
+    protocolLine.font = SenkoFontBody(pad ? 15.0f : 13.0f, NO);
+    protocolLine.frame = CGRectMake(colX + 22.0f, y, colW - 22.0f, protocolH);
+    y -= (compact ? 6.0f : 10.0f) + cardH;
     serverCard.frame = CGRectMake(colX, y, colW, cardH);
 
     CGFloat detailSize = pad ? 16.0f : 14.0f;
@@ -841,8 +785,6 @@ static void SenkoHomeLayoutTile(UIView *tile, UIImageView *icon, UILabel *value,
                              orbTop + floorf((avail - side) * 0.5f), side, side);
 
     SenkoHomeLayoutCard(self, _serverIconIsFlag);
-    SenkoHomeLayoutTile(downTile, downIcon, downValue, downCaption);
-    SenkoHomeLayoutTile(upTile, upIcon, upValue, upCaption);
 }
 
 @end

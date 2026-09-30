@@ -230,7 +230,7 @@ static NSString *SenkoCellRemark(NSString *raw) {
     return text;
 }
 
-static NSString *ServerProtocolLabel(SenkoServer *server) {
+NSString *SenkoServerProtocolLabel(SenkoServer *server) {
     if ([server->proto isEqualToString:@"vless"])
         return [NSString stringWithFormat:@"%@/%@/%@",
                 server->proto ? server->proto : @"vless",
@@ -722,7 +722,7 @@ static void SenkoSetRowChecking(UIActivityIndicatorView *activity, BOOL checking
                                    : ServerEndpointLabel(server));
     _title.text = title;
     _detail.text = nil;
-    _transport.text = ServerProtocolLabel(server);
+    _transport.text = SenkoServerProtocolLabel(server);
     _unsupported.hidden = server->supported;
     if (!server->supported) {
         _unsupported.textColor = SenkoUnsupportedTint();

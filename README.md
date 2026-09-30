@@ -24,6 +24,16 @@
 
 subscriptions: uri lists, base64, happ, xray/sing-box json, clash yaml, shadowrocket/surge ini.
 
+## subscriptions
+
+Tap **+** and **Add subscription** to save a URL. The **•••** button stays at
+the top of the server list. It opens subscription actions directly when there
+is one subscription, or lets you choose one when there are several. Each
+subscription heading has the same button. Use it to refresh, check ping, view
+details, edit the name or URL, or remove the subscription and its servers.
+The refresh and ping icons beside the heading run those checks directly. Tap
+the heading to fold or unfold its servers.
+
 ## features
 
 - servers and subscriptions, paste, qr and file import

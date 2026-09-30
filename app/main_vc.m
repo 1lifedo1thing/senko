@@ -24,6 +24,7 @@ static void SenkoDisableInjectedStatusBadge(void) {
     [_ios26Bg release];
     _actionSheet.delegate = nil;
     [_actionSheet release];
+    [_menuSubChoices release];
     [_ctl release];
     [_nativeVPN release];
     [_servers release];

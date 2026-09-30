@@ -61,6 +61,7 @@ static void SenkoBuildTranslations(void) {
     SenkoAddTranslation(@"Shadowsocks", @"Shadowsocks");
     SenkoAddTranslation(@"Trojan", @"Trojan");
     SenkoAddTranslation(@"Add", @"Добавить");
+    SenkoAddTranslation(@"Available servers: %lu", @"Доступно серверов: %lu");
     SenkoAddTranslation(@"Add server", @"Добавить сервер");
     SenkoAddTranslation(@"Allow insecure", @"Разрешить небезопасное");
     SenkoAddTranslation(@"All", @"Все");
@@ -766,6 +767,7 @@ static void SenkoBuildTranslations(void) {
     SenkoAddChineseTranslation(@"Server", @"服务器");
     SenkoAddChineseTranslation(@"SERVER", @"服务器");
     SenkoAddChineseTranslation(@"Add", @"添加");
+    SenkoAddChineseTranslation(@"Available servers: %lu", @"可用服务器：%lu");
     SenkoAddChineseTranslation(@"Add server", @"添加服务器");
     SenkoAddChineseTranslation(@"Add subscription", @"添加订阅");
     SenkoAddChineseTranslation(@"Cancel", @"取消");

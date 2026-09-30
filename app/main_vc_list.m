@@ -800,6 +800,43 @@ static BOOL SenkoServerMatchesQuery(SenkoServer *sv, NSString *shown, NSString *
     [self addPressed];
 }
 
+- (void)serverPickerManageSubscriptions {
+    if (_subscriptionMutationBusy) return;
+    if (![_subs count]) {
+        [self addPressed];
+        return;
+    }
+    if ([_subs count] == 1 || ([_pickerFilter intValue] >= 0 && _pickerFilter)) {
+        int index = [_subs count] == 1 ? ((SenkoSub *)[_subs objectAtIndex:0])->index
+                                       : [_pickerFilter intValue];
+        UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
+        button.tag = 2000 + index;
+        [self subMenuTapped:button];
+        return;
+    }
+    [self dismissCurrentActionSheetAnimated:NO];
+    NSMutableArray *choices = [NSMutableArray arrayWithCapacity:[_subs count]];
+    UIActionSheet *sheet = [[UIActionSheet alloc]
+        initWithTitle:SenkoLocalizedText(@"Subscription") delegate:self
+        cancelButtonTitle:SenkoLocalizedText(@"Cancel") destructiveButtonTitle:nil
+        otherButtonTitles:nil];
+    for (SenkoSub *sub in _subs) {
+        [choices addObject:[NSNumber numberWithInt:sub->index]];
+        [sheet addButtonWithTitle:[sub->name length] ? sub->name :
+                                  SenkoLocalizedText(@"Subscription")];
+    }
+    [_menuSubChoices release];
+    _menuSubChoices = [choices copy];
+    sheet.tag = 44;
+    _actionSheet = sheet;
+    if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad &&
+        [sheet respondsToSelector:@selector(showFromRect:inView:animated:)])
+        [sheet showFromRect:_picker->subscriptionButton.bounds
+                    inView:_picker->subscriptionButton animated:YES];
+    else
+        [sheet showInView:self.view];
+}
+
 - (void)serverPickerSort {
     [self showSortMenu];
 }
@@ -1091,6 +1128,7 @@ static BOOL SenkoServerMatchesQuery(SenkoServer *sv, NSString *shown, NSString *
     NSUInteger stateGeneration = ++_tunnelStateGeneration;
     __block NSString *vlessState = nil;
     __block NSString *awgState = nil;
+    __block long vlessUptime = 0;
     __block NSInteger pending = 2;
     void (^applyBackendState)(void) = ^{
         NSString *stateBefore;
@@ -1141,6 +1179,8 @@ static BOOL SenkoServerMatchesQuery(SenkoServer *sv, NSString *shown, NSString *
         }
 
         if (awgUp) {
+            if (backendBefore != SenkoBackendAmneziaWG)
+                _tunnelUptimeKnown = NO;
             _activeBackend = SenkoBackendAmneziaWG;
             _selectedBackend = SenkoBackendAmneziaWG;
             [[NSUserDefaults standardUserDefaults] setInteger:_selectedBackend
@@ -1149,6 +1189,13 @@ static BOOL SenkoServerMatchesQuery(SenkoServer *sv, NSString *shown, NSString *
             _state = [awg copy];
             [self setLastErr:nil];
         } else if (vlessUp) {
+            if ([vlessState isEqualToString:@"connected"]) {
+                _tunnelUptime = vlessUptime;
+                _tunnelUptimeAt = CACurrentMediaTime();
+                _tunnelUptimeKnown = YES;
+            } else {
+                _tunnelUptimeKnown = NO;
+            }
             _activeBackend = SenkoBackendServer;
             [_state release];
             _state = [vlessState copy];
@@ -1181,7 +1228,8 @@ static BOOL SenkoServerMatchesQuery(SenkoServer *sv, NSString *shown, NSString *
                 [self setLastErr:nil];
         }
         if (always || backendBefore != _activeBackend ||
-            ![stateBefore isEqualToString:_state])
+            ![stateBefore isEqualToString:_state] ||
+            (awgUp && [awg isEqualToString:@"connected"] && !_tunnelUptimeKnown))
             [self applyState];
         if (awgUp && [awg isEqualToString:@"connecting"]) {
             [NSObject cancelPreviousPerformRequestsWithTarget:self
@@ -1197,18 +1245,9 @@ static BOOL SenkoServerMatchesQuery(SenkoServer *sv, NSString *shown, NSString *
     void (^statusReply)(NSString *, long) = ^(NSString *state, long uptime) {
         if (generation != _catalogGeneration ||
             stateGeneration != _tunnelStateGeneration) return;
-        /* the daemon owns the clock, so the elapsed time survives the app being
-           closed and reopened over a live tunnel. a dropped reply carries no
-           clock at all and must not reset the one already on screen */
-        if ([state isEqualToString:@"connected"]) {
-            _tunnelUptime = uptime;
-            _tunnelUptimeAt = CACurrentMediaTime();
-            _tunnelUptimeKnown = YES;
-        } else if ([state length]) {
-            _tunnelUptimeKnown = NO;
-            _tunnelUptime = 0;
-            _tunnelUptimeAt = 0.0;
-        }
+        /* STATUS is for the server backend; its idle reply says nothing about
+           the amneziawg clock until both backend replies have been resolved */
+        vlessUptime = uptime;
         vlessState = [state copy];
         applyBackendState();
     };
@@ -2181,8 +2220,9 @@ static BOOL SenkoServerMatchesQuery(SenkoServer *sv, NSString *shown, NSString *
         ![self subscriptionByIndex:subIdx]) return;
     [self dismissCurrentActionSheetAnimated:NO];
     _menuSubIdx = subIdx;
+    SenkoSub *entry = [self subscriptionByIndex:subIdx];
     UIActionSheet *as = [[UIActionSheet alloc]
-                         initWithTitle:SenkoLocalizedText(@"Subscription")
+                         initWithTitle:[entry->name length] ? entry->name : SenkoLocalizedText(@"Subscription")
                          delegate:self
                          cancelButtonTitle:SenkoLocalizedText(@"Cancel")
                          destructiveButtonTitle:SenkoLocalizedText(@"Remove")
@@ -2192,9 +2232,10 @@ static BOOL SenkoServerMatchesQuery(SenkoServer *sv, NSString *shown, NSString *
                                            SenkoLocalizedText(@"Edit details"), nil];
     as.tag = 400000 + subIdx;
     _actionSheet = as;
+    UIView *anchor = btn.superview ? btn : _picker->subscriptionButton;
     if ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad &&
         [as respondsToSelector:@selector(showFromRect:inView:animated:)])
-        [as showFromRect:btn.bounds inView:btn animated:YES];
+        [as showFromRect:anchor.bounds inView:anchor animated:YES];
     else
         [as showInView:self.view];
 }

@@ -10,6 +10,7 @@
    same way */
 NSString *SenkoServerFlagCode(NSString *remark);
 NSString *SenkoServerDisplayName(NSString *remark);
+NSString *SenkoServerProtocolLabel(SenkoServer *server);
 /* the flag, or the senko placeholder for a server without one, cut to a
    rounded tile with a sheen, rendered once per size */
 UIImage *SenkoServerBadgeImage(NSString *remark, CGFloat side);

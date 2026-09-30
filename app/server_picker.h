@@ -10,6 +10,7 @@
 @protocol SenkoServerPickerDelegate <NSObject>
 - (void)serverPickerClose;
 - (void)serverPickerAdd;
+- (void)serverPickerManageSubscriptions;
 - (void)serverPickerSort;
 - (void)serverPickerPing;
 - (void)serverPickerChooseAuto;
@@ -25,6 +26,7 @@
 @public
     UIButton       *closeButton;
     UIButton       *addButton;
+    UIButton       *subscriptionButton;
     UILabel        *titleLabel;
     SenkoReliefControl *searchPlate;
     UIImageView    *searchIcon;

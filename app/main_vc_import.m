@@ -50,6 +50,10 @@
     }
     if (idx != sheet.cancelButtonIndex)
         [self handleActionSheetSelection:sheet index:idx];
+    if (sheet.tag == 44) {
+        [_menuSubChoices release];
+        _menuSubChoices = nil;
+    }
     [sheet release];
 }
 
@@ -157,6 +161,15 @@
 
 - (void)handleActionSheetSelection:(UIActionSheet *)sheet index:(NSInteger)idx {
     NSInteger first = sheet.firstOtherButtonIndex;
+    if (sheet.tag == 44) {
+        NSInteger choice = idx - first;
+        if (choice >= 0 && choice < (NSInteger)[_menuSubChoices count]) {
+            UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
+            button.tag = 2000 + [[_menuSubChoices objectAtIndex:choice] intValue];
+            [self subMenuTapped:button];
+        }
+        return;
+    }
     if (sheet.tag == 43) {
         [self sortMenuPicked:idx];
         return;
