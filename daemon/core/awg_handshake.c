@@ -189,6 +189,16 @@ static uint32_t choose_header(uint32_t min, uint32_t max) {
     return min + (uint32_t)((uint64_t)random_u32() % span);
 }
 
+static int trailer_length(size_t packet_len, size_t mtu, size_t *length) {
+    *length = 0;
+    size_t window = mtu < 500 ? mtu : 500;
+    if (packet_len >= window) return 0;
+    uint8_t bytes[4];
+    if (RAND_bytes(bytes, sizeof bytes) != 1) return -1;
+    *length = (size_t)((uint64_t)read_le32(bytes) % (window - packet_len));
+    return 0;
+}
+
 static int random_bytes(uint8_t *out, size_t len) {
     return len <= INT_MAX && RAND_bytes(out, (int)len) == 1 ? 0 : -1;
 }
@@ -219,8 +229,17 @@ awg_hs_status_t awg_handshake_build_initiation(awg_handshake_t *hs,
     const awg_config_t *cfg = hs->cfg;
     size_t offset = cfg->padding[0];
     size_t need = offset + AWG_INIT_PACKET_LEN;
+    if (cfg->random_trailers) {
+        size_t extra = 0;
+        if (trailer_length(need, cfg->mtu, &extra) != 0) return AWG_HS_ERR_CRYPTO;
+        need += extra;
+    }
     if (need > cap || need > cfg->mtu) return AWG_HS_ERR_SPACE;
     if (random_bytes(out, offset) != 0) return AWG_HS_ERR_CRYPTO;
+    if (need > offset + AWG_INIT_PACKET_LEN &&
+        random_bytes(out + offset + AWG_INIT_PACKET_LEN,
+                     need - offset - AWG_INIT_PACKET_LEN) != 0)
+        return AWG_HS_ERR_CRYPTO;
 
     hs->debug_stage = 1;
     if (blake2s(k_noise_name, sizeof k_noise_name - 1, hs->chain_key) != 0) return AWG_HS_ERR_CRYPTO;
@@ -287,7 +306,9 @@ awg_hs_status_t awg_handshake_consume_response(awg_handshake_t *hs,
     if (!hs || !hs->cfg || !packet) return AWG_HS_ERR_ARG;
     const awg_config_t *cfg = hs->cfg;
     size_t offset = cfg->padding[1];
-    if (packet_len < offset + AWG_RESP_PACKET_LEN) return AWG_HS_ERR_FORMAT;
+    if (packet_len < offset + AWG_RESP_PACKET_LEN ||
+        (!cfg->random_trailers && packet_len != offset + AWG_RESP_PACKET_LEN))
+        return AWG_HS_ERR_FORMAT;
     const uint8_t *msg = packet + offset;
     uint8_t decrypted[AWG_RESP_PACKET_LEN];
     if (cfg->has_header_protection) {
@@ -514,12 +535,31 @@ awg_hs_status_t awg_handshake_establish_fd(int fd, int cancel_fd, const awg_conf
        it is still resent every second: while the kernel resolves the next hop
        it holds only the first packet of a burst, so after an idle spell the
        junk went out and the initiation behind it was dropped (ios 5.1.1) */
-    const int64_t resend_ms = cfg->itime ? (int64_t)cfg->itime * 1000 : 1000;
+    uint16_t retry_seconds = 0;
+    if (awg_range_pick(cfg->timers[AWG_TIMER_REKEY_TIMEOUT], 0,
+                       &retry_seconds) != 0) {
+        OPENSSL_cleanse(response, AWG_DATAGRAM_MAX);
+        free(response);
+        set_reason(reason, reason_cap, "handshake timer random generation failed");
+        return AWG_HS_ERR_CRYPTO;
+    }
+    const int64_t resend_ms = retry_seconds ? (int64_t)retry_seconds * 1000 :
+                              (cfg->itime ? (int64_t)cfg->itime * 1000 : 1000);
     int64_t resend_at = senko_now_ms() + resend_ms;
+    uint16_t max_attempts = 0;
+    if (awg_range_pick(cfg->timers[AWG_TIMER_MAX_ATTEMPTS], 18,
+                       &max_attempts) != 0) {
+        OPENSSL_cleanse(response, AWG_DATAGRAM_MAX);
+        free(response);
+        set_reason(reason, reason_cap, "handshake retry random generation failed");
+        return AWG_HS_ERR_CRYPTO;
+    }
+    uint16_t attempts = 1;
     while (r == AWG_HS_OK && senko_now_ms() < deadline) {
-        if (resend_at && senko_now_ms() >= resend_at) {
+        if (attempts < max_attempts && resend_at && senko_now_ms() >= resend_at) {
             r = awg_handshake_send_initiation(fd, hs, reason, reason_cap);
             if (r != AWG_HS_OK) break;
+            ++attempts;
             resend_at = senko_now_ms() + resend_ms;
         }
         int64_t remaining = deadline - senko_now_ms();

@@ -31,6 +31,25 @@ void awg_config_init(awg_config_t *cfg) {
         cfg->header_min[i] = cfg->header_max[i] = (uint32_t)i + 1;
 }
 
+int awg_range_pick(awg_range16_t range, uint16_t fallback, uint16_t *out) {
+    if (!out || range.min > range.max) return -1;
+    if (!range.min && !range.max) {
+        *out = fallback;
+        return 0;
+    }
+    if (range.min == range.max) {
+        *out = range.min;
+        return 0;
+    }
+    uint8_t bytes[4];
+    if (RAND_bytes(bytes, sizeof bytes) != 1) return -1;
+    uint32_t value = (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) |
+                     ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
+    *out = (uint16_t)(range.min + (uint64_t)value %
+                      ((uint32_t)range.max - range.min + 1));
+    return 0;
+}
+
 static void trim_span(const char **start, const char **end) {
     while (*start < *end && isspace((unsigned char)**start)) ++*start;
     while (*end > *start && isspace((unsigned char)(*end)[-1])) --*end;
@@ -137,6 +156,15 @@ static int parse_header_range(const char *start, const char *end,
     return 0;
 }
 
+static int parse_range16(const char *start, const char *end, awg_range16_t *range) {
+    uint32_t min = 0, max = 0;
+    if (parse_header_range(start, end, &min, &max) != 0 || max > UINT16_MAX)
+        return -1;
+    range->min = (uint16_t)min;
+    range->max = (uint16_t)max;
+    return 0;
+}
+
 static int signature_syntax_ok(const char *text) {
     const char *p = text;
     while (*p) {
@@ -158,23 +186,6 @@ static int key_is_required(awg_section_t section,
                span_equals(key_start, key_end, "Address");
     return span_equals(key_start, key_end, "PublicKey") ||
            span_equals(key_start, key_end, "Endpoint");
-}
-
-/* awg 2.0 knobs that change what goes on the wire. senko cannot produce
-   random trailers, and a tunnel built while ignoring that never completes a
-   handshake, so the profile is refused naming the field that caused it. it is
-   only fatal when actually turned on.
-   ContentPaddingAddition is not refused here: it only lengthens the padding
-   the *sender* adds to its own outgoing data packets, and awg_tunnel_open
-   already recovers the real length from the tunnelled ip header regardless of
-   how much trailing padding the peer chose to add, so a client that never
-   emits this padding itself still interoperates fine */
-static const char *unsupported_wire_key(const char *key_start, const char *key_end,
-                                        const char *value_start, const char *value_end) {
-    if (span_equals(key_start, key_end, "RandomTrailers") &&
-        span_equals(value_start, value_end, "on"))
-        return "RandomTrailers";
-    return NULL;
 }
 
 static awg_cfg_status_t assign_interface(awg_config_t *cfg,
@@ -209,6 +220,31 @@ static awg_cfg_status_t assign_interface(awg_config_t *cfg,
         if (parse_key(value_start, value_end, cfg->header_protection_key) != 0)
             goto bad_key;
         cfg->has_header_protection = 1;
+    } else if (span_equals(key_start, key_end, "ContentPaddingAddition")) {
+        if (parse_range16(value_start, value_end, &cfg->content_padding) != 0)
+            goto bad_value;
+    } else if (span_equals(key_start, key_end, "RandomTrailers") ||
+               span_equals(key_start, key_end, "DisableCookies")) {
+        int enabled;
+        if (span_equals(value_start, value_end, "on")) enabled = 1;
+        else if (span_equals(value_start, value_end, "off")) enabled = 0;
+        else goto bad_value;
+        if (span_equals(key_start, key_end, "RandomTrailers"))
+            cfg->random_trailers = enabled;
+        else
+            cfg->disable_cookies = enabled;
+    } else if (span_equals(key_start, key_end, "RekeyAfterTime") ||
+               span_equals(key_start, key_end, "RekeyTimeout") ||
+               span_equals(key_start, key_end, "RejectAfterTime") ||
+               span_equals(key_start, key_end, "KeepaliveTimeout") ||
+               span_equals(key_start, key_end, "MaxHandshakeAttempts")) {
+        size_t timer = span_equals(key_start, key_end, "RekeyAfterTime") ? AWG_TIMER_REKEY_AFTER :
+                       span_equals(key_start, key_end, "RekeyTimeout") ? AWG_TIMER_REKEY_TIMEOUT :
+                       span_equals(key_start, key_end, "RejectAfterTime") ? AWG_TIMER_REJECT_AFTER :
+                       span_equals(key_start, key_end, "KeepaliveTimeout") ? AWG_TIMER_KEEPALIVE :
+                       AWG_TIMER_MAX_ATTEMPTS;
+        if (parse_range16(value_start, value_end, &cfg->timers[timer]) != 0)
+            goto bad_value;
     } else if (key_end - key_start == 2 && key_start[0] == 'S' &&
                key_start[1] >= '1' && key_start[1] <= '4') {
         size_t i = (size_t)(key_start[1] - '1');
@@ -349,15 +385,6 @@ awg_cfg_status_t awg_config_parse(const char *text, size_t len, awg_config_t *cf
                     p = line_end < end ? line_end + 1 : end;
                     continue;
                 }
-                const char *unsupported = unsupported_wire_key(key_start, key_end,
-                                                                value_start, value_end);
-                if (unsupported) {
-                    if (reason && reason_cap)
-                        snprintf(reason, reason_cap,
-                                 "%s is an amneziawg 2.0 wire option senko cannot produce",
-                                 unsupported);
-                    return AWG_CFG_ERR_UNSUPPORTED;
-                }
                 awg_cfg_status_t r = section == AWG_SECTION_INTERFACE
                     ? assign_interface(cfg, key_start, key_end, value_start, value_end, reason, reason_cap)
                     : assign_peer(cfg, key_start, key_end, value_start, value_end, reason, reason_cap);
@@ -388,6 +415,12 @@ awg_cfg_status_t awg_config_parse(const char *text, size_t len, awg_config_t *cf
     if (cfg->jmin > cfg->jmax || cfg->jmax > 65507) {
         set_reason(reason, reason_cap, "invalid junk packet range");
         return AWG_CFG_ERR_RANGE;
+    }
+    for (size_t i = 0; i < AWG_TIMER_COUNT; ++i) {
+        if (cfg->timers[i].max && !cfg->timers[i].min) {
+            set_reason(reason, reason_cap, "timer ranges cannot include zero");
+            return AWG_CFG_ERR_RANGE;
+        }
     }
     for (size_t i = 0; i < 4; ++i) {
         uint32_t base = i == 0 ? 148 : (i == 1 ? 92 : (i == 2 ? 64 : 32));

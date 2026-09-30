@@ -42,6 +42,18 @@ static uint32_t random_u32(void) {
     return read_le32(bytes);
 }
 
+static int choose_padding(uint32_t min, uint32_t max, size_t space, size_t *out) {
+    if (!out || min > max) return -1;
+    uint32_t value = min;
+    if (max > min) {
+        uint8_t bytes[4];
+        if (RAND_bytes(bytes, sizeof bytes) != 1) return -1;
+        value += (uint32_t)((uint64_t)read_le32(bytes) % ((uint64_t)max - min + 1));
+    }
+    *out = value < space ? value : space;
+    return 0;
+}
+
 static uint32_t choose_header(uint32_t min, uint32_t max) {
     if (min == max) return min;
     uint64_t span = (uint64_t)max - min + 1;
@@ -49,7 +61,7 @@ static uint32_t choose_header(uint32_t min, uint32_t max) {
 }
 
 static size_t inner_packet_length(const uint8_t *packet, size_t packet_len) {
-    if (!packet_len) return 0;
+    if (!packet_len || packet[0] == 0) return 0;
     if ((packet[0] >> 4) == 4 && packet_len >= 4) {
         size_t declared = ((size_t)packet[2] << 8) | packet[3];
         return declared >= 20 && declared <= packet_len ? declared : packet_len;
@@ -65,6 +77,7 @@ void awg_tunnel_init(awg_tunnel_t *tunnel, const awg_config_t *cfg) {
     if (!tunnel) return;
     memset(tunnel, 0, sizeof *tunnel);
     awg_handshake_init(&tunnel->handshake, cfg);
+    tunnel->udp_window = 500;
 }
 
 awg_tun_status_t awg_tunnel_seal(awg_tunnel_t *tunnel,
@@ -76,7 +89,28 @@ awg_tun_status_t awg_tunnel_seal(awg_tunnel_t *tunnel,
     if (!tunnel->handshake.established || tunnel->send_counter == UINT64_MAX)
         return AWG_TUN_ERR_CRYPTO;
     size_t prefix = cfg->padding[3];
+    if (packet_len > SIZE_MAX - 15U ||
+        packet_len > SIZE_MAX - prefix - AWG_TRANSPORT_FIXED)
+        return AWG_TUN_ERR_SPACE;
     size_t padded_len = (packet_len + 15U) & ~(size_t)15U;
+    size_t base = prefix + AWG_TRANSPORT_FIXED + packet_len;
+    size_t limit = cap < AWG_DATAGRAM_MAX ? cap : AWG_DATAGRAM_MAX;
+    if (base > limit) return AWG_TUN_ERR_SPACE;
+    if (base > tunnel->udp_window) tunnel->udp_window = (uint32_t)base;
+    if (cfg->content_padding.min || cfg->content_padding.max) {
+        size_t addition = 0;
+        size_t ceiling = tunnel->udp_window < limit ? tunnel->udp_window : limit;
+        size_t room = ceiling > base ? ceiling - base : 0;
+        if (choose_padding(cfg->content_padding.min, cfg->content_padding.max,
+                           room, &addition) != 0) return AWG_TUN_ERR_CRYPTO;
+        padded_len = packet_len + addition;
+    } else if (cfg->random_trailers) {
+        size_t addition = 0;
+        size_t window = tunnel->udp_window < limit ? tunnel->udp_window : limit;
+        if (choose_padding(0, window > base ? (uint32_t)(window - base - 1) : 0,
+                           limit - base, &addition) != 0) return AWG_TUN_ERR_CRYPTO;
+        padded_len = packet_len + addition;
+    }
     size_t need = prefix + AWG_TRANSPORT_FIXED + padded_len;
     if (need > cap || need > AWG_DATAGRAM_MAX) return AWG_TUN_ERR_SPACE;
     if (prefix && RAND_bytes(out, (int)prefix) != 1) return AWG_TUN_ERR_CRYPTO;
@@ -126,18 +160,19 @@ awg_tun_status_t awg_tunnel_open(awg_tunnel_t *tunnel,
         read_le32(hdr + 4) != tunnel->handshake.sender_index)
         return AWG_TUN_ERR_FORMAT;
     uint64_t counter = read_le64(hdr + 8);
+    uint64_t window = tunnel->recv_window;
     if (tunnel->have_recv_counter) {
         if (counter > tunnel->recv_counter) {
             uint64_t shift = counter - tunnel->recv_counter;
-            tunnel->recv_window = shift >= 64 ? 1 : (tunnel->recv_window << shift) | 1U;
+            window = shift >= 64 ? 1 : (window << shift) | 1U;
         } else {
             uint64_t distance = tunnel->recv_counter - counter;
-            if (distance >= 64 || (tunnel->recv_window & (UINT64_C(1) << distance)))
+            if (distance >= 64 || (window & (UINT64_C(1) << distance)))
                 return AWG_TUN_ERR_REPLAY;
-            tunnel->recv_window |= UINT64_C(1) << distance;
+            window |= UINT64_C(1) << distance;
         }
     } else {
-        tunnel->recv_window = 1;
+        window = 1;
     }
     size_t plain_len = packet_len - prefix - AWG_TRANSPORT_FIXED;
     if (plain_len > cap) return AWG_TUN_ERR_SPACE;
@@ -147,6 +182,8 @@ awg_tun_status_t awg_tunnel_open(awg_tunnel_t *tunnel,
                                       wire + 16, plain_len, wire + 16 + plain_len, out) == RC_OK;
     OPENSSL_cleanse(nonce, sizeof nonce);
     if (!ok) return AWG_TUN_ERR_AUTH;
+    if (packet_len > tunnel->udp_window) tunnel->udp_window = (uint32_t)packet_len;
+    tunnel->recv_window = window;
     if (!tunnel->have_recv_counter || counter > tunnel->recv_counter)
         tunnel->recv_counter = counter;
     tunnel->have_recv_counter = 1;

@@ -25,6 +25,7 @@ typedef struct {
     uint64_t send_counter;
     uint64_t recv_counter;
     uint64_t recv_window;
+    uint32_t udp_window;
     int have_recv_counter;
 } awg_tunnel_t;
 

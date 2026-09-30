@@ -32,6 +32,27 @@ void awg_link_init(awg_link_t *link, const awg_config_t *cfg, utun_device_t *dev
     if (established) link->current.handshake = *established;
     link->handshake_ms = now_ms;
     link->last_tx_ms = now_ms;
+    link->last_rx_ms = now_ms;
+}
+
+static int pick_timers(awg_link_t *link) {
+    uint16_t seconds = 0;
+    if (awg_range_pick(link->cfg->timers[AWG_TIMER_REKEY_AFTER],
+                       AWG_LINK_REKEY_AFTER_MS / 1000, &seconds) != 0) return -1;
+    link->rekey_after_ms = (int64_t)seconds * 1000;
+    if (awg_range_pick(link->cfg->timers[AWG_TIMER_REKEY_TIMEOUT],
+                       AWG_LINK_REKEY_RETRY_MS / 1000, &seconds) != 0) return -1;
+    link->rekey_retry_ms = (int64_t)seconds * 1000;
+    if (awg_range_pick(link->cfg->timers[AWG_TIMER_REJECT_AFTER],
+                       AWG_LINK_REJECT_AFTER_MS / 1000, &seconds) != 0) return -1;
+    link->reject_after_ms = (int64_t)seconds * 1000;
+    if (awg_range_pick(link->cfg->timers[AWG_TIMER_KEEPALIVE], 10, &seconds) != 0)
+        return -1;
+    link->keepalive_timeout_ms = (int64_t)seconds * 1000;
+    if (awg_range_pick(link->cfg->timers[AWG_TIMER_MAX_ATTEMPTS], 18,
+                       &link->max_handshake_attempts) != 0) return -1;
+    link->rekey_attempts = 0;
+    return 0;
 }
 
 void awg_link_clear(awg_link_t *link) {
@@ -114,7 +135,8 @@ static int pump_device(awg_link_t *link, uint64_t *up, int *udp_dead) {
     return 0;
 }
 
-static void accept_renewal(awg_link_t *link, const awg_handshake_t *answered) {
+static int accept_renewal(awg_link_t *link, const awg_handshake_t *answered) {
+    if (pick_timers(link) != 0) return -1;
     OPENSSL_cleanse(&link->previous, sizeof link->previous);
     link->previous = link->current;
     link->have_previous = 1;
@@ -124,6 +146,7 @@ static void accept_renewal(awg_link_t *link, const awg_handshake_t *answered) {
     link->rekey_pending = 0;
     OPENSSL_cleanse(&link->pending, sizeof link->pending);
     ++link->renewals;
+    return 0;
 }
 
 /* server to device. -1 when the socket or the device failed */
@@ -140,7 +163,10 @@ static int pump_udp(awg_link_t *link, uint64_t *down, int *device_dead) {
             awg_hs_status_t hs = awg_handshake_consume_response(&trial, link->wire,
                                                                 (size_t)got);
             if (hs == AWG_HS_OK && trial.established) {
-                accept_renewal(link, &trial);
+                if (accept_renewal(link, &trial) != 0) {
+                    OPENSSL_cleanse(&trial, sizeof trial);
+                    return -1;
+                }
                 OPENSSL_cleanse(&trial, sizeof trial);
                 /* the server starts using the new keys only once it has seen
                    a packet sealed with them */
@@ -161,6 +187,7 @@ static int pump_udp(awg_link_t *link, uint64_t *down, int *device_dead) {
             ++link->dropped;
             continue;
         }
+        link->last_rx_ms = senko_now_ms();
         if (!inner_len) continue; /* keepalive */
         if (utun_frame_header(inner[0], link->frame) != UTUN_FRAME_OK) {
             ++link->dropped;
@@ -190,21 +217,41 @@ static void start_renewal(awg_link_t *link, int64_t now) {
         fprintf(stderr, "senkod: amneziawg key renewal not sent: %s\n",
                 why[0] ? why : "udp send failed");
     link->rekey_sent_ms = now;
+    ++link->rekey_attempts;
 }
 
 awg_link_status_t awg_link_run(awg_link_t *link, char *reason, size_t reason_cap) {
     if (reason && reason_cap) reason[0] = '\0';
+    if (pick_timers(link) != 0) {
+        if (reason && reason_cap)
+            snprintf(reason, reason_cap, "amneziawg timer random generation failed");
+        return AWG_LINK_ERR_EXPIRED;
+    }
     for (;;) {
         int64_t now = senko_now_ms();
-        if (now - link->handshake_ms >= AWG_LINK_REJECT_AFTER_MS) {
+        if (now - link->handshake_ms >= link->reject_after_ms) {
             set_reason(reason, reason_cap,
                        "the server has not answered a new handshake for %d s",
-                       (int)((AWG_LINK_REJECT_AFTER_MS - AWG_LINK_REKEY_AFTER_MS) / 1000));
+                       (int)(link->reject_after_ms / 1000));
             return AWG_LINK_ERR_EXPIRED;
         }
-        if (now - link->handshake_ms >= AWG_LINK_REKEY_AFTER_MS &&
-            (!link->rekey_pending || now - link->rekey_sent_ms >= AWG_LINK_REKEY_RETRY_MS))
+        if (now - link->handshake_ms >= link->rekey_after_ms &&
+            (!link->rekey_pending || now - link->rekey_sent_ms >= link->rekey_retry_ms) &&
+            link->rekey_attempts < link->max_handshake_attempts)
             start_renewal(link, now);
+        if (link->rekey_attempts >= link->max_handshake_attempts &&
+            now - link->rekey_sent_ms >= link->rekey_retry_ms) {
+            set_reason(reason, reason_cap, "amneziawg handshake failed after %d attempts",
+                       (int)link->max_handshake_attempts);
+            return AWG_LINK_ERR_EXPIRED;
+        }
+        if (link->cfg->timers[AWG_TIMER_KEEPALIVE].max &&
+            now - link->last_rx_ms < link->keepalive_timeout_ms &&
+            now - link->last_tx_ms >= link->keepalive_timeout_ms &&
+            send_keepalive(link) != 0) {
+            set_reason(reason, reason_cap, "the udp socket to the server failed (errno %d)", errno);
+            return AWG_LINK_ERR_UDP;
+        }
         if (link->cfg->persistent_keepalive &&
             now - link->last_tx_ms >= (int64_t)link->cfg->persistent_keepalive * 1000 &&
             send_keepalive(link) != 0) {

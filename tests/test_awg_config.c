@@ -148,7 +148,9 @@ int main(void) {
         "[Interface]\nPrivateKey = " K_PRIV "\nAddress = 10.0.0.2/32\n"
         "RandomTrailers = on\n"
         "[Peer]\nPublicKey = " K_PUB "\nEndpoint = 127.0.0.1:51820\n";
-    bad |= expect_status(trailers_on, AWG_CFG_ERR_UNSUPPORTED, "random trailers on");
+    r = parse(trailers_on, &cfg, reason, sizeof reason);
+    bad |= expect(r == AWG_CFG_OK && cfg.random_trailers,
+                  "random trailers on");
 
     /* a wire option written with no value is unset, not turned on */
     static const char blank_wire_options[] =
@@ -164,6 +166,33 @@ int main(void) {
         "RekeyAfterTime = 120\nMaxHandshakeAttempts = 5\n"
         "[Peer]\nPublicKey = " K_PUB "\nEndpoint = 127.0.0.1:51820\n";
     bad |= expect_status(trailers_off, AWG_CFG_OK, "inert awg 2.0 knobs");
+
+    static const char awg31[] =
+        "[Interface]\nPrivateKey = " K_PRIV "\nAddress = 10.0.0.2/32\n"
+        "ContentPaddingAddition = 4-12\nRandomTrailers = on\n"
+        "RekeyAfterTime = 110-130\nRekeyTimeout = 4-7\n"
+        "RejectAfterTime = 170-190\nKeepaliveTimeout = 8-12\n"
+        "MaxHandshakeAttempts = 3-6\nDisableCookies = on\n"
+        "[Peer]\nPublicKey = " K_PUB "\nEndpoint = 127.0.0.1:51820\n";
+    r = parse(awg31, &cfg, reason, sizeof reason);
+    bad |= expect(r == AWG_CFG_OK && cfg.content_padding.min == 4 &&
+                  cfg.content_padding.max == 12 && cfg.random_trailers &&
+                  cfg.disable_cookies &&
+                  cfg.timers[AWG_TIMER_MAX_ATTEMPTS].min == 3,
+                  "awg 3.1 parameters are retained");
+    uint16_t chosen = 0;
+    bad |= expect(awg_range_pick(cfg.timers[AWG_TIMER_REKEY_TIMEOUT], 5,
+                                 &chosen) == 0 && chosen >= 4 && chosen <= 7,
+                  "timer draw stays in the configured range");
+    awg_range16_t disabled = {0, 0};
+    bad |= expect(awg_range_pick(disabled, 18, &chosen) == 0 && chosen == 18,
+                  "zero timer range uses the wireguard default");
+    static const char invalid_timing[] =
+        "[Interface]\nPrivateKey = " K_PRIV "\nAddress = 10.0.0.2/32\n"
+        "RekeyTimeout = 0-5\n"
+        "[Peer]\nPublicKey = " K_PUB "\nEndpoint = 127.0.0.1:51820\n";
+    bad |= expect_status(invalid_timing, AWG_CFG_ERR_RANGE,
+                         "timer range cannot trigger zero-delay retry");
 
     /* real exporters randomize the keepalive the same way they randomize
        the junk and rekey timers, and a real profile with a huge split

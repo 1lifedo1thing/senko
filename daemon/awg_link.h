@@ -48,6 +48,13 @@ typedef struct {
     int64_t rekey_sent_ms;
     int64_t handshake_ms; /* when the current keys were accepted */
     int64_t last_tx_ms;
+    int64_t last_rx_ms;
+    int64_t rekey_after_ms;
+    int64_t rekey_retry_ms;
+    int64_t reject_after_ms;
+    int64_t keepalive_timeout_ms;
+    uint16_t max_handshake_attempts;
+    uint16_t rekey_attempts;
 
     uint64_t bytes_up;
     uint64_t bytes_down;

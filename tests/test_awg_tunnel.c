@@ -43,8 +43,15 @@ int main(void) {
     bad |= expect(wire_len == 32 + 32 + 7, "wire length");
     bad |= expect(awg_tunnel_seal(&client, inner, sizeof inner, wire_next, sizeof wire_next,
                                   &wire_next_len) == AWG_TUN_OK, "second seal");
+    uint8_t forged[128];
+    memcpy(forged, wire_next, wire_next_len);
+    forged[wire_next_len - 1] ^= 1;
+    bad |= expect(awg_tunnel_open(&server, forged, wire_next_len, opened, sizeof opened,
+                                  &opened_len) == AWG_TUN_ERR_AUTH,
+                  "forged counter fails authentication");
     bad |= expect(awg_tunnel_open(&server, wire_next, wire_next_len, opened, sizeof opened,
-                                  &opened_len) == AWG_TUN_OK, "open second");
+                                  &opened_len) == AWG_TUN_OK,
+                  "forged counter does not consume replay window");
     bad |= expect(awg_tunnel_open(&server, wire, wire_len, opened, sizeof opened, &opened_len) == AWG_TUN_OK,
                   "open reordered");
     bad |= expect(opened_len == sizeof inner && memcmp(opened, inner, sizeof inner) == 0,
@@ -55,5 +62,38 @@ int main(void) {
                   wire_len == 32 + 7, "keepalive seal");
     bad |= expect(awg_tunnel_open(&server, wire, wire_len, opened, sizeof opened, &opened_len) == AWG_TUN_OK &&
                   opened_len == 0, "keepalive open");
+    cfg.content_padding.min = cfg.content_padding.max = 9;
+    bad |= expect(awg_tunnel_seal(&client, inner, sizeof inner, wire, sizeof wire,
+                                  &wire_len) == AWG_TUN_OK &&
+                  wire_len == 7 + 32 + sizeof inner + 9,
+                  "content padding uses configured addition");
+    bad |= expect(awg_tunnel_open(&server, wire, wire_len, opened, sizeof opened,
+                                  &opened_len) == AWG_TUN_OK &&
+                  opened_len == sizeof inner && memcmp(opened, inner, sizeof inner) == 0,
+                  "content padded packet roundtrips");
+    cfg.content_padding.min = cfg.content_padding.max = 0;
+    cfg.random_trailers = 1;
+    bad |= expect(awg_tunnel_seal(&client, inner, sizeof inner, wire, sizeof wire,
+                                  &wire_len) == AWG_TUN_OK && wire_len <= sizeof wire,
+                  "random trailer fits caller capacity");
+    bad |= expect(awg_tunnel_open(&server, wire, wire_len, opened, sizeof opened,
+                                  &opened_len) == AWG_TUN_OK && opened_len == sizeof inner,
+                  "random trailer packet roundtrips");
+    bad |= expect(awg_tunnel_seal(&client, NULL, 0, wire, sizeof wire,
+                                  &wire_len) == AWG_TUN_OK &&
+                  awg_tunnel_open(&server, wire, wire_len, opened, sizeof opened,
+                                  &opened_len) == AWG_TUN_OK && opened_len == 0,
+                  "random padded keepalive stays a keepalive");
+    cfg.random_trailers = 0;
+    cfg.content_padding.min = cfg.content_padding.max = 1000;
+    uint8_t large_wire[1500], large_open[1500];
+    bad |= expect(awg_tunnel_seal(&client, inner, sizeof inner, large_wire,
+                                  sizeof large_wire, &wire_len) == AWG_TUN_OK &&
+                  wire_len == 500,
+                  "content padding stays inside the learned udp window");
+    bad |= expect(awg_tunnel_open(&server, large_wire, wire_len, large_open,
+                                  sizeof large_open, &opened_len) == AWG_TUN_OK &&
+                  opened_len == sizeof inner,
+                  "large content padding preserves the inner packet");
     return bad ? 1 : 0;
 }

@@ -14,6 +14,20 @@ extern "C" {
 #define AWG_MAX_SIGNATURE   4096
 
 typedef struct {
+    uint16_t min;
+    uint16_t max;
+} awg_range16_t;
+
+enum {
+    AWG_TIMER_REKEY_AFTER = 0,
+    AWG_TIMER_REKEY_TIMEOUT,
+    AWG_TIMER_REJECT_AFTER,
+    AWG_TIMER_KEEPALIVE,
+    AWG_TIMER_MAX_ATTEMPTS,
+    AWG_TIMER_COUNT
+};
+
+typedef struct {
     uint8_t private_key[AWG_KEY_LEN];
     uint8_t peer_public_key[AWG_KEY_LEN];
     uint8_t preshared_key[AWG_KEY_LEN];
@@ -39,7 +53,11 @@ typedef struct {
     uint32_t padding[4];
     uint32_t header_min[4];
     uint32_t header_max[4];
-    /* awg 2.0 header protection: a chacha20 keystream xor over each message,
+    awg_range16_t content_padding;
+    awg_range16_t timers[AWG_TIMER_COUNT];
+    int random_trailers;
+    int disable_cookies;
+    /* awg 3.1 header protection: a chacha20 keystream xor over each message,
        keyed by this and nonced from the s-prefix junk that precedes it */
     uint8_t header_protection_key[AWG_KEY_LEN];
     int has_header_protection;
@@ -67,6 +85,7 @@ typedef enum {
 } awg_cfg_status_t;
 
 void awg_config_init(awg_config_t *cfg);
+int awg_range_pick(awg_range16_t range, uint16_t fallback, uint16_t *out);
 
 /* preserve the complete interface data because awg fields share one profile */
 awg_cfg_status_t awg_config_parse(const char *text, size_t len, awg_config_t *cfg,

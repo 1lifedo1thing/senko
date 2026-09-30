@@ -60,7 +60,7 @@ int main(void) {
                   "signature size and bytes");
 
     awg_handshake_t hs;
-    uint8_t packet[256];
+    uint8_t packet[512];
     size_t packet_len = 0;
     awg_handshake_init(&hs, &cfg);
     bad |= expect(awg_handshake_build_initiation(&hs, packet, sizeof packet, &packet_len) == AWG_HS_OK,
@@ -72,6 +72,13 @@ int main(void) {
 
     bad |= expect(packet[11 + 116] != 0 || packet[11 + 117] != 0,
                   "mac written after s1 prefix");
+    cfg.random_trailers = 1;
+    awg_handshake_init(&hs, &cfg);
+    bad |= expect(awg_handshake_build_initiation(&hs, packet, sizeof packet,
+                                                  &packet_len) == AWG_HS_OK &&
+                  packet_len >= AWG_INIT_PACKET_LEN + 11 &&
+                  packet_len <= sizeof packet && packet[11] == 7,
+                  "random handshake trailer follows the authenticated message");
 
     static const char defaults_text[] =
         "[Interface]\nPrivateKey = AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n"
