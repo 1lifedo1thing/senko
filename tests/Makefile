@@ -26,6 +26,13 @@ THREAD_CFLAGS  ?= -pthread
 THREAD_LDFLAGS ?= -pthread
 CORE     = ../daemon/core
 DAEMON   = ../daemon
+# reality_crypto.c's mlkem768 wrappers need these wherever it is linked
+MLKEM768_SRC = $(CORE)/third_party/mlkem768/kem.c $(CORE)/third_party/mlkem768/indcpa.c \
+               $(CORE)/third_party/mlkem768/poly.c $(CORE)/third_party/mlkem768/polyvec.c \
+               $(CORE)/third_party/mlkem768/ntt.c $(CORE)/third_party/mlkem768/cbd.c \
+               $(CORE)/third_party/mlkem768/reduce.c $(CORE)/third_party/mlkem768/verify.c \
+               $(CORE)/third_party/mlkem768/symmetric-shake.c $(CORE)/third_party/mlkem768/fips202.c \
+               $(CORE)/third_party/mlkem768/randombytes.c
 # the vendored stack and senko's port of it, see daemon/third_party/lwip/VENDOR
 LWIP      = ../daemon/third_party/lwip/src
 LWIP_PORT = ../daemon/lwip_port
@@ -35,7 +42,7 @@ LWIP_SRC  = $(wildcard $(LWIP)/core/*.c) $(wildcard $(LWIP)/core/ipv4/*.c) \
 TUN_SESSION_SRC = $(CORE)/session.c $(CORE)/socks5.c $(NET_SAFE) \
                   $(CORE)/vless.c $(CORE)/vless_conn.c $(CORE)/socks5_client.c \
                   $(CORE)/http_client.c $(CORE)/vision.c $(CORE)/trojan_client.c \
-                  $(CORE)/shadowsocks_client.c $(CORE)/reality_crypto.c \
+                  $(CORE)/shadowsocks_client.c $(CORE)/reality_crypto.c $(MLKEM768_SRC) \
                   $(TRACE) $(REPLAY) $(UPLOAD) $(TIME)
 TRACE    = $(CORE)/senko_trace.c
 # the utun rule, dns cache and direct socket modules the udp and tcp relays share
@@ -244,7 +251,7 @@ test_loop_traffic: test_loop_traffic.c $(DAEMON)/loop.c $(CORE)/session.c
 	      $(CORE)/session.c $(CORE)/socks5.c $(NET_SAFE) \
 	      $(CORE)/vless.c $(CORE)/vless_conn.c $(CORE)/socks5_client.c \
 	      $(CORE)/http_client.c $(CORE)/vision.c $(CORE)/transport_tcp.c \
-	      $(CORE)/trojan_client.c $(CORE)/shadowsocks_client.c $(CORE)/reality_crypto.c \
+	      $(CORE)/trojan_client.c $(CORE)/shadowsocks_client.c $(CORE)/reality_crypto.c $(MLKEM768_SRC) \
 	      $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) -o $@ $(TLS_LDFLAGS) $(THREAD_LDFLAGS)
 
 test_senko_core_config: test_senko_core_config.c $(DAEMON)/senko_core_config.c $(CFG_SRC)
@@ -286,21 +293,21 @@ test_amnezia_bundle: test_amnezia_bundle.c amnezia_fixture.inc $(CORE)/amnezia_b
 	  $(CORE)/b64.c $(CJSON) -o $@ -lz -lcrypto
 
 test_awg_handshake: test_awg_handshake.c $(CORE)/awg_handshake.c $(CORE)/awg_handshake.h \
-                    $(CORE)/awg_config.c $(CORE)/b64.c $(CORE)/reality_crypto.c
+                    $(CORE)/awg_config.c $(CORE)/b64.c $(CORE)/reality_crypto.c $(MLKEM768_SRC)
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_awg_handshake.c $(CORE)/awg_handshake.c \
-	      $(CORE)/awg_config.c $(CORE)/b64.c $(CORE)/reality_crypto.c $(TIME) -o $@ $(TLS_LDFLAGS)
+	      $(CORE)/awg_config.c $(CORE)/b64.c $(CORE)/reality_crypto.c $(MLKEM768_SRC) $(TIME) -o $@ $(TLS_LDFLAGS)
 
 test_awg_link: test_awg_link.c $(DAEMON)/awg_link.c $(DAEMON)/awg_link.h $(CORE)/awg_tunnel.c \
                $(CORE)/awg_handshake.c $(DAEMON)/utun_device.c $(CORE)/utun_frame.c
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) $(THREAD_CFLAGS) -I$(DAEMON) test_awg_link.c $(DAEMON)/awg_link.c \
 	      $(DAEMON)/utun_device.c $(CORE)/utun_frame.c $(CORE)/awg_tunnel.c $(CORE)/awg_handshake.c \
-	      $(CORE)/awg_config.c $(CORE)/b64.c $(CORE)/reality_crypto.c $(TIME) \
+	      $(CORE)/awg_config.c $(CORE)/b64.c $(CORE)/reality_crypto.c $(MLKEM768_SRC) $(TIME) \
 	      -o $@ $(TLS_LDFLAGS) $(THREAD_LDFLAGS)
 
 test_awg_tunnel: test_awg_tunnel.c $(CORE)/awg_tunnel.c $(CORE)/awg_tunnel.h \
-                 $(CORE)/awg_handshake.c $(CORE)/awg_config.c $(CORE)/b64.c $(CORE)/reality_crypto.c
+                 $(CORE)/awg_handshake.c $(CORE)/awg_config.c $(CORE)/b64.c $(CORE)/reality_crypto.c $(MLKEM768_SRC)
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_awg_tunnel.c $(CORE)/awg_tunnel.c \
-	      $(CORE)/awg_handshake.c $(CORE)/awg_config.c $(CORE)/b64.c $(CORE)/reality_crypto.c \
+	      $(CORE)/awg_handshake.c $(CORE)/awg_config.c $(CORE)/b64.c $(CORE)/reality_crypto.c $(MLKEM768_SRC) \
 	      $(TIME) -o $@ $(TLS_LDFLAGS)
 
 test_awg_route: test_awg_route.c $(DAEMON)/awg_route.c $(DAEMON)/awg_route.h $(CORE)/awg_config.c $(CORE)/b64.c
@@ -439,11 +446,11 @@ test_storefile: test_storefile.c $(DAEMON)/storefile.c $(DAEMON)/settings.c \
 
 test_session_direct: test_session_direct.c $(CORE)/session.c $(CORE)/socks5.c $(NET_SAFE) \
               $(CORE)/vless.c $(CORE)/vless_conn.c $(CORE)/socks5_client.c $(CORE)/http_client.c $(CORE)/vision.c \
-              $(CORE)/trojan_client.c $(CORE)/shadowsocks_client.c $(CORE)/reality_crypto.c $(TRACE) $(REPLAY) $(UPLOAD) $(TIME)
+              $(CORE)/trojan_client.c $(CORE)/shadowsocks_client.c $(CORE)/reality_crypto.c $(MLKEM768_SRC) $(TRACE) $(REPLAY) $(UPLOAD) $(TIME)
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_session_direct.c $(CORE)/session.c \
 	      $(CORE)/socks5.c $(NET_SAFE) $(CORE)/vless.c $(CORE)/vless_conn.c \
 	      $(CORE)/socks5_client.c $(CORE)/http_client.c $(CORE)/vision.c \
-	      $(CORE)/trojan_client.c $(CORE)/shadowsocks_client.c $(CORE)/reality_crypto.c \
+	      $(CORE)/trojan_client.c $(CORE)/shadowsocks_client.c $(CORE)/reality_crypto.c $(MLKEM768_SRC) \
 	      $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) -o $@ $(TLS_LDFLAGS)
 
 # the probe drives a whole protocol session over the real transports
@@ -460,8 +467,8 @@ test_real_probe: test_real_probe.c $(REAL_PROBE_SRC)
 test_trojan: test_trojan.c $(CORE)/trojan_client.c $(CFG_SRC)
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_trojan.c $(CORE)/trojan_client.c $(CFG_SRC) -o $@ $(TLS_LDFLAGS)
 
-test_shadowsocks: test_shadowsocks.c $(CORE)/shadowsocks_client.c $(CORE)/reality_crypto.c $(CFG_SRC)
-	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_shadowsocks.c $(CORE)/shadowsocks_client.c $(CORE)/reality_crypto.c $(CFG_SRC) -o $@ $(TLS_LDFLAGS)
+test_shadowsocks: test_shadowsocks.c $(CORE)/shadowsocks_client.c $(CORE)/reality_crypto.c $(MLKEM768_SRC) $(CFG_SRC)
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_shadowsocks.c $(CORE)/shadowsocks_client.c $(CORE)/reality_crypto.c $(MLKEM768_SRC) $(CFG_SRC) -o $@ $(TLS_LDFLAGS)
 
 # zbar's fixed-point qr math shifts negative values left on purpose; clang and
 # gcc define that as multiplication, so only that check is off for its sources.
@@ -471,22 +478,22 @@ ZBAR_NO_SHIFT_CHECK = -fno-sanitize=shift-base
 test_qr_zbar: test_qr_zbar.c $(ZBAR_SRC)
 	$(CC) $(ZBAR_CFLAGS) $(CFLAGS) $(ZBAR_NO_SHIFT_CHECK) test_qr_zbar.c $(ZBAR_SRC) -o $@
 
-test_reality_crypto: test_reality_crypto.c $(CORE)/reality_crypto.c $(CORE)/reality_crypto.h
-	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_reality_crypto.c $(CORE)/reality_crypto.c \
+test_reality_crypto: test_reality_crypto.c $(CORE)/reality_crypto.c $(MLKEM768_SRC) $(CORE)/reality_crypto.h
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_reality_crypto.c $(CORE)/reality_crypto.c $(MLKEM768_SRC) \
 	      -o $@ $(TLS_LDFLAGS)
 
-test_tls13_kdf: test_tls13_kdf.c $(CORE)/tls13_kdf.c $(CORE)/reality_crypto.c
+test_tls13_kdf: test_tls13_kdf.c $(CORE)/tls13_kdf.c $(CORE)/reality_crypto.c $(MLKEM768_SRC)
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_tls13_kdf.c $(CORE)/tls13_kdf.c \
-	      $(CORE)/reality_crypto.c -o $@ $(TLS_LDFLAGS)
+	      $(CORE)/reality_crypto.c $(MLKEM768_SRC) -o $@ $(TLS_LDFLAGS)
 
 test_tls13_keysched: test_tls13_keysched.c $(CORE)/tls13_keysched.c $(CORE)/tls13_kdf.c \
-                     $(CORE)/reality_crypto.c
+                     $(CORE)/reality_crypto.c $(MLKEM768_SRC)
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_tls13_keysched.c $(CORE)/tls13_keysched.c \
-	      $(CORE)/tls13_kdf.c $(CORE)/reality_crypto.c -o $@ $(TLS_LDFLAGS)
+	      $(CORE)/tls13_kdf.c $(CORE)/reality_crypto.c $(MLKEM768_SRC) -o $@ $(TLS_LDFLAGS)
 
-test_tls13_record: test_tls13_record.c $(CORE)/tls13_record.c $(CORE)/reality_crypto.c
+test_tls13_record: test_tls13_record.c $(CORE)/tls13_record.c $(CORE)/reality_crypto.c $(MLKEM768_SRC)
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_tls13_record.c $(CORE)/tls13_record.c \
-	      $(CORE)/reality_crypto.c -o $@ $(TLS_LDFLAGS)
+	      $(CORE)/reality_crypto.c $(MLKEM768_SRC) -o $@ $(TLS_LDFLAGS)
 
 test_tls_clienthello: test_tls_clienthello.c $(CORE)/tls_clienthello.c $(CORE)/tls_clienthello.h
 	$(CC) $(CFLAGS) test_tls_clienthello.c $(CORE)/tls_clienthello.c -o $@
@@ -497,7 +504,7 @@ test_vision: test_vision.c $(CORE)/vision.c $(CORE)/vision.h
 test_transport_grpc: test_transport_grpc.c $(CORE)/transport_pick.c $(CFG_SRC) \
                      $(CORE)/transport_tcp.c $(CORE)/transport_tls.c \
                      $(CORE)/transport_ws.c $(CORE)/transport_xhttp.c $(CORE)/hpack.c $(CORE)/reality_handshake.c \
-                     $(CORE)/reality_crypto.c $(CORE)/reality_auth.c \
+                     $(CORE)/reality_crypto.c $(MLKEM768_SRC) $(CORE)/reality_auth.c \
                      $(CORE)/tls_clienthello.c $(CORE)/tls13_kdf.c \
                      $(CORE)/tls13_keysched.c $(CORE)/tls13_record.c \
                      $(CORE)/tls13_transcript.c $(CORE)/tls13_handshake.c $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) $(CORE)/grpc_core.c
@@ -505,7 +512,7 @@ test_transport_grpc: test_transport_grpc.c $(CORE)/transport_pick.c $(CFG_SRC) \
 	      $(CFG_SRC) \
 	      $(CORE)/transport_tcp.c $(CORE)/transport_tls.c $(CORE)/transport_ws.c \
 	      $(CORE)/transport_xhttp.c $(CORE)/hpack.c \
-	      $(CORE)/reality_handshake.c $(CORE)/reality_crypto.c $(CORE)/reality_auth.c \
+	      $(CORE)/reality_handshake.c $(CORE)/reality_crypto.c $(MLKEM768_SRC) $(CORE)/reality_auth.c \
 	      $(CORE)/tls_clienthello.c $(CORE)/tls13_kdf.c $(CORE)/tls13_keysched.c \
 	      $(CORE)/tls13_record.c $(CORE)/tls13_transcript.c $(CORE)/tls13_handshake.c \
 	      $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) $(CORE)/grpc_core.c $(TLS_LDFLAGS) -o $@
@@ -513,7 +520,7 @@ test_transport_grpc: test_transport_grpc.c $(CORE)/transport_pick.c $(CFG_SRC) \
 test_transport_pick: test_transport_pick.c $(CORE)/transport_pick.c $(CFG_SRC) \
                      $(CORE)/transport_tcp.c $(CORE)/transport_tls.c \
                      $(CORE)/transport_ws.c $(CORE)/transport_xhttp.c $(CORE)/hpack.c $(CORE)/reality_handshake.c \
-                     $(CORE)/reality_crypto.c $(CORE)/reality_auth.c \
+                     $(CORE)/reality_crypto.c $(MLKEM768_SRC) $(CORE)/reality_auth.c \
                      $(CORE)/tls_clienthello.c $(CORE)/tls13_kdf.c \
                      $(CORE)/tls13_keysched.c $(CORE)/tls13_record.c \
                       $(CORE)/tls13_transcript.c $(CORE)/tls13_handshake.c $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) $(CORE)/grpc_core.c
@@ -521,7 +528,7 @@ test_transport_pick: test_transport_pick.c $(CORE)/transport_pick.c $(CFG_SRC) \
 	      $(CFG_SRC) \
 	      $(CORE)/transport_tcp.c $(CORE)/transport_tls.c $(CORE)/transport_ws.c \
 	      $(CORE)/transport_xhttp.c $(CORE)/hpack.c \
-	      $(CORE)/reality_handshake.c $(CORE)/reality_crypto.c $(CORE)/reality_auth.c \
+	      $(CORE)/reality_handshake.c $(CORE)/reality_crypto.c $(MLKEM768_SRC) $(CORE)/reality_auth.c \
 	      $(CORE)/tls_clienthello.c $(CORE)/tls13_kdf.c $(CORE)/tls13_keysched.c \
 	      $(CORE)/tls13_record.c $(CORE)/tls13_transcript.c $(CORE)/tls13_handshake.c \
       $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) $(CORE)/grpc_core.c -o $@ $(TLS_LDFLAGS)
@@ -535,7 +542,7 @@ test_app_proxy: test_app_proxy.c ../senkotlsfix/stl_proxy.c ../senkotlsfix/stl_p
 # senkod's amneziawg and update helper children
 HELPER_SRC = $(DAEMON)/helper_jobs.c $(DAEMON)/senkod_helper.c \
              $(DAEMON)/route_socket.c $(CORE)/route_message.c \
-             $(CORE)/awg_config.c $(CORE)/awg_handshake.c $(CORE)/reality_crypto.c $(TIME)
+             $(CORE)/awg_config.c $(CORE)/awg_handshake.c $(CORE)/reality_crypto.c $(MLKEM768_SRC) $(TIME)
 
 test_ctl_server: test_ctl_server.c $(DAEMON)/ctl_server.c $(CORE)/ctl_engine.c \
                  $(CORE)/control.c $(CORE)/store.c $(CORE)/url.c $(NET_SAFE) \

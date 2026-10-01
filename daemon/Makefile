@@ -21,6 +21,15 @@ CORE_SRC = core/vless.c core/b64.c core/config.c core/share_link.c core/rules.c 
            core/trojan_client.c core/shadowsocks_client.c core/blake2b256.c \
            core/backend_state.c core/endpoint_pool.c core/probe_stats.c core/route_message.c \
            core/tun_flow.c core/tun_nat.c core/tun_plan.c core/utun_frame.c core/vless_udp.c core/dns_policy.c core/tun_policy.c
+# vendored PQClean ml-kem-768 "clean" backend, plus its shared fips202.c and a
+# local randombytes.c shim over senko's own openssl rng; see core/third_party/mlkem768/LICENSE
+MLKEM768_SRC = core/third_party/mlkem768/kem.c core/third_party/mlkem768/indcpa.c \
+               core/third_party/mlkem768/poly.c core/third_party/mlkem768/polyvec.c \
+               core/third_party/mlkem768/ntt.c core/third_party/mlkem768/cbd.c \
+               core/third_party/mlkem768/reduce.c core/third_party/mlkem768/verify.c \
+               core/third_party/mlkem768/symmetric-shake.c core/third_party/mlkem768/fips202.c \
+               core/third_party/mlkem768/randombytes.c
+CORE_SRC += $(MLKEM768_SRC)
 DAEMON_SRC = dialer.c loop.c ctl_server.c daemon_ctl.c storefile.c settings.c status.c \
              app_proxy.c egress.c senko_core_config.c senko_core_backend.c \
              awg_utun.c awg_route.c awg_pfroute.c legacy_ios.c proc_detach.c \
