@@ -594,6 +594,13 @@ void cfg_node_finish(vl_server_t *out) {
         snprintf(out->flow, sizeof out->flow, "xtls-rprx-vision");
     if (strcmp(out->flow, "none") == 0) out->flow[0] = '\0';
 
+    /* the mode= query param is the only way a share link spells multiMode;
+       read it before cfg_normalize_grpc_path overwrites out->mode with the
+       fixed "grpc" transport marker. only set the flag, never clear it: the
+       json parsers that also flow through here already resolved it from
+       grpcSettings.multiMode and left out->mode untouched at "grpc" */
+    if (out->net == VL_NET_GRPC && strcmp(out->mode, "multi") == 0)
+        out->grpc_multi = 1;
     cfg_normalize_grpc_path(out);
 
     /* public lists put a telegram handle in sni=. a name that cannot be a dns

@@ -228,34 +228,47 @@ static int mode_for_open(const transport_tls_cfg_t *cfg, int is_reality_or_tls) 
 static int build_headers(uint8_t *out, size_t cap, size_t *n,
                          int is_post, const char *path, const char *host,
                          int with_grpc, size_t content_len, int has_cl,
-                         int is_https) {
+                         int is_https, const char *referer) {
     size_t off = 0;
     if (is_post) out[off++] = 0x83; /* post method */
     else         out[off++] = 0x82; /* get method */
     out[off++] = is_https ? 0x87 : 0x86; /* :scheme https/http */
-    if (hpack_idx_name(out, cap, &off, 4, path) != 0) return -1;
+    /* :authority before :path: the conventional pseudo-header order every
+       real client and grpc-go's own http/2 stack produce and expect */
     if (hpack_idx_name(out, cap, &off, 1, host) != 0) return -1;
+    if (hpack_idx_name(out, cap, &off, 4, path) != 0) return -1;
     if (with_grpc) {
         if (hpack_lit(out, cap, &off, "content-type", "application/grpc") != 0)
             return -1;
+        /* grpc-go's http/2 server checks this before it even looks at :path;
+           without it every stream reads back as an unrelated, generic rpc
+           error instead of the real one */
+        if (hpack_lit(out, cap, &off, "te", "trailers") != 0) return -1;
     }
     if (has_cl) {
         char cl[16];
         snprintf(cl, sizeof cl, "%zu", content_len);
         if (hpack_lit(out, cap, &off, "content-length", cl) != 0) return -1;
     }
+    if (referer) {
+        if (hpack_lit(out, cap, &off, "referer", referer) != 0) return -1;
+    }
     *n = off;
     return 0;
 }
 
-static int path_with_padding(const char *base, char *out, size_t cap) {
+/* xray never touches the real :path for padding (transport/internet/splithttp
+   xpadding.go ApplyXPaddingToHeader, PlacementQueryInHeader): it reparses the
+   clean request url, sets x_padding as that copy's query, and puts the result
+   in Referer. a server that expects a clean session/seq path 400s the moment
+   the path itself grows a query string, which is what this used to do */
+static int referer_padding(const char *base, const char *host, int is_https,
+                           char *out, size_t cap) {
     char pad[129];
     int n;
     rand_pad(pad);
-    if (strchr(base, '?'))
-        n = snprintf(out, cap, "%s&x_padding=%s", base, pad);
-    else
-        n = snprintf(out, cap, "%s?x_padding=%s", base, pad);
+    n = snprintf(out, cap, "%s://%s%s?x_padding=%s",
+                is_https ? "https" : "http", host, base, pad);
     return n < 0 || (size_t)n >= cap ? -1 : 0;
 }
 
@@ -615,8 +628,11 @@ static int queue_boot(xh_t *h, const transport_tls_cfg_t *cfg, int is_sec) {
     }
     snprintf(h->host, sizeof h->host, "%s", authority);
 
-/* xray routes stream-one requests through the normalized path with a slash */
-    int trail = 1;
+/* xhttp's stream-one path is used as a prefix xray tolerates a trailing
+   slash on, but grpc-go's service dispatch does an exact string match on
+   :path against the registered "/<serviceName>/<Tun|TunMulti>" and 404s
+   ("unknown service ...") the moment a trailing slash sneaks in */
+    int trail = !h->grpc;
     normalize_base_path(cfg && cfg->path ? cfg->path : "/",
                         h->base_path, sizeof h->base_path, trail);
     if (h->mode != XH_MODE_ONE)
@@ -636,16 +652,18 @@ static int queue_boot(xh_t *h, const transport_tls_cfg_t *cfg, int is_sec) {
 
     uint8_t block[512];
     size_t blen = 0;
-    char path[768];
+    char path[768], referer[896];
 
     if (h->mode == XH_MODE_ONE) {
-        if (h->grpc)
-            snprintf(path, sizeof path, "%s", h->base_path);
-        else
-            if (path_with_padding(h->base_path, path, sizeof path) != 0)
+        snprintf(path, sizeof path, "%s", h->base_path);
+        const char *ref = NULL;
+        if (!h->grpc) {
+            if (referer_padding(path, h->host, h->security_tls, referer, sizeof referer) != 0)
                 return -1;
+            ref = referer;
+        }
         if (build_headers(block, sizeof block, &blen, 1, path, h->host, 1, 0, 0,
-                          h->security_tls) != 0)
+                          h->security_tls, ref) != 0)
             return -1;
         h->up_stream = h->dn_stream = alloc_sid(h); /* stream 1 both ways */
         if (frame_append(h, H2_HEADERS, 0x04, h->up_stream, block, blen) != 0)
@@ -653,11 +671,10 @@ static int queue_boot(xh_t *h, const transport_tls_cfg_t *cfg, int is_sec) {
     } else if (h->mode == XH_MODE_UP) {
 /* open the long-lived download stream first */
         snprintf(path, sizeof path, "%s%s/", h->base_path, h->session);
-        char path_pad[768];
-        if (path_with_padding(path, path_pad, sizeof path_pad) != 0)
+        if (referer_padding(path, h->host, h->security_tls, referer, sizeof referer) != 0)
             return -1;
-        if (build_headers(block, sizeof block, &blen, 0, path_pad, h->host, 0, 0, 0,
-                          h->security_tls) != 0)
+        if (build_headers(block, sizeof block, &blen, 0, path, h->host, 0, 0, 0,
+                          h->security_tls, referer) != 0)
             return -1;
         h->dn_stream = alloc_sid(h);
         if (frame_append(h, H2_HEADERS, 0x04 | 0x01, h->dn_stream, block, blen) != 0)
@@ -666,21 +683,20 @@ static int queue_boot(xh_t *h, const transport_tls_cfg_t *cfg, int is_sec) {
 /* keep upload on its own stream for stream-up mode */
         blen = 0;
         snprintf(path, sizeof path, "%s%s/", h->base_path, h->session);
-        if (path_with_padding(path, path_pad, sizeof path_pad) != 0)
+        if (referer_padding(path, h->host, h->security_tls, referer, sizeof referer) != 0)
             return -1;
-        if (build_headers(block, sizeof block, &blen, 1, path_pad, h->host, 1, 0, 0,
-                          h->security_tls) != 0)
+        if (build_headers(block, sizeof block, &blen, 1, path, h->host, 1, 0, 0,
+                          h->security_tls, referer) != 0)
             return -1;
         h->up_stream = alloc_sid(h);
         if (frame_append(h, H2_HEADERS, 0x04, h->up_stream, block, blen) != 0)
             return -1;
     } else { /* packet-up opens download first and posts per write */
         snprintf(path, sizeof path, "%s%s/", h->base_path, h->session);
-        char path_pad[768];
-        if (path_with_padding(path, path_pad, sizeof path_pad) != 0)
+        if (referer_padding(path, h->host, h->security_tls, referer, sizeof referer) != 0)
             return -1;
-        if (build_headers(block, sizeof block, &blen, 0, path_pad, h->host, 0, 0, 0,
-                          h->security_tls) != 0)
+        if (build_headers(block, sizeof block, &blen, 0, path, h->host, 0, 0, 0,
+                          h->security_tls, referer) != 0)
             return -1;
         h->dn_stream = alloc_sid(h);
         h->up_stream = 0;
@@ -694,17 +710,17 @@ static int queue_boot(xh_t *h, const transport_tls_cfg_t *cfg, int is_sec) {
 
 static int send_packet(xh_t *h, const uint8_t *buf, size_t len) {
     if (len == 0 || len > XH_PKT) return -1;
-    char path[768], path_pad[768];
+    char path[768], referer[896];
     snprintf(path, sizeof path, "%s%s/%lld",
              h->base_path, h->session, (long long)h->seq);
     h->seq++;
-    if (path_with_padding(path, path_pad, sizeof path_pad) != 0)
+    if (referer_padding(path, h->host, h->security_tls, referer, sizeof referer) != 0)
         return -1;
 
     uint8_t block[512];
     size_t blen = 0;
-    if (build_headers(block, sizeof block, &blen, 1, path_pad, h->host, 0, len, 1,
-                      h->security_tls) != 0)
+    if (build_headers(block, sizeof block, &blen, 1, path, h->host, 0, len, 1,
+                      h->security_tls, referer) != 0)
         return -1;
     uint32_t sid = alloc_sid(h);
 /* leave end stream for the data frame */

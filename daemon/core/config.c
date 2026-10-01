@@ -390,9 +390,15 @@ int cfg_parse_port_hop(const char *text, size_t len, char *dst, size_t dst_cap,
     return 0;
 }
 
-/* xray's old grpc links carry only serviceName; the wire path also contains Tun */
+/* xray's old grpc links carry only serviceName; the wire path also names the
+   stream. multiMode servers register "TunMulti" instead of "Tun"
+   (transport/internet/grpc/encoding/customSeviceName.go), and a path built
+   with the wrong one comes back "unknown service <name>/Tun" even though the
+   token and tls handshake were both fine */
 void cfg_normalize_grpc_path(vl_server_t *s) {
     char base[sizeof s->path];
+    const char *stream = s->grpc_multi ? "/TunMulti" : "/Tun";
+    size_t stream_len = strlen(stream);
     size_t n;
 
     if (!s || s->net != VL_NET_GRPC) return;
@@ -406,11 +412,11 @@ void cfg_normalize_grpc_path(vl_server_t *s) {
     n = strlen(base);
     while (n > 1 && base[n - 1] == '/') base[--n] = '\0';
     if (n == 1 && base[0] == '/') {
-        snprintf(s->path, sizeof s->path, "/Tun");
-    } else if (n >= 4 && strcmp(base + n - 4, "/Tun") == 0) {
+        snprintf(s->path, sizeof s->path, "%s", stream);
+    } else if (n >= stream_len && strcmp(base + n - stream_len, stream) == 0) {
         snprintf(s->path, sizeof s->path, "%s", base);
     } else {
-        snprintf(s->path, sizeof s->path, "%s/Tun", base);
+        snprintf(s->path, sizeof s->path, "%s%s", base, stream);
     }
     snprintf(s->mode, sizeof s->mode, "grpc");
 }
@@ -909,6 +915,9 @@ static int xray_stream(const cJSON *ob, vl_server_t *s, char *why, size_t cap) {
     } else if (s->net == VL_NET_GRPC) {
         const cJSON *gr = jobj(st, "grpcSettings");
         (void)jstr_copy_any(gr, s->path, sizeof s->path, "serviceName", "service_name");
+        /* cfg_node_finish() normalizes the path once every parse path has
+           had a chance to set grpc_multi; do not call it again here */
+        s->grpc_multi = json_flag_on(gr, "multiMode");
     } else if (s->net == VL_NET_HTTP) {
         const cJSON *h2 = jobj(st, "httpSettings");
         (void)jstr_copy(h2, "path", s->path, sizeof s->path);
@@ -1022,6 +1031,7 @@ static int singbox_transport(const cJSON *ob, vl_server_t *s, char *why, size_t 
         if (!s->ws_host[0]) jstr_first(hdr, "host", s->ws_host, sizeof s->ws_host);
     } else if (s->net == VL_NET_GRPC) {
         (void)jstr_copy_any(tr, s->path, sizeof s->path, "service_name", "serviceName");
+        s->grpc_multi = json_flag_on(tr, "multi_mode") || json_flag_on(tr, "multiMode");
     } else if (s->net == VL_NET_HTTP) {
         (void)jstr_copy(tr, "path", s->path, sizeof s->path);
         jstr_first(tr, "host", s->ws_host, sizeof s->ws_host);
