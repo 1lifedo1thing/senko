@@ -2,6 +2,7 @@
 #import <QuartzCore/QuartzCore.h>
 #include <objc/message.h>
 #include <sys/sysctl.h>
+#include "device_model.h"
 #import "ui_theme.h"
 #import "app_common.h"
 #import "crash_report.h"
@@ -45,8 +46,9 @@ static NSString *AboutModel(void) {
         len > sizeof machine)
         return [[UIDevice currentDevice] model];
     machine[sizeof machine - 1] = '\0';
-    NSString *code = [NSString stringWithUTF8String:machine];
-    return [code length] ? code : [[UIDevice currentDevice] model];
+    const char *name = senko_device_model_name(machine);
+    if (name) return [NSString stringWithUTF8String:name];
+    return [[UIDevice currentDevice] model];
 }
 
 static NSString *AboutSlice(void) {

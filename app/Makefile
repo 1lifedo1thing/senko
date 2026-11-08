@@ -77,6 +77,7 @@ APP_SRC := \
 	profile_entries_vc.m \
 	theme_edit_vc.m \
 	about_vc.m \
+	device_model.c \
 	logs_vc.m \
 	edit_server_vc.m \
 	edit_awg_vc.m \
@@ -150,7 +151,7 @@ $(OBJDIR)/zbar_%.o: $(ZBAR)/%.c
 	$(CC) $(ARCH) -isysroot $(SDK) -O2 -w -DSENKO_ZBAR_IOS -I$(ZBAR)/include -I$(ZBAR)/zbar \
 		-I$(ZBAR)/zbar/decoder -I$(ZBAR)/zbar/qrcode -c $< -o $@
 
-$(BIN): $(APP_SRC) $(ZBAR_OBJ) $(FLAG_SRC) $(ICON_SRC) $(GLYPH_SRC) $(EMOJI_SRC) control_client.h qr_scan.h Info.plist app_common.h ui_theme.h theme/theme_def.h crash_report.h
+$(BIN): $(APP_SRC) $(ZBAR_OBJ) $(FLAG_SRC) $(ICON_SRC) $(GLYPH_SRC) $(EMOJI_SRC) control_client.h qr_scan.h Info.plist app_common.h ui_theme.h theme/theme_def.h crash_report.h device_model.h
 	@mkdir -p $(dir $(BIN))
 	$(CC) $(CFLAGS) $(APP_SRC) $(ZBAR_OBJ) -o $(BIN) $(LDFLAGS)
 	@if [ "$(BIN)" = "$(APP)/senko" ]; then \

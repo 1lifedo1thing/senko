@@ -73,6 +73,8 @@ HOST_TESTS += test_karing_backup
 HOST_TESTS += test_dns_msg test_chacha_poly test_awg_tunnel_neon
 HOST_TESTS += test_dns_cache
 HOST_TESTS += test_trojan
+HOST_TESTS += test_device_model
+HOST_TESTS += test_blake3 test_vlenc_conn test_transport_enc
 HOST_TESTS += test_shadowsocks
 HOST_TESTS += test_vmess
 HOST_TESTS += test_qr_zbar
@@ -124,11 +126,15 @@ test-native:
 	bash ../scripts/test_native_core.sh
 
 test: $(HOST_TESTS)
+test_device_model: test_device_model.c ../app/device_model.c ../app/device_model.h
+	$(CC) $(CFLAGS) -I../app test_device_model.c ../app/device_model.c -o $@
+
 	./test_karing_backup
 	python3 test_karing_zip.py
 	python3 test_launchd_install.py
 	python3 check_emoji_assets.py
 	./test_blake2b256
+	./test_device_model
 	./test_hy2_proto
 	./test_session_hy2
 	./test_net_diag
