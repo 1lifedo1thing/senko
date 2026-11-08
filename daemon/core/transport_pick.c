@@ -46,12 +46,6 @@ static const transport_vt_t *pick_stream(const vl_server_t *s) {
     if (s->proto == VL_PROTO_SHADOWSOCKS)
         return &transport_tcp;
 
-    if (s->proto == VL_PROTO_TROJAN) {
-        if (s->net == VL_NET_TCP) return &transport_tls;
-        if (s->net == VL_NET_WS) return &transport_ws_tls;
-        return NULL;
-    }
-
     if (s->proto == VL_PROTO_HTTPS)
         return &transport_tls;
 

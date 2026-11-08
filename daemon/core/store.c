@@ -728,58 +728,6 @@ static int build_link(const vl_server_t *s, char *buf, size_t cap) {
         return (int)off;
     }
 
-    if (s->proto == VL_PROTO_TROJAN) {
-        char enc_pass[3 * sizeof s->pass];
-        if (pct_encode_user(s->pass, enc_pass, sizeof enc_pass) < 0) return -1;
-        int n = snprintf(buf, cap, "trojan://%s@%s:%u?security=%s&type=%s",
-                         enc_pass, s->host, s->port,
-                         security_name(s->security), net_name(s->net));
-        if (n < 0 || (size_t)n >= cap) return -1;
-        size_t off = (size_t)n;
-        if (s->sni[0]) {
-            char enc[512];
-            if (pct_encode(s->sni, enc, sizeof enc) >= 0) {
-                int m = snprintf(buf + off, cap - off, "&sni=%s", enc);
-                if (m > 0 && (size_t)m < cap - off) off += (size_t)m;
-            }
-        }
-        if (s->fp[0]) {
-            char enc[64];
-            if (pct_encode(s->fp, enc, sizeof enc) >= 0) {
-                int m = snprintf(buf + off, cap - off, "&fp=%s", enc);
-                if (m > 0 && (size_t)m < cap - off) off += (size_t)m;
-            }
-        }
-        if (s->net == VL_NET_WS) {
-            if (s->path[0]) {
-                char enc[512];
-                if (pct_encode(s->path, enc, sizeof enc) >= 0) {
-                    int m = snprintf(buf + off, cap - off, "&path=%s", enc);
-                    if (m > 0 && (size_t)m < cap - off) off += (size_t)m;
-                }
-            }
-            if (s->ws_host[0]) {
-                char enc[512];
-                if (pct_encode(s->ws_host, enc, sizeof enc) >= 0) {
-                    int m = snprintf(buf + off, cap - off, "&host=%s", enc);
-                    if (m > 0 && (size_t)m < cap - off) off += (size_t)m;
-                }
-            }
-        }
-        if (s->insecure) {
-            int m = snprintf(buf + off, cap - off, "&allowInsecure=1");
-            if (m > 0 && (size_t)m < cap - off) off += (size_t)m;
-        }
-        if (s->remark[0]) {
-            char enc[768];
-            if (pct_encode(s->remark, enc, sizeof enc) >= 0) {
-                int m = snprintf(buf + off, cap - off, "#%s", enc);
-                if (m > 0 && (size_t)m < cap - off) off += (size_t)m;
-            }
-        }
-        return (int)off;
-    }
-
     if (s->proto == VL_PROTO_SHADOWSOCKS) {
         char userinfo[sizeof s->user + sizeof s->pass + 2];
         snprintf(userinfo, sizeof userinfo, "%s:%s", s->user, s->pass);
@@ -857,7 +805,7 @@ static int build_link(const vl_server_t *s, char *buf, size_t cap) {
     struct { const char *key; const char *val; } opt[] = {
         { "sni",  s->sni  },
         { "host", s->ws_host },
-        { "flow", s->flow },
+        { "flow", trojan ? NULL : s->flow },
         { "fp",   s->fp   },
         { "pbk",  s->pbk  },
         { "sid",  s->sid  },

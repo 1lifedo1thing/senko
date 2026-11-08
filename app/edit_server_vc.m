@@ -27,6 +27,8 @@
     id<EditServerDelegate> _delegate;
     int _index;
     NSString *_link;
+    NSString *_vlessEncryption; /* kept as the link carried it: the form has no field for it */
+    NSString *_keptQuery; /* reality key, short id, mode, host and allowInsecure, same reason */
     UIScrollView *_scroll;
     UIView *_body;
     UISegmentedControl *_proto;
@@ -65,6 +67,8 @@
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [_link release];
+    [_vlessEncryption release];
+    [_keptQuery release];
     [_scroll release];
     [_body release];
     [_proto release];
@@ -86,6 +90,20 @@
             return [[pair objectAtIndex:1] stringByReplacingOccurrencesOfString:@"%2F" withString:@"/"];
     }
     return @"";
+}
+
+/* the form shows none of these, and rebuilding the link from the form alone
+   would turn a reality node into one that fails validation and drop the
+   websocket host and the insecure flag without a word */
+- (void)keepQueryFrom:(NSString *)query {
+    NSMutableString *kept = [NSMutableString string];
+    NSArray *keys = [NSArray arrayWithObjects:@"pbk", @"sid", @"mode", @"host", @"allowInsecure", nil];
+    for (NSString *key in keys) {
+        NSString *value = [self queryValue:key query:query];
+        if ([value length]) [kept appendFormat:@"&%@=%@", key, value];
+    }
+    [_keptQuery release];
+    _keptQuery = [kept copy];
 }
 
 - (UILabel *)makeLabel:(NSString *)title {
@@ -116,6 +134,9 @@
     } else if (p == 1) {
         _lblUuid.text = SenkoLocalizedText(@"PASSWORD");
         _lblFlow.text = SenkoLocalizedText(@"FLOW");
+        /* the security control starts on None for vless, and a trojan saved from
+           it would send the password hash in clear over plain tcp */
+        if (_security.selectedSegmentIndex == 0) _security.selectedSegmentIndex = 1;
     } else if (p == 2) {
         _lblUuid.text = SenkoLocalizedText(@"PASSWORD");
         _lblFlow.text = SenkoLocalizedText(@"CIPHER");
@@ -141,10 +162,14 @@
     if (_proto.selectedSegmentIndex == 1) {
         NSArray *transportValues = [NSArray arrayWithObjects:@"tcp", @"ws", @"xhttp", @"grpc", nil];
         NSString *transport = [transportValues objectAtIndex:_transport.selectedSegmentIndex];
-        NSMutableString *uri = [NSMutableString stringWithFormat:@"trojan://%@@%@:%@?security=tls&type=%@",
-                                uuid, address, port, [transport lowercaseString]];
+        NSArray *trojanSecurity = [NSArray arrayWithObjects:@"none", @"tls", @"reality", nil];
+        NSString *security = [trojanSecurity objectAtIndex:_security.selectedSegmentIndex];
+        NSMutableString *uri = [NSMutableString stringWithFormat:@"trojan://%@@%@:%@?security=%@&type=%@",
+                                uuid, address, port, security, [transport lowercaseString]];
         if ([_sni.text length]) [uri appendFormat:@"&sni=%@", _sni.text];
+        if ([_fingerprint.text length]) [uri appendFormat:@"&fp=%@", _fingerprint.text];
         if ([_path.text length]) [uri appendFormat:@"&path=%@", _path.text];
+        if ([_keptQuery length]) [uri appendString:_keptQuery];
         if ([_remark.text length]) [uri appendFormat:@"#%@", _remark.text];
         [_delegate editServerVC:self saveLink:uri index:_index];
         return;
@@ -181,6 +206,8 @@
         if ([value length])
             [uri appendFormat:@"&%@=%@", [keys objectAtIndex:i], value];
     }
+    if (!vmess && [_vlessEncryption length]) [uri appendFormat:@"&encryption=%@", _vlessEncryption];
+    if ([_keptQuery length]) [uri appendString:_keptQuery];
     if ([_remark.text length]) [uri appendFormat:@"#%@", _remark.text];
     [_delegate editServerVC:self saveLink:uri index:_index];
 }
@@ -253,9 +280,9 @@
         _transport.hidden = NO;
         _lblFlow.hidden = YES; _flow.hidden = YES;
         _lblPath.hidden = NO; _path.hidden = NO;
-        _security.hidden = YES;
+        _security.hidden = NO;
         _lblSni.hidden = NO; _sni.hidden = NO;
-        _lblFp.hidden = YES; _fingerprint.hidden = YES;
+        _lblFp.hidden = NO; _fingerprint.hidden = NO;
 
         _transport.frame = CGRectMake(side, y, fieldW, 32);
         y += 40.0f;
@@ -264,8 +291,15 @@
         _path.frame = CGRectMake(side, y + 16, fieldW, 30);
         y += rowH;
 
+        _security.frame = CGRectMake(side, y, fieldW, 32);
+        y += 40.0f;
+
         _lblSni.frame = CGRectMake(side, y, fieldW, 16);
         _sni.frame = CGRectMake(side, y + 16, fieldW, 30);
+        y += rowH;
+
+        _lblFp.frame = CGRectMake(side, y, fieldW, 16);
+        _fingerprint.frame = CGRectMake(side, y + 16, fieldW, 30);
         y += rowH;
     } else {
         _transport.hidden = YES;
@@ -424,6 +458,11 @@
         _transport.selectedSegmentIndex = [type isEqualToString:@"ws"] ? 1 :
             ([type isEqualToString:@"xhttp"] ? 2 :
              ([type isEqualToString:@"grpc"] ? 3 : 0));
+        _fingerprint.text = [self queryValue:@"fp" query:query];
+        NSString *trojanSec = [self queryValue:@"security" query:query];
+        _security.selectedSegmentIndex = [trojanSec isEqualToString:@"none"] ? 0 :
+            ([trojanSec isEqualToString:@"reality"] ? 2 : 1);
+        [self keepQueryFrom:query];
         _remark.text = [url fragment];
     } else {
         BOOL vmess = [_link hasPrefix:@"vmess://"];

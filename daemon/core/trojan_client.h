@@ -19,7 +19,6 @@ typedef enum {
 } tr_status_t;
 
 typedef struct {
-    char         password[64];
     char         hex_hash[TROJAN_HEX_LEN + 1];
     vless_dest_t dest;
     int          initialized;

@@ -29,13 +29,11 @@ int trojan_hash_password(const char *password, char hex_out[TROJAN_HEX_LEN + 1])
 void trojan_client_init(trojan_client_t *c, const char *password, const vless_dest_t *dest) {
     if (!c) return;
     memset(c, 0, sizeof *c);
-    if (password) {
-        size_t pl = strlen(password);
-        if (pl >= sizeof c->password) pl = sizeof c->password - 1;
-        memcpy(c->password, password, pl);
-        c->password[pl] = '\0';
-        trojan_hash_password(c->password, c->hex_hash);
-    }
+    /* the server compares the sha224 of the whole password; the catalog keeps
+       up to 255 bytes, so a copy cut at 63 bytes sent a hash the server
+       rejected */
+    if (password && trojan_hash_password(password, c->hex_hash) != 0)
+        c->hex_hash[0] = '\0';
     if (dest) c->dest = *dest;
     c->initialized = 1;
 }

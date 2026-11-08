@@ -144,6 +144,8 @@ test_device_model: test_device_model.c ../app/device_model.c ../app/device_model
 	./test_senko_clock
 	./test_real_probe
 	./test_trojan
+	./test_trojan_combos
+	./test_trojan_exchange
 	./test_shadowsocks
 	./test_vmess
 	./test_qr_zbar

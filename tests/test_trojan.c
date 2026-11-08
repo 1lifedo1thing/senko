@@ -154,8 +154,7 @@ static void test_published_trojan_links(void) {
     assert(cfg_validate_server(&sv, err, sizeof(err)) == 1);
 
     assert(cfg_parse_link(plain, &sv) == CFG_OK);
-    assert(cfg_validate_server(&sv, err, sizeof(err)) == 0);
-    assert(strcmp(err, "trojan requires tls") == 0);
+    assert(cfg_validate_server(&sv, err, sizeof(err)) == 1);
 
     printf("ok test_published_trojan_links\n");
 }

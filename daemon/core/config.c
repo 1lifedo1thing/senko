@@ -120,24 +120,28 @@ int cfg_validate_server(const vl_server_t *s, char *reason, size_t reason_cap) {
         s->proto == VL_PROTO_HTTPS)
         return 1;
 
+    /* trojan runs over every stream layer vless does except an http/2 or
+       header-disguised tcp one, and carries no flow. the shared transport
+       checks below finish the job */
     if (s->proto == VL_PROTO_TROJAN) {
         if (!s->pass[0]) {
             cfg_reason(reason, reason_cap, "trojan requires password");
             return 0;
         }
-        if (s->security == VL_SEC_REALITY) {
-            cfg_reason(reason, reason_cap, "trojan over reality");
+        if (s->flow[0]) {
+            cfg_reason(reason, reason_cap, "trojan does not use flow");
             return 0;
         }
-        if (s->security != VL_SEC_TLS) {
-            cfg_reason(reason, reason_cap, "trojan requires tls");
-            return 0;
-        }
-        if (s->net != VL_NET_TCP && s->net != VL_NET_WS) {
+        if (s->net == VL_NET_HTTP) {
             cfg_reason(reason, reason_cap, "unsupported trojan transport");
             return 0;
         }
-        return 1;
+        /* xray refuses reality on a websocket stream, so senko-core could not
+           start the node either */
+        if (s->net == VL_NET_WS && s->security == VL_SEC_REALITY) {
+            cfg_reason(reason, reason_cap, "trojan ws over reality");
+            return 0;
+        }
     }
 
     if (s->proto == VL_PROTO_SHADOWSOCKS) {

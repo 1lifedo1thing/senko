@@ -90,7 +90,40 @@ int main(void) {
     check_link("vless://b831381d-6324-4d53-ad4f-8cda48b30811@1.2.3.4:443"
                "?security=none&type=grpc&serviceName=Tun#t", 1);
     check_link("trojan://password@1.2.3.4:443?security=tls&type=tcp&sni=ex.com#t", 1);
+    check_link("trojan://password@1.2.3.4:443?security=none&type=tcp#t", 1);
+    {
+        vl_server_t s;
+        ok("plain trojan parses", cfg_parse_link("trojan://password@1.2.3.4:443?security=none", &s) == CFG_OK);
+        ok("plain trojan uses tcp", transport_for_server(&s) == &transport_tcp);
+        ok("default trojan parses", cfg_parse_link("trojan://password@1.2.3.4:443", &s) == CFG_OK);
+        ok("default trojan uses tls", transport_for_server(&s) == &transport_tls);
+    }
     check_link("trojan://password@1.2.3.4:443?security=tls&type=ws&sni=ex.com&path=%2F#t", 1);
+    check_link("trojan://password@1.2.3.4:443?security=none&type=ws&path=%2F#t", 1);
+    check_link("trojan://password@1.2.3.4:443?security=reality&type=ws&pbk="
+               "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=&fp=chrome#t", 0);
+    check_link("trojan://password@1.2.3.4:443?security=tls&type=http&sni=ex.com#t", 0);
+    check_link("trojan://password@1.2.3.4:443?security=reality&type=tcp&pbk="
+               "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=&fp=chrome#t", 1);
+    check_link("trojan://password@1.2.3.4:443?security=none&type=grpc&serviceName=Tun#t", 1);
+    check_link("trojan://password@1.2.3.4:443?security=tls&type=grpc&serviceName=Tun&sni=ex.com#t", 1);
+    check_link("trojan://password@1.2.3.4:443?security=reality&type=grpc&serviceName=Tun&pbk="
+               "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=&fp=chrome#t", 1);
+    check_link("trojan://password@1.2.3.4:443?security=none&type=xhttp&path=%2Fxh#t", 1);
+    check_link("trojan://password@1.2.3.4:443?security=tls&type=xhttp&path=%2Fxh&sni=ex.com#t", 1);
+    check_link("trojan://password@1.2.3.4:443?security=reality&type=xhttp&path=%2Fxh&pbk="
+               "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=&fp=chrome#t", 1);
+    {
+        /* the layer under the trojan request is the one the link names */
+        vl_server_t s;
+        ok("trojan reality parses", cfg_parse_link("trojan://password@1.2.3.4:443?security=reality&type=tcp&pbk="
+               "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=&fp=chrome", &s) == CFG_OK);
+        ok("trojan over reality uses the reality transport", transport_for_server(&s) == &transport_reality);
+        ok("trojan over xhttp and reality uses the xhttp reality transport",
+           cfg_parse_link("trojan://password@1.2.3.4:443?security=reality&type=xhttp&pbk="
+               "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=&fp=chrome", &s) == CFG_OK &&
+           transport_for_server(&s) == &transport_xhttp_reality);
+    }
     check_link("socks5://u:p@1.2.3.4:1080#s", 1);
     check_link("http://1.2.3.4:8080#h", 1);
 /* quic only: the link is valid and connectable, but only senko-core's own

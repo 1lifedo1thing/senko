@@ -231,9 +231,16 @@ static int entry_to_server(const prof_entry_t *e, vl_server_t *s, char *why, siz
         if (sni) snprintf(s->sni, sizeof s->sni, "%s", sni);
         const char *fp = entry_get_any(e, "client-fingerprint", "fingerprint");
         if (fp && fp[0]) snprintf(s->fp, sizeof s->fp, "%s", fp);
-        if (entry_get(e, "reality-opts.public-key")) {
-            set_why(why, why_cap, "trojan over reality");
-            return -1;
+        {
+            const char *pbk = entry_get_any(e, "reality-opts.public-key",
+                                            "reality-opts.publicKey");
+            const char *sid = entry_get_any(e, "reality-opts.short-id",
+                                            "reality-opts.shortId");
+            if (pbk && pbk[0]) {
+                s->security = VL_SEC_REALITY;
+                snprintf(s->pbk, sizeof s->pbk, "%s", pbk);
+                if (sid) snprintf(s->sid, sizeof s->sid, "%s", sid);
+            }
         }
         if (clash_transport(e, s, why, why_cap) != 0) return -1;
     } else if (ci_equal(type, "ss") || ci_equal(type, "shadowsocks")) {

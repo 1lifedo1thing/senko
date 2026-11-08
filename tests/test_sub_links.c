@@ -111,8 +111,17 @@ static void test_trojan(void) {
     ok("peer is sni",
        usable("trojan://pw@1.2.3.4:443?peer=edge.example&allowInsecure=1#n") &&
        strcmp(s.sni, "edge.example") == 0 && s.insecure);
-    ok("trojan over reality is named",
-       refused_for("trojan://pw@example.com:443?security=reality&pbk=" PBK "#n", "reality"));
+    ok("trojan over reality is a node",
+       usable("trojan://pw@example.com:443?security=reality&pbk=" PBK "&sid=ab12&fp=chrome&sni=a.example#n") &&
+       s.security == VL_SEC_REALITY && strcmp(s.sid, "ab12") == 0);
+    ok("trojan over reality needs a valid key",
+       refused_for("trojan://pw@example.com:443?security=reality&pbk=short#n", "reality requires valid pbk"));
+    ok("trojan over ws and reality is named",
+       refused_for("trojan://pw@example.com:443?security=reality&type=ws&pbk=" PBK "#n",
+                   "trojan ws over reality"));
+    ok("trojan has no flow",
+       refused_for("trojan://pw@example.com:443?security=tls&flow=xtls-rprx-vision#n",
+                   "trojan does not use flow"));
 }
 
 static void test_shadowsocks(void) {
@@ -305,9 +314,13 @@ static void test_json_outbounds(void) {
        strcmp(json_one("{\"protocol\":\"vless\",\"settings\":{\"vnext\":[{\"address\":\"a.example\","
                        "\"port\":80,\"users\":[{\"id\":\"" UUID "\"}]}]},\"streamSettings\":{"
                        "\"network\":\"httpupgrade\"}}", NULL), "httpupgrade transport") == 0);
-    ok("xray trojan over grpc is refused, not run as tcp",
+    ok("xray trojan over grpc keeps its transport",
        strcmp(json_one("{\"protocol\":\"trojan\",\"settings\":{\"servers\":[{\"address\":\"a.example\","
                        "\"port\":443,\"password\":\"pw\"}]},\"streamSettings\":{\"network\":\"grpc\","
+                       "\"security\":\"tls\"}}", &n), "ok") == 0 && n.net == VL_NET_GRPC);
+    ok("xray trojan over h2 is refused, not run as tcp",
+       strcmp(json_one("{\"protocol\":\"trojan\",\"settings\":{\"servers\":[{\"address\":\"a.example\","
+                       "\"port\":443,\"password\":\"pw\"}]},\"streamSettings\":{\"network\":\"h2\","
                        "\"security\":\"tls\"}}", NULL), "unsupported trojan transport") == 0);
     ok("xray trojan keeps allowInsecure",
        strcmp(json_one("{\"protocol\":\"trojan\",\"settings\":{\"servers\":[{\"address\":\"a.example\","
@@ -328,11 +341,20 @@ static void test_json_outbounds(void) {
        strcmp(json_one("{\"protocol\":\"vless\",\"settings\":{\"vnext\":[{\"address\":\"a.example\","
                        "\"port\":443,\"users\":[]}]}}", NULL), "malformed profile entry") == 0);
 
-    ok("sing-box trojan over grpc is refused, not run as tcp",
+    ok("sing-box trojan over grpc keeps its transport",
        strcmp(json_one("{\"type\":\"trojan\",\"server\":\"a.example\",\"server_port\":443,"
                        "\"password\":\"pw\",\"tls\":{\"enabled\":true},"
-                       "\"transport\":{\"type\":\"grpc\",\"service_name\":\"s\"}}", NULL),
-              "unsupported trojan transport") == 0);
+                       "\"transport\":{\"type\":\"grpc\",\"service_name\":\"s\"}}", &n),
+              "ok") == 0 && n.net == VL_NET_GRPC && strstr(n.path, "s/Tun") != NULL);
+    ok("sing-box trojan over reality",
+       strcmp(json_one("{\"type\":\"trojan\",\"server\":\"a.example\",\"server_port\":443,"
+                       "\"password\":\"pw\",\"tls\":{\"enabled\":true,\"server_name\":\"b.example\","
+                       "\"reality\":{\"enabled\":true,\"public_key\":\"" PBK "\",\"short_id\":\"ab12\"}}}", &n),
+              "ok") == 0 && n.security == VL_SEC_REALITY && strcmp(n.sid, "ab12") == 0);
+    ok("sing-box trojan with tls switched off stays plain",
+       strcmp(json_one("{\"type\":\"trojan\",\"server\":\"a.example\",\"server_port\":443,"
+                       "\"password\":\"pw\",\"tls\":{\"enabled\":false}}", &n),
+              "ok") == 0 && n.security == VL_SEC_NONE);
     ok("sing-box vless ws",
        strcmp(json_one("{\"type\":\"vless\",\"server\":\"a.example\",\"server_port\":443,"
                        "\"uuid\":\"" UUID "\",\"tls\":{\"enabled\":true,\"server_name\":\"b.example\","
