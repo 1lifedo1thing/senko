@@ -570,9 +570,14 @@ remove_rootful_legacy_links() {
 }
 
 remove_modern_legacy_payload() {
-  # ios 12+ needs no injected tls shim or status hook; senkod's roots stay
-  # under /usr/lib/senko
+  # ios 13 and later need neither injected library
   rm -f "$TLSFIX_DYLIB" "$STATUS_DYLIB" "$STATUS_PLIST"
+  rm -rf "$TLSFIX_DIR"
+}
+
+remove_modern_tls_payload() {
+  # ios 12 uses the system tls stack, but the daemon still needs its badge hook
+  rm -f "$TLSFIX_DYLIB"
   rm -rf "$TLSFIX_DIR"
 }
 
@@ -639,12 +644,21 @@ mkdir -p "${TLSFIX_DIR}/roots" || true
 IOS_MAJOR="$(firmware_major)"
 # a status hook that never loads leaves no trace on a device without a shell, so the choice is logged
 postinst_log "hooks: ios ${IOS_MAJOR}, tlsfix $(tlsfix_installed && echo yes || echo no), substrate $(substrate_installed && echo yes || echo no), dir ${SUBSTRATE_DIR}"
-if [ "$IOS_MAJOR" -ge 12 ] 2>/dev/null; then
-  # modern ios has system tls and native status handling, so these hooks only add crash surface
+if [ "$IOS_MAJOR" -ge 13 ] 2>/dev/null; then
   disable_senkotlsfix_hooks
   disable_senkostatus_hooks
   remove_rootful_legacy_links
   remove_modern_legacy_payload
+elif [ "$IOS_MAJOR" -eq 12 ] 2>/dev/null; then
+  disable_senkotlsfix_hooks
+  remove_rootful_legacy_links
+  remove_modern_tls_payload
+  if substrate_installed; then
+    enable_senkostatus_hooks
+  else
+    disable_senkostatus_hooks
+    postinst_log "hooks: no substrate found, the status badge stays off"
+  fi
 elif tlsfix_installed; then
   disable_senkotlsfix_hooks
   enable_senkostatus_hooks
