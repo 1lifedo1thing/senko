@@ -99,6 +99,18 @@ int main(void) {
     bad |= expect(!cfg.has_preshared_key && cfg.dns_count == 0, "blank values stay unset");
     bad |= expect(cfg.mtu == 1280, "blank mtu keeps the default");
 
+    static const char padded_response[] =
+        "[Interface]\nPrivateKey = " K_PRIV "\nAddress = 10.0.0.2/32\n"
+        "S2 = 1236\n"
+        "[Peer]\nPublicKey = " K_PUB "\nEndpoint = 127.0.0.1:51820\n";
+    bad |= expect_status(padded_response, AWG_CFG_OK, "response padding may exceed tunnel mtu");
+
+    static const char oversized_response[] =
+        "[Interface]\nPrivateKey = " K_PRIV "\nAddress = 10.0.0.2/32\n"
+        "S2 = 65507\n"
+        "[Peer]\nPublicKey = " K_PUB "\nEndpoint = 127.0.0.1:51820\n";
+    bad |= expect_status(oversized_response, AWG_CFG_ERR_RANGE, "response exceeds udp limit");
+
     static const char bad_range[] =
         "[Interface]\nPrivateKey = " K_PRIV "\nAddress = 10.0.0.2/32\n"
         "Jmin = 10\nJmax = 9\n"

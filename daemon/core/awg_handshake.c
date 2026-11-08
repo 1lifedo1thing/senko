@@ -231,10 +231,10 @@ awg_hs_status_t awg_handshake_build_initiation(awg_handshake_t *hs,
     size_t need = offset + AWG_INIT_PACKET_LEN;
     if (cfg->random_trailers) {
         size_t extra = 0;
-        if (trailer_length(need, cfg->mtu, &extra) != 0) return AWG_HS_ERR_CRYPTO;
+        if (trailer_length(need, 65507, &extra) != 0) return AWG_HS_ERR_CRYPTO;
         need += extra;
     }
-    if (need > cap || need > cfg->mtu) return AWG_HS_ERR_SPACE;
+    if (need > cap || need > 65507) return AWG_HS_ERR_SPACE;
     if (random_bytes(out, offset) != 0) return AWG_HS_ERR_CRYPTO;
     if (need > offset + AWG_INIT_PACKET_LEN &&
         random_bytes(out + offset + AWG_INIT_PACKET_LEN,
@@ -503,9 +503,9 @@ awg_hs_status_t awg_handshake_send_initiation(int fd, awg_handshake_t *hs,
     if (r == AWG_HS_OK)
         r = awg_handshake_build_initiation(hs, initial, AWG_DATAGRAM_MAX, &initial_len);
     if (r == AWG_HS_ERR_SPACE && reason && reason_cap && !reason[0])
-        snprintf(reason, reason_cap, "initiation size=%lu mtu=%u s1=%u cap=%u",
+        snprintf(reason, reason_cap, "initiation size=%lu s1=%u cap=%u",
                  (unsigned long)(AWG_INIT_PACKET_LEN + hs->cfg->padding[0]),
-                 (unsigned)hs->cfg->mtu, (unsigned)hs->cfg->padding[0], AWG_DATAGRAM_MAX);
+                 (unsigned)hs->cfg->padding[0], AWG_DATAGRAM_MAX);
     if (r == AWG_HS_ERR_CRYPTO && reason && reason_cap && !reason[0])
         snprintf(reason, reason_cap, "initiation crypto stage %d", hs->debug_stage);
     if (r == AWG_HS_OK && send(fd, initial, initial_len, 0) != (ssize_t)initial_len)

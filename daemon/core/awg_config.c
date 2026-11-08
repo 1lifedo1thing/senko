@@ -424,8 +424,9 @@ awg_cfg_status_t awg_config_parse(const char *text, size_t len, awg_config_t *cf
     }
     for (size_t i = 0; i < 4; ++i) {
         uint32_t base = i == 0 ? 148 : (i == 1 ? 92 : (i == 2 ? 64 : 32));
-        if (cfg->padding[i] > cfg->mtu || base + cfg->padding[i] > cfg->mtu) {
-            set_reason(reason, reason_cap, "packet padding exceeds mtu");
+        /* the tunnel mtu limits inner packets, not padded udp handshakes */
+        if (cfg->padding[i] > 65507U - base) {
+            set_reason(reason, reason_cap, "packet padding exceeds udp datagram limit");
             return AWG_CFG_ERR_RANGE;
         }
         /* the header protection nonce comes from the first 12 bytes of this
