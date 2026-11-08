@@ -4,6 +4,7 @@
 #import <Foundation/Foundation.h>
 #import "ios_compat.h"
 #import "control_client.h"
+#include "../common/senko_paths.h"
 
 #define SENKO_SOCK @"/var/tmp/senkod.sock"
 #define SENKO_VERSION @"v4.2.0-stable"
@@ -12,7 +13,11 @@
 #define SENKO_SNOW_KEY @"SenkoFallingSnow"
 #define SENKO_PINNED_SUB_URL_KEY @"SenkoPinnedSubscriptionURL"
 #define SENKO_AWG_PROFILE_KEY @"SenkoAWGProfilePath"
-#define SENKO_AWG_PROFILE_PATH @"/var/mobile/Library/Preferences/Senko/amneziawg.conf"
+#define SENKO_AWG_PROFILE_PATH @SENKO_AWG_PROFILE_FILE
+/* what the app knows of an amnezia premium profile; the key itself stays in senkod */
+#define SENKO_PREMIUM_COUNTRY_KEY @"SenkoPremiumCountry"
+#define SENKO_PREMIUM_COUNTRIES_KEY @"SenkoPremiumCountries"
+#define SENKO_PREMIUM_EXPIRES_KEY @"SenkoPremiumExpires"
 #define SENKO_SELECTED_BACKEND_KEY @"SenkoSelectedBackend"
 #define SENKO_WIDGET_TOGGLE_NOTIFICATION @"SenkoWidgetToggleNotification"
 /* springboard reads this marker instead of the app defaults, which live in a

@@ -11,6 +11,9 @@
 #include "core/senko_clock.h"
 #include "core/vless.h"
 #include "core/subfetch.h"
+#include "core/amnezia_gateway.h"
+#include "premium.h"
+#include "core/vlenc_conf.h"
 #include "core/net_safe.h"
 #include "core/url.h"
 #include "core/tls_clienthello.h"
@@ -388,6 +391,7 @@ int daemon_ctl_apply(void *ctx, const ctl_action_t *action) {
                     status_set(0);
                     return DCTL_ERR_LOOP;
                 }
+                loop_set_vless_enc(d->loop, s->venc, s->port);
             }
 
             char first_ip[64], ip_list[4096];
@@ -821,10 +825,23 @@ int daemon_ctl_flush(void *ctx, const char *what, char *reason, size_t reason_ca
     return -1;
 }
 
+/* persist runs after a command finished, so no import is half done. the
+   profiles the store and the running loop do not name are released, or a
+   subscription that rotates its keys would fill the pool for good */
+static void release_unused_vlenc(const daemon_ctl_t *d, const store_t *store) {
+    uint16_t ids[STORE_MAX_SERVERS + 1];
+    size_t n = 0;
+    for (size_t i = 0; i < store->n && i < STORE_MAX_SERVERS; ++i)
+        if (store->servers[i].venc) ids[n++] = store->servers[i].venc;
+    if (d->loop && d->loop->vless_enc) ids[n++] = d->loop->vless_enc;
+    vlenc_pool_retain(ids, n);
+}
+
 void daemon_ctl_persist(void *ctx, const store_t *store) {
     daemon_ctl_t *d = (daemon_ctl_t *)ctx;
     if (!d || !store || !d->config_path[0]) return;
     storefile_save(store, &d->settings, d->config_path);
+    release_unused_vlenc(d, store);
 }
 
 #define SENKO_BACKUP_EXPORT "/var/mobile/Documents/senko-backup.senko"
@@ -1323,6 +1340,44 @@ int daemon_ctl_fetch(void *ctx, const char *url,
     }
     fprintf(stderr, "senkod: subfetch ok %zu bytes\n", len ? *len : 0);
     return 0;
+}
+
+/* one sealed gateway request. the tunnel gets the first try when one is up,
+   and a dial or transfer failure there is retried direct once, as a
+   subscription fetch does: a dead server must not lock the user out of the
+   profile that would replace it */
+static amz_gw_status_t premium_request(void *ctx, const char *path, const char *payload,
+                                       size_t payload_len, char *answer, size_t answer_cap,
+                                       size_t *answer_len, int *api_status,
+                                       char *reason, size_t reason_cap) {
+    char url[96];
+    if (snprintf(url, sizeof url, "%s%s", AMZ_GW_BASE_URL, path) >= (int)sizeof url)
+        return AMZ_GW_ERR_ARG;
+    fetch_dial_ctx_t dial_ctx = { ctx, 0, 0 };
+    subfetch_cfg_t cfg;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.dial = subfetch_dial;
+    cfg.dial_ctx = &dial_ctx;
+    cfg.tcp = &transport_tcp;
+    amz_gw_status_t r = amz_gw_request(&cfg, url, NULL, payload, payload_len, answer,
+                                       answer_cap, answer_len, 10000, api_status, reason, reason_cap);
+    if ((r == AMZ_GW_ERR_NETWORK || r == AMZ_GW_ERR_TIMEOUT) && dial_ctx.last_via_tunnel) {
+        dial_ctx.force_direct = 1;
+        fprintf(stderr, "senkod: premium gateway retrying direct, bypassing the tunnel\n");
+        r = amz_gw_request(&cfg, url, NULL, payload, payload_len, answer, answer_cap,
+                           answer_len, 10000, api_status, reason, reason_cap);
+    }
+    if (r != AMZ_GW_OK) fprintf(stderr, "senkod: premium gateway request failed (%d)\n", (int)r);
+    return r;
+}
+
+int daemon_ctl_premium(void *ctx, const char *op, const char *arg, char *out, size_t cap) {
+    premium_env_t env;
+    env.state_path = SENKO_PREMIUM_STATE;
+    env.conf_path = SENKO_AWG_PROFILE_FILE;
+    env.request = premium_request;
+    env.request_ctx = ctx;
+    return premium_run(&env, op, arg, out, cap);
 }
 
 /* a geo dat is tens of megabytes, so it goes to a file as it arrives. happ gives

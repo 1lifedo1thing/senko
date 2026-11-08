@@ -27,11 +27,12 @@
 #import "text_prompt.h"
 #import "empty_state.h"
 #import "app_common.h"
+#import "premium_country_vc.h"
 
 @interface MainVC () <UITableViewDataSource, UITableViewDelegate,
                       UIActionSheetDelegate, UIAlertViewDelegate,
                       QRScanDelegate, EditSubscriptionDelegate,
-                      FileImportDelegate, EditAWGDelegate,
+                      FileImportDelegate, EditAWGDelegate, PremiumCountryDelegate,
                       EditServerDelegate, SenkoServerSheetDelegate,
                       SenkoServerPickerDelegate> {
     SenkoControl *_ctl;
@@ -66,6 +67,10 @@
     int           _menuSubIdx;
     BOOL          _busy;
     BOOL          _subscriptionMutationBusy;
+    /* one gateway request at a time, and a profile that has just been issued
+       is not checked for expiry again before it starts */
+    BOOL          _premiumBusy;
+    BOOL          _premiumFresh;
     BOOL          _isRefreshingCatalog;
     BOOL          _catalogLoaded;
 /* a dim veil with a spinner over the whole screen while a subscription
@@ -303,6 +308,15 @@
 - (void)chooseServerIndex:(int)index;
 - (void)switchActiveServerIndex:(int)idx;
 
+- (BOOL)hasPremiumProfile;
+- (NSString *)premiumCountryName;
+- (BOOL)premiumNeedsRefresh;
+- (BOOL)importPremiumKeyData:(NSData *)body;
+- (void)forgetPremiumKey;
+- (void)showPremiumCountries;
+- (void)refreshPremiumProfile;
+- (void)requestPremium:(NSString *)verb argument:(NSString *)arg
+                status:(NSString *)status done:(NSString *)doneText;
 - (void)editAWGProfile;
 - (void)editAWGVC:(EditAWGVC *)vc saveConfig:(NSString *)config;
 - (void)startSavedAWGProfile;

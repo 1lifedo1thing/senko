@@ -218,7 +218,28 @@ static int same_origin(const url_t *a, const url_t *b) {
 #define SUBFETCH_IDLE_MS 3000
 
 /* fetch one url */
+static int write_all(const transport_vt_t *vt, void *th, int fd,
+                     const uint8_t *data, size_t len, int64_t deadline,
+                     subfetch_info_t *info) {
+    size_t off = 0;
+    while (off < len) {
+        int w = vt->write(th, data + off, len - off);
+        if (w > 0) { off += (size_t)w; continue; }
+        if (w == TRANSPORT_WANT_WRITE) {
+            if (!wait_io(fd, 1, deadline, info)) return 0;
+        } else if (w == TRANSPORT_WANT_READ) {
+            if (!wait_io(fd, 0, deadline, info)) return 0;
+        } else {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* post is NULL for a GET. a POST keeps the body of a non-2xx answer, never
+   follows a redirect, and sends no cookie or panel header */
 static subfetch_status_t fetch_once(const subfetch_cfg_t *cfg, const url_t *u,
+                                    const uint8_t *post, size_t post_len,
                                     uint8_t *body, size_t body_cap, size_t *body_len,
                                     char *redir, size_t redir_cap, int64_t deadline,
                                     char *cookie_jar, size_t cookie_cap,
@@ -249,25 +270,20 @@ static subfetch_status_t fetch_once(const subfetch_cfg_t *cfg, const url_t *u,
     const int64_t hard_deadline = deadline + (cfg->progress_extend_ms > 0 ? cfg->progress_extend_ms : 0);
     http_parser_t hp;
     http_parser_init(&hp, body, body_cap);
+    hp.keep_error_body = post != NULL;
     if (cfg->sink) http_parser_set_sink(&hp, cfg->sink, cfg->sink_ctx);
     subfetch_status_t result = SUBFETCH_ERR_HTTP;
     do {
         char req[2048]; size_t reqlen = 0;
-        if (url_build_get_cookie_header(u, cookie_jar, cfg->request_header,
-                                        req, sizeof req, &reqlen) != URL_OK) {
+        url_status_t built = post
+            ? url_build_post_json(u, post_len, req, sizeof req, &reqlen)
+            : url_build_get_cookie_header(u, cookie_jar, cfg->request_header,
+                                          req, sizeof req, &reqlen);
+        if (built != URL_OK) {
             result = SUBFETCH_ERR_URL; break;
         }
-        size_t off = 0;
-        int io_ok = 1;
-        while (off < reqlen) {
-            int w = vt->write(th, (const uint8_t *)req + off, reqlen - off);
-            if (w > 0) { off += (size_t)w; continue; }
-            if (w == TRANSPORT_WANT_WRITE) {
-                if (!wait_io(fd, 1, deadline, info)) { io_ok = 0; break; }
-            } else if (w == TRANSPORT_WANT_READ) {
-                if (!wait_io(fd, 0, deadline, info)) { io_ok = 0; break; }
-            } else { io_ok = 0; break; }
-        }
+        int io_ok = write_all(vt, th, fd, (const uint8_t *)req, reqlen, deadline, info) &&
+                    (!post || write_all(vt, th, fd, post, post_len, deadline, info));
         if (!io_ok) {
             fprintf(stderr, "senkod: subscription request write failed for %s\n", u->host);
             result = SUBFETCH_ERR_TRANSPORT;
@@ -353,7 +369,7 @@ static subfetch_status_t fetch_once(const subfetch_cfg_t *cfg, const url_t *u,
 
     if (info) {
         info->received = hp.body_len;
-        if (result != SUBFETCH_OK && result != SUBFETCH_ERR_REDIRECT)
+        if (post || (result != SUBFETCH_OK && result != SUBFETCH_ERR_REDIRECT))
             info->http_status = hp.status_code;
     }
     vt->close(th);
@@ -399,7 +415,7 @@ subfetch_status_t subfetch_get_info(const subfetch_cfg_t *cfg, const char *url,
         if (!same_origin(&origin, &u)) hop_cfg.request_header = NULL;
         char redir[HTTP_MAX_LOCATION];
         redir[0] = '\0';
-        subfetch_status_t r = fetch_once(&hop_cfg, &u, body_buf, body_cap, body_len,
+        subfetch_status_t r = fetch_once(&hop_cfg, &u, NULL, 0, body_buf, body_cap, body_len,
                                          redir, sizeof redir, deadline,
                                          cookie_jar, sizeof cookie_jar, info);
         if (r == SUBFETCH_OK && cfg->sink) {
@@ -434,6 +450,31 @@ subfetch_status_t subfetch_get_info(const subfetch_cfg_t *cfg, const char *url,
         memcpy(current, redir, rl + 1);
     }
     return SUBFETCH_ERR_REDIRECT; /* redirect limit reached */
+}
+
+subfetch_status_t subfetch_post_json(const subfetch_cfg_t *cfg, const char *url,
+                                     const uint8_t *req, size_t req_len,
+                                     uint8_t *body_buf, size_t body_cap,
+                                     size_t *body_len, int timeout_ms,
+                                     subfetch_info_t *info) {
+    if (!cfg || !cfg->dial || !cfg->tcp || !url || !req || req_len == 0 ||
+        !body_buf || !body_len)
+        return SUBFETCH_ERR_ARG;
+    *body_len = 0;
+    if (info) memset(info, 0, sizeof *info);
+    url_t u;
+    if (url_parse(url, &u) != URL_OK) return SUBFETCH_ERR_URL;
+    char redir[HTTP_MAX_LOCATION];
+    redir[0] = '\0';
+    int64_t deadline = senko_now_ms() + (timeout_ms > 0 ? timeout_ms : 15000);
+    subfetch_cfg_t post_cfg = *cfg;
+    post_cfg.progress_extend_ms = 0;
+    post_cfg.sink = NULL;
+    subfetch_status_t r = fetch_once(&post_cfg, &u, req, req_len, body_buf, body_cap,
+                                     body_len, redir, sizeof redir, deadline,
+                                     NULL, 0, info);
+    if (r == SUBFETCH_OK && info && info->body_cut) return SUBFETCH_ERR_TOOBIG;
+    return r;
 }
 
 static int file_sink(void *ctx, const uint8_t *data, size_t len) {

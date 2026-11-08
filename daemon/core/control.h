@@ -52,15 +52,22 @@ typedef enum {
     CTL_CMD_ROUTING_ENTRIES, /* the entries of one subscription's profile */
     CTL_CMD_GEO,             /* the state of the geo data the profile needs */
     CTL_CMD_GEO_UPDATE,      /* download it again now */
-    CTL_CMD_RIVAL_REMOVE     /* remove vless-core, which the user was asked about */
+    CTL_CMD_RIVAL_REMOVE,    /* remove vless-core, which the user was asked about */
+    CTL_CMD_PREMIUM          /* amnezia premium: name is the op, text its argument */
 } ctl_cmd_kind_t;
+
+/* the longest link the parser takes (share_link.c LINK_MAX). a vless
+   encryption profile with an ml-kem key is over 1600 characters on its own */
+#define CTL_LINK_MAX 8192
+/* one control line: the verb, an index and a link */
+#define CTL_LINE_MAX (CTL_LINK_MAX + 64)
 
 typedef struct {
     ctl_cmd_kind_t kind;
     int            server_index; /* command target */
     int            target_index;
 /* keep the url and name separate */
-    char           text[2048];
+    char           text[CTL_LINK_MAX];
     char           name[64];
     char           value[512];
 /* CHECK only: report the stage timings as well as the total. old clients do

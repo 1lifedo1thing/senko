@@ -185,6 +185,10 @@
             [self editAWGProfile];
         } else if (idx == first + 3) {
             [self removeSavedAWGProfile];
+        } else if (idx == first + 4 && [self hasPremiumProfile]) {
+            [self showPremiumCountries];
+        } else if (idx == first + 5 && [self hasPremiumProfile]) {
+            [self refreshPremiumProfile];
         }
         return;
     }
@@ -272,6 +276,9 @@
    it goes through the same validate and save path a native .conf takes */
 - (BOOL)importAmneziaBundleData:(NSData *)body {
     if (![body length]) return NO;
+    /* a premium key is a vpn:// link too, but it holds no tunnel config: it is a
+       credential the gateway trades for one */
+    if ([self importPremiumKeyData:body]) return YES;
     static const size_t kConfCap = 64 * 1024;
     char *conf = malloc(kConfCap);
     if (!conf) return NO;
@@ -333,6 +340,8 @@
             [self applyState];
             return;
         }
+        /* a plain profile replaces a premium one, and a kept key would refresh over it */
+        [self forgetPremiumKey];
         [[NSUserDefaults standardUserDefaults] setObject:path forKey:SENKO_AWG_PROFILE_KEY];
         [[NSUserDefaults standardUserDefaults] setInteger:SenkoBackendAmneziaWG
                                                     forKey:SENKO_SELECTED_BACKEND_KEY];

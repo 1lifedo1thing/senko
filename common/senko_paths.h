@@ -22,6 +22,14 @@
    config, root owned: the app never reads them */
 #define SENKO_GEO_DIR "/var/root/Library/Preferences/senko-geo"
 
+/* the one amneziawg profile senko keeps; the daemon writes premium profiles
+   here and the app reads and edits it */
+#define SENKO_AWG_PROFILE_FILE "/var/mobile/Library/Preferences/Senko/amneziawg.conf"
+
+/* the premium key, install id and country list. root only: the key is the
+   credential the gateway sells profiles for */
+#define SENKO_PREMIUM_STATE "/var/root/Library/Preferences/senko-premium.json"
+
 /* launchd redirects both daemon streams here, and the ui reads the same file */
 #define SENKO_SYSTEM_LOG "/var/log/senko-system.log"
 

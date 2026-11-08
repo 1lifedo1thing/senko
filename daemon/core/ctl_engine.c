@@ -67,7 +67,7 @@ ctl_status_t ctl_engine_handle(ctl_engine_t *e, const ctl_cmd_t *cmd,
             return ctl_build_state(e->state, ctl_engine_uptime(e), out, cap, out_len);
 
         case CTL_CMD_GET_SERVER: {
-            char link[2048];
+            char link[CTL_LINK_MAX];
             if (store_link_at(&e->store, (size_t)cmd->server_index,
                               link, sizeof link) != 0)
                 return ctl_build_err("no such server", out, cap, out_len);

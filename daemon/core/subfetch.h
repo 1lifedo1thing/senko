@@ -83,6 +83,15 @@ subfetch_status_t subfetch_get_info(const subfetch_cfg_t *cfg, const char *url,
                                     size_t *body_len, int timeout_ms,
                                     subfetch_info_t *info);
 
+/* one json POST: no redirect, no cookie, no panel header. a non-2xx answer
+   still returns its body, with the status in info->http_status, because the amnezia gateway sends api errors that
+   way. the caller decides what the bytes mean */
+subfetch_status_t subfetch_post_json(const subfetch_cfg_t *cfg, const char *url,
+                                     const uint8_t *req, size_t req_len,
+                                     uint8_t *body_buf, size_t body_cap,
+                                     size_t *body_len, int timeout_ms,
+                                     subfetch_info_t *info);
+
 /* the body of a large download goes to out as it arrives, at most max_bytes of it.
    nothing is unpacked: the bytes written are the bytes the server sent. a
    failure leaves a partial file, which is the caller's to remove */

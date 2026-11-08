@@ -363,6 +363,11 @@ int ctl_server_geo_busy(ctl_server_t *s) {
     return busy;
 }
 
+void ctl_server_set_premium(ctl_server_t *s, ctl_premium_fn premium) {
+    if (!s) return;
+    s->premium = premium;
+}
+
 void ctl_server_set_fetch(ctl_server_t *s, ctl_fetch_fn fetch) {
     if (!s) return;
     s->fetch = fetch;
@@ -553,6 +558,7 @@ static void drop_client(ctl_client_t *c) {
     c->fd = -1;
     c->authed = 0;
     c->in_len = 0;
+    c->discarding = 0;
     c->outbuf = NULL;
     c->out_len = 0;
     c->out_off = 0;
@@ -591,6 +597,7 @@ static void accept_one(ctl_server_t *s) {
     c->fd = cfd;
     c->authed = 0;
     c->in_len = 0;
+    c->discarding = 0;
     c->generation = ++s->client_generation;
 }
 
@@ -646,6 +653,7 @@ static void client_write(ctl_client_t *c, const char *buf, size_t len) {
 }
 
 typedef struct ctl_fetch_job ctl_fetch_job_t;
+typedef struct ctl_premium_job ctl_premium_job_t;
 
 typedef struct {
     int slot;
@@ -654,6 +662,7 @@ typedef struct {
     int server_index;
     int ms;
     ctl_fetch_job_t *fetch; /* set when a fetch thread finished instead */
+    ctl_premium_job_t *premium; /* set when a premium thread finished instead */
 } ctl_ping_result_t;
 
 typedef struct {
@@ -717,6 +726,7 @@ static void finish_ping_result(ctl_server_t *s, const ctl_ping_result_t *result)
 }
 
 static void finish_fetch_job(ctl_server_t *s, ctl_fetch_job_t *job);
+static void finish_premium_job(ctl_server_t *s, ctl_premium_job_t *job);
 
 static void drain_ping_results(ctl_server_t *s) {
     if (!s || s->ping_pipe[0] < 0) return;
@@ -725,6 +735,7 @@ static void drain_ping_results(ctl_server_t *s) {
         ssize_t n = read(s->ping_pipe[0], &result, sizeof result);
         if (n == (ssize_t)sizeof result) {
             if (result.fetch) finish_fetch_job(s, result.fetch);
+            else if (result.premium) finish_premium_job(s, result.premium);
             else finish_ping_result(s, &result);
             continue;
         }
@@ -924,16 +935,88 @@ static int start_fetch_job(ctl_server_t *s, ctl_client_t *c, fetch_purpose_t pur
     return 0;
 }
 
+#define PREMIUM_REPLY_MAX (24 * 1024)
+
+struct ctl_premium_job {
+    ctl_server_t *server;
+    int slot;
+    int fd;
+    uint64_t generation;
+    char op[64];
+    char arg[1024];
+    char *out;
+};
+
+static void *run_premium_job(void *arg) {
+    ctl_premium_job_t *job = (ctl_premium_job_t *)arg;
+    job->out = (char *)calloc(1, PREMIUM_REPLY_MAX);
+    if (job->out)
+        (void)job->server->premium(job->server->apply_ctx, job->op, job->arg,
+                                   job->out, PREMIUM_REPLY_MAX);
+    ctl_ping_result_t result;
+    memset(&result, 0, sizeof result);
+    result.premium = job;
+    ping_result_write(job->server, &result);
+    return NULL;
+}
+
+static int start_premium_job(ctl_server_t *s, ctl_client_t *c, const char *op, const char *arg) {
+    /* one at a time: two requests would race on the profile file and burn a
+       device slot each */
+    if (!s->premium || s->premium_active > 0) return -1;
+    ctl_premium_job_t *job = (ctl_premium_job_t *)calloc(1, sizeof *job);
+    if (!job) return -1;
+    job->server = s;
+    job->slot = (int)(c - s->clients);
+    job->fd = c->fd;
+    job->generation = c->generation;
+    snprintf(job->op, sizeof job->op, "%s", op);
+    snprintf(job->arg, sizeof job->arg, "%s", arg);
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, run_premium_job, job) != 0) {
+        free(job);
+        return -1;
+    }
+    pthread_detach(thread);
+    s->premium_active++;
+    return 0;
+}
+
+static void finish_premium_job(ctl_server_t *s, ctl_premium_job_t *job) {
+    if (s->premium_active > 0) s->premium_active--;
+    ctl_client_t *c = NULL;
+    if (job->slot >= 0 && job->slot < CTL_SERVER_MAX_CLIENTS &&
+        s->clients[job->slot].fd == job->fd &&
+        s->clients[job->slot].generation == job->generation)
+        c = &s->clients[job->slot];
+    if (c) {
+        if (job->out && job->out[0]) {
+            client_write(c, job->out, strlen(job->out));
+        } else {
+            char err[64]; size_t en = 0;
+            if (ctl_build_err("premium request failed", err, sizeof err, &en) == CTL_OK)
+                client_write(c, err, en);
+        }
+    }
+    if (job->out) memset(job->out, 0, PREMIUM_REPLY_MAX);
+    free(job->out);
+    memset(job->arg, 0, sizeof job->arg);
+    free(job);
+}
+
 /* register the feed the deep link pointed at, then pull it once so the user
    sees nodes instead of an empty section */
 static void import_subscription_url(ctl_server_t *s, ctl_client_t *c,
-                                    const char *url) {
+                                    const char *url, const char *label) {
     char reply[288];
     size_t rn = 0;
     char name[128];
     size_t si = 0;
 
-    sub_name_from_url(url, name, sizeof name);
+    if (label && label[0])
+        snprintf(name, sizeof name, "%s", label);
+    else
+        sub_name_from_url(url, name, sizeof name);
     if (store_add_sub(&s->engine.store, name, url, &si) != STORE_OK) {
         if (ctl_build_err("subscription list is full", reply, sizeof reply, &rn) == CTL_OK)
             client_write(c, reply, rn);
@@ -1361,7 +1444,7 @@ static int connect_with_tunnel_pick(ctl_server_t *s, ctl_client_t *c, int start_
         cmd.kind = CTL_CMD_CONNECT;
         cmd.server_index = (int)i;
 
-        char out[512]; size_t on = 0;
+        char out[CTL_LINK_MAX + 128]; size_t on = 0;
         ctl_action_t action;
         if (ctl_engine_handle(&s->engine, &cmd, out, sizeof out, &on, &action) != CTL_OK)
             continue;
@@ -2561,6 +2644,19 @@ static void dispatch_line(ctl_server_t *s, ctl_client_t *c,
         return;
     }
 
+    if (cmd.kind == CTL_CMD_PREMIUM) {
+        char reply[128]; size_t rn = 0;
+        if (!s->premium) {
+            if (ctl_build_err("premium is not available", reply, sizeof reply, &rn) == CTL_OK)
+                client_write(c, reply, rn);
+            return;
+        }
+        if (start_premium_job(s, c, cmd.name, cmd.text) != 0 &&
+            ctl_build_err("a premium request is already running", reply, sizeof reply, &rn) == CTL_OK)
+            client_write(c, reply, rn);
+        return;
+    }
+
     if (cmd.kind == CTL_CMD_NATIVE_CONFIG) {
         char reply[128];
         size_t rn = 0;
@@ -2756,7 +2852,7 @@ static void dispatch_line(ctl_server_t *s, ctl_client_t *c,
         if (n) client_write(c, line, n);
     }
 
-    char out[512]; size_t on = 0;
+    char out[CTL_LINK_MAX + 128]; size_t on = 0;
     ctl_action_t action;
     ctl_engine_handle(&s->engine, &cmd, out, sizeof out, &on, &action);
     if (on > 0) client_write(c, out, on);
@@ -2848,13 +2944,17 @@ static void service_client(ctl_server_t *s, ctl_client_t *c) {
     for (ssize_t i = 0; i < n; ++i) {
         char ch = buf[i];
         if (ch == '\n') {
-            dispatch_line(s, c, c->inbuf, c->in_len);
+            if (!c->discarding) dispatch_line(s, c, c->inbuf, c->in_len);
+            c->discarding = 0;
             c->in_len = 0;
+        } else if (c->discarding) {
+            continue;
         } else if (c->in_len < sizeof c->inbuf) {
             c->inbuf[c->in_len++] = ch;
         } else {
             client_write(c, "ERR line too long\n", 18);
             c->in_len = 0;
+            c->discarding = 1;
         }
         if (c->fd < 0) return; /* dispatch may have dropped us */
     }
@@ -2983,7 +3083,7 @@ size_t ctl_server_client_count(const ctl_server_t *s) {
 
 void ctl_server_close(ctl_server_t *s) {
     if (!s) return;
-    while (s->ping_active > 0 || s->fetch_active > 0) {
+    while (s->ping_active > 0 || s->fetch_active > 0 || s->premium_active > 0) {
         struct pollfd pfd;
         pfd.fd = s->ping_pipe[0];
         pfd.events = POLLIN;

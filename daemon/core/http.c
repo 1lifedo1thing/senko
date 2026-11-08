@@ -81,7 +81,7 @@ static http_status_t consume_line(http_parser_t *p) {
             p->state = HP_COMPLETE;
             return HTTP_DONE;
         }
-        if (p->status_code < 200 || p->status_code >= 300) {
+        if (!p->keep_error_body && (p->status_code < 200 || p->status_code >= 300)) {
             return HTTP_ERR_STATUS; /* reject non-success status */
         }
         if (p->framing == HTTP_FRAMING_CHUNKED) {

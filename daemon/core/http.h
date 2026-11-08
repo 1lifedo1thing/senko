@@ -93,6 +93,10 @@ typedef struct {
     char    announce[512];
     int     have_announce;
 
+/* the amnezia gateway reports api errors as encrypted json under a 4xx or 5xx
+   status, so its caller needs the body of a non-2xx answer */
+    int      keep_error_body;
+
     uint8_t *body;
     size_t   body_cap;
     size_t   body_len;

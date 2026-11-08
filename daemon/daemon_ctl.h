@@ -94,6 +94,10 @@ void daemon_ctl_persist(void *ctx, const store_t *store);
    and streams the result */
 int daemon_ctl_diag(void *ctx, char *buf, size_t cap, size_t *len);
 
+/* amnezia premium over the same dialers a subscription fetch uses. runs on a
+   ctl_server thread; see ctl_premium_fn */
+int daemon_ctl_premium(void *ctx, const char *op, const char *arg, char *out, size_t cap);
+
 int daemon_ctl_fetch(void *ctx, const char *url,
                      const char *request_header,
                      unsigned char *buf, size_t cap, size_t *len,

@@ -123,14 +123,21 @@ typedef int (*ctl_awg_fn)(void *ctx, const char *flag, const char *path,
                           char *out, size_t cap);
 typedef int (*ctl_awg_busy_fn)(void *ctx);
 
+/* an amnezia premium request, run on its own thread: the gateway round trip
+   takes seconds. out gets the PREMIUM lines and a closing OK or ERR line.
+   0 when the last line is OK */
+typedef int (*ctl_premium_fn)(void *ctx, const char *op, const char *arg,
+                              char *out, size_t cap);
+
 /* append DIAG lines the daemon owns; the server adds its own before streaming */
 typedef int (*ctl_diag_fn)(void *ctx, char *buf, size_t cap, size_t *len);
 
 typedef struct {
     int   fd; /* connected ui client */
     int   authed;
-    char  inbuf[1024]; /* partial control line */
+    char  inbuf[CTL_LINE_MAX]; /* partial control line */
     size_t in_len;
+    int   discarding; /* past the cap: drop the rest of the line, never run its tail */
     char  *outbuf;
     size_t out_len;
     size_t out_off;
@@ -163,6 +170,8 @@ typedef struct {
     ctl_native_config_fn native_config;
     ctl_awg_fn    awg;
     ctl_awg_busy_fn awg_busy;
+    ctl_premium_fn premium;
+    size_t        premium_active;
     ctl_stats_fn stats;
     ctl_geo_fetch_fn geo_fetch;
     char geo_dir[GEO_UPDATE_DIR_MAX];
@@ -250,6 +259,7 @@ void ctl_server_set_fwconf(ctl_server_t *s, ctl_fwconf_fn fwconf);
 void ctl_server_set_flush(ctl_server_t *s, ctl_flush_fn flush);
 void ctl_server_set_native_config(ctl_server_t *s, ctl_native_config_fn render);
 void ctl_server_set_awg(ctl_server_t *s, ctl_awg_fn awg, ctl_awg_busy_fn busy);
+void ctl_server_set_premium(ctl_server_t *s, ctl_premium_fn premium);
 
 int ctl_server_restore_tunnel(ctl_server_t *s);
 

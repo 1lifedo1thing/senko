@@ -81,6 +81,8 @@ APP_SRC := \
 	logs_vc.m \
 	edit_server_vc.m \
 	edit_awg_vc.m \
+	premium_country_vc.m \
+	main_vc_premium.m \
 	edit_subscription_vc.m \
 	subscription_info_vc.m \
 	file_import_vc.m \

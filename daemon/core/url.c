@@ -359,6 +359,28 @@ url_status_t url_build_get_cookie_header(const url_t *u, const char *cookie,
     return URL_OK;
 }
 
+url_status_t url_build_post_json(const url_t *u, size_t body_len,
+                                 char *buf, size_t cap, size_t *out_len) {
+    if (!u || !buf || cap == 0) return URL_ERR_ARG;
+    int default_port = u->is_https ? 443 : 80;
+    char host[sizeof u->host + 8];
+    int hn = strchr(u->host, ':') ? snprintf(host, sizeof host, "[%s]", u->host)
+                                  : snprintf(host, sizeof host, "%s", u->host);
+    if (hn < 0 || (size_t)hn >= sizeof host) return URL_ERR_TOOLONG;
+    if (u->port != default_port) {
+        int pn = snprintf(host + hn, sizeof host - (size_t)hn, ":%u", u->port);
+        if (pn < 0 || (size_t)pn >= sizeof host - (size_t)hn) return URL_ERR_TOOLONG;
+    }
+    int n = snprintf(buf, cap,
+                     "POST %s HTTP/1.0\r\nHost: %s\r\n"
+                     "Content-Type: application/json\r\nContent-Length: %zu\r\n"
+                     "Accept-Encoding: identity\r\nConnection: close\r\n\r\n",
+                     u->path, host, body_len);
+    if (n < 0 || (size_t)n >= cap) return URL_ERR_TOOLONG;
+    if (out_len) *out_len = (size_t)n;
+    return URL_OK;
+}
+
 url_status_t url_build_get_cookie(const url_t *u, const char *cookie,
                                   char *buf, size_t cap, size_t *out_len) {
     return url_build_get_cookie_header(u, cookie, NULL, buf, cap, out_len);

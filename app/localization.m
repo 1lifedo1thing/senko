@@ -500,6 +500,18 @@ static void SenkoBuildTranslations(void) {
     SenkoAddTranslation(@"Delete", @"Удалить");
     SenkoAddTranslation(@"Every server in the Manual group is removed. Subscriptions are not touched.", @"Все серверы из группы «Вручную» будут удалены. Подписки не затрагиваются.");
     SenkoAddTranslation(@"AmneziaWG: refresh", @"AmneziaWG: обновить");
+    SenkoAddTranslation(@"Premium country", @"Премиум: страна");
+    SenkoAddTranslation(@"Premium: new profile", @"Премиум: новый профиль");
+    SenkoAddTranslation(@"Requesting the premium profile...", @"Запрашиваю профиль Premium...");
+    SenkoAddTranslation(@"premium profile added", @"профиль Premium добавлен");
+    SenkoAddTranslation(@"premium country changed", @"страна Premium изменена");
+    SenkoAddTranslation(@"premium profile refreshed", @"профиль Premium обновлён");
+    SenkoAddTranslation(@"a premium request is already running", @"запрос Premium уже выполняется");
+    SenkoAddTranslation(@"no premium countries known, refresh the profile", @"список стран Premium неизвестен, обновите профиль");
+    SenkoAddTranslation(@"the premium profile is issued by the gateway and cannot be edited", @"профиль Premium выдаёт шлюз, его нельзя изменить");
+    SenkoAddTranslation(@"the premium key does not fit one control line", @"ключ Premium не помещается в одну строку управления");
+    SenkoAddTranslation(@"the premium key could not be removed from senkod", @"не удалось удалить ключ Premium из senkod");
+    SenkoAddTranslation(@"the premium device slot was not released, remove this device in another Amnezia client", @"слот устройства Premium не освобождён, удалите это устройство в другом клиенте Amnezia");
     SenkoAddTranslation(@"AmneziaWG: check ping", @"AmneziaWG: проверить пинг");
     SenkoAddTranslation(@"AmneziaWG: edit details", @"AmneziaWG: изменить");
     SenkoAddTranslation(@"AmneziaWG: remove profile", @"AmneziaWG: удалить профиль");
@@ -1057,6 +1069,18 @@ static void SenkoBuildTranslations(void) {
     SenkoAddChineseTranslation(@"A port number between 1 and 65535", @"请输入 1 到 65535 之间的端口号");
     SenkoAddChineseTranslation(@"Active tunnel", @"当前隧道");
     SenkoAddChineseTranslation(@"Add dark variant", @"添加深色版本");
+    SenkoAddChineseTranslation(@"Premium country", @"高级版国家");
+    SenkoAddChineseTranslation(@"Premium: new profile", @"高级版：新配置");
+    SenkoAddChineseTranslation(@"Requesting the premium profile...", @"正在请求高级版配置...");
+    SenkoAddChineseTranslation(@"premium profile added", @"已添加高级版配置");
+    SenkoAddChineseTranslation(@"premium country changed", @"已更改高级版国家");
+    SenkoAddChineseTranslation(@"premium profile refreshed", @"已刷新高级版配置");
+    SenkoAddChineseTranslation(@"a premium request is already running", @"高级版请求正在进行");
+    SenkoAddChineseTranslation(@"no premium countries known, refresh the profile", @"未知高级版国家列表，请刷新配置");
+    SenkoAddChineseTranslation(@"the premium profile is issued by the gateway and cannot be edited", @"高级版配置由网关签发，无法编辑");
+    SenkoAddChineseTranslation(@"the premium key does not fit one control line", @"高级版密钥超出单行控制长度");
+    SenkoAddChineseTranslation(@"the premium key could not be removed from senkod", @"无法从 senkod 移除高级版密钥");
+    SenkoAddChineseTranslation(@"the premium device slot was not released, remove this device in another Amnezia client", @"未释放高级版设备名额，请在其他 Amnezia 客户端中移除此设备");
     SenkoAddChineseTranslation(@"AmneziaWG: check ping", @"AmneziaWG：检查延迟");
     SenkoAddChineseTranslation(@"AmneziaWG: edit details", @"AmneziaWG：编辑详情");
     SenkoAddChineseTranslation(@"AmneziaWG: refresh", @"AmneziaWG：刷新");
@@ -1750,7 +1774,8 @@ static NSString *SenkoSkipTailRu(NSString *tail) {
         { @"httpupgrade transport", @"транспорт httpupgrade" },
         { @"kcp transport", @"транспорт kcp" },
         { @"quic transport", @"транспорт quic" },
-        { @"trojan over reality", @"trojan через reality" },
+        { @"trojan ws over reality", @"trojan через websocket и reality" },
+        { @"trojan does not use flow", @"у trojan нет flow" },
         { @"vless encryption", @"шифрование vless" },
         { @"invalid vless id", @"неверный id vless" },
         { @"invalid vmess id", @"неверный id vmess" },

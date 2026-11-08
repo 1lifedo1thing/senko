@@ -458,6 +458,12 @@ static void senkoClearStatus(void) {
         SetStatusDefault(_statusLabel, @"disconnect to edit");
         return;
     }
+    /* the gateway replaces this profile every time it expires, so an edit
+       would be lost without a word */
+    if ([self hasPremiumProfile]) {
+        SetStatusDefault(_statusLabel, @"the premium profile is issued by the gateway and cannot be edited");
+        return;
+    }
     NSError *err = nil;
     NSString *config = [NSString stringWithContentsOfFile:[self awgProfilePath]
                                                    encoding:NSUTF8StringEncoding error:&err];
@@ -515,6 +521,12 @@ static void senkoClearStatus(void) {
         SetStatusDefault(_statusLabel, @"amneziawg config not found");
         return;
     }
+    BOOL fresh = _premiumFresh;
+    _premiumFresh = NO;
+    if (!fresh && [self premiumNeedsRefresh]) {
+        [self refreshPremiumProfile];
+        return;
+    }
     [NSObject cancelPreviousPerformRequestsWithTarget:self
                                              selector:@selector(refresh)
                                                object:nil];
@@ -561,6 +573,7 @@ static void senkoClearStatus(void) {
     void (^finish)(void) = ^{
         [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
         [[NSUserDefaults standardUserDefaults] removeObjectForKey:SENKO_AWG_PROFILE_KEY];
+        [self forgetPremiumKey];
         _activeBackend = SenkoBackendNone;
         _selectedBackend = SenkoBackendServer;
         [[NSUserDefaults standardUserDefaults] setInteger:_selectedBackend forKey:SENKO_SELECTED_BACKEND_KEY];
@@ -602,7 +615,23 @@ static void senkoClearStatus(void) {
     BOOL hasAWG = [self hasAWGProfile];
     if (!canClear && !hasAWG) return;
     UIActionSheet *as = nil;
-    if (hasAWG) {
+    if (hasAWG && [self hasPremiumProfile]) {
+        /* the premium rows come last so the four amneziawg indexes keep their meaning */
+        NSString *country = [NSString stringWithFormat:@"%@: %@",
+                             SenkoLocalizedText(@"Premium country"),
+                             [self premiumCountryName] ? [self premiumCountryName] : @"-"];
+        as = [[UIActionSheet alloc]
+              initWithTitle:SenkoLocalizedText(@"Manual")
+              delegate:self
+              cancelButtonTitle:SenkoLocalizedText(@"Cancel")
+              destructiveButtonTitle:canClear ? SenkoLocalizedText(@"Delete all servers") : nil
+              otherButtonTitles:SenkoLocalizedText(@"AmneziaWG: refresh"),
+                                SenkoLocalizedText(@"AmneziaWG: check ping"),
+                                SenkoLocalizedText(@"AmneziaWG: edit details"),
+                                SenkoLocalizedText(@"AmneziaWG: remove profile"),
+                                country,
+                                SenkoLocalizedText(@"Premium: new profile"), nil];
+    } else if (hasAWG) {
         as = [[UIActionSheet alloc]
               initWithTitle:SenkoLocalizedText(@"Manual")
               delegate:self

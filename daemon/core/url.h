@@ -44,6 +44,11 @@ void url_device_hwid(char *out, size_t cap);
    without a second phone */
 void url_device_hwid_reset(char *out, size_t cap);
 
+/* header block of a json POST with a known body length. it carries no device
+   id: the amnezia gateway has no business with the hwid the panels get */
+url_status_t url_build_post_json(const url_t *u, size_t body_len,
+                                 char *buf, size_t cap, size_t *out_len);
+
 url_status_t url_build_get_cookie_header(const url_t *u, const char *cookie,
                                          const char *request_header,
                                          char *buf, size_t cap, size_t *out_len);

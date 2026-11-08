@@ -199,6 +199,12 @@ NSString *SenkoControlStateFromReply(NSString *reply, long *uptime);
 
 - (void)startAWGAtPath:(NSString *)path reply:(void (^)(NSString *status))done;
 - (void)stopAWG:(void (^)(NSString *status))done;
+/* amnezia premium, run in senkod: KEY (argument is the vpn:// key), COUNTRY
+   (argument is a code), REFRESH, STATE, FORGET. done gets nil when senkod did
+   not answer, else @"ok", @"message", @"country", @"expires" (epoch seconds,
+   0 unknown) and @"countries" (dictionaries with @"code", @"flag" and @"name") */
+- (void)premiumRequest:(NSString *)verb argument:(NSString *)arg
+                 reply:(void (^)(NSDictionary *result))done;
 - (void)awgStatus:(void (^)(NSString *status))done;
 /* uptime in seconds, -1 when the daemon sent none */
 - (void)awgStatusWithUptime:(void (^)(NSString *status, long uptime))done;

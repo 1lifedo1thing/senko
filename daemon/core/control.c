@@ -350,6 +350,23 @@ ctl_status_t ctl_parse_cmd(const char *line, size_t len, ctl_cmd_t *out) {
         }
         return CTL_ERR_PARSE;
     }
+    if (verb_is(line, len, "PREMIUM", &rest, &rl)) {
+        static const struct { const char *word; int arg; } ops[] = {
+            { "KEY", 1 }, { "COUNTRY", 1 }, { "REFRESH", 0 }, { "STATE", 0 }, { "FORGET", 0 }
+        };
+        for (size_t i = 0; i < sizeof ops / sizeof ops[0]; ++i) {
+            const char *arg = NULL;
+            size_t al = 0;
+            if (!verb_is(rest, rl, ops[i].word, &arg, &al)) continue;
+            if ((al != 0) != ops[i].arg || al >= sizeof out->text) return CTL_ERR_PARSE;
+            memcpy(out->text, arg, al);
+            out->text[al] = '\0';
+            snprintf(out->name, sizeof out->name, "%s", ops[i].word);
+            out->kind = CTL_CMD_PREMIUM;
+            return CTL_OK;
+        }
+        return CTL_ERR_PARSE;
+    }
     if (verb_is(line, len, "UPDATE", &rest, &rl)) {
         if (rl == 0 || rl >= sizeof out->text) return CTL_ERR_PARSE;
         memcpy(out->text, rest, rl);

@@ -86,6 +86,26 @@ static int mock_apply(void *ctx, const ctl_action_t *a) {
     return 0;
 }
 
+/* the daemon side of the PREMIUM verb */
+static struct {
+    char op[64];
+    char arg[1024];
+    int calls;
+} g_premium;
+
+static int mock_premium(void *ctx, const char *op, const char *arg, char *out, size_t cap) {
+    (void)ctx;
+    g_premium.calls++;
+    snprintf(g_premium.op, sizeof g_premium.op, "%s", op);
+    snprintf(g_premium.arg, sizeof g_premium.arg, "%s", arg);
+    if (strcmp(op, "REFRESH") == 0) {
+        snprintf(out, cap, "ERR gateway said no\n");
+        return 1;
+    }
+    snprintf(out, cap, "PREMIUM STATE at 5\nOK premium state\n");
+    return 0;
+}
+
 /* fixed fetch hook */
 typedef struct {
     int  calls;
@@ -807,6 +827,35 @@ int main(void) {
 
     ctl_server_set_awg(&s, NULL, NULL);
 
+    {
+        ctl_cmd_t pc;
+        ok("parse a premium key",
+           ctl_parse_cmd("PREMIUM KEY vpn://abc\n", 22, &pc) == CTL_OK && pc.kind == CTL_CMD_PREMIUM &&
+           strcmp(pc.name, "KEY") == 0 && strcmp(pc.text, "vpn://abc") == 0);
+        ok("parse a premium refresh",
+           ctl_parse_cmd("PREMIUM REFRESH\n", 16, &pc) == CTL_OK && strcmp(pc.name, "REFRESH") == 0 &&
+           pc.text[0] == '\0');
+        ok("premium country takes its code",
+           ctl_parse_cmd("PREMIUM COUNTRY fi\n", 19, &pc) == CTL_OK && strcmp(pc.text, "fi") == 0);
+        ok("premium key needs an argument", ctl_parse_cmd("PREMIUM KEY\n", 12, &pc) == CTL_ERR_PARSE);
+        ok("premium refresh takes none", ctl_parse_cmd("PREMIUM REFRESH x\n", 18, &pc) == CTL_ERR_PARSE);
+        ok("an unknown premium verb is refused", ctl_parse_cmd("PREMIUM BUY\n", 12, &pc) == CTL_ERR_PARSE);
+    }
+    write(cli, "PREMIUM STATE\n", 14);
+    exchange(&s, cli, buf, sizeof buf);
+    ok("premium without a daemon hook is refused", strcmp(buf, "ERR premium is not available\n") == 0);
+
+    ctl_server_set_premium(&s, mock_premium);
+    write(cli, "PREMIUM COUNTRY fi\n", 19);
+    stream_until(&s, cli, "OK ", buf, sizeof buf);
+    ok("a premium reply comes back whole from its thread",
+       strcmp(buf, "PREMIUM STATE at 5\nOK premium state\n") == 0 &&
+       strcmp(g_premium.op, "COUNTRY") == 0 && strcmp(g_premium.arg, "fi") == 0);
+    write(cli, "PREMIUM REFRESH\n", 16);
+    stream_until(&s, cli, "ERR ", buf, sizeof buf);
+    ok("a failing premium request answers with its error", strcmp(buf, "ERR gateway said no\n") == 0);
+    ctl_server_set_premium(&s, NULL);
+
     int calls_before = rec.calls;
     write(cli, "FLOOP\n", 6);
     exchange(&s, cli, buf, sizeof buf);
@@ -1186,6 +1235,41 @@ int main(void) {
     ok("replace manual reply", strcmp(buf, "OK server updated\n") == 0);
     ok("replace manual keeps its position",
        s.engine.store.n > 0 && strcmp(s.engine.store.servers[0].host, "6.6.6.6") == 0);
+
+    {
+        /* a vless encryption profile makes the link ten times longer than the old 1024 byte control line allowed */
+        static char big_cmd[9000], key[1700], reply[12000];
+        memset(key, 'A', 1579);
+        key[1579] = '\0';
+        int n = snprintf(big_cmd, sizeof big_cmd,
+                         "ADDSRV vless://eeee5555-6324-4d53-ad4f-8cda48b30811@7.7.7.7:443?security=tls&type=tcp"
+                         "&encryption=mlkem768x25519plus.native.0rtt.100-111-1111.%s#Profiled\n", key);
+        write(cli, big_cmd, (size_t)n);
+        exchange(&s, cli, reply, sizeof reply);
+        ok("a link with a vless encryption profile is accepted", strncmp(reply, "OK ", 3) == 0);
+        int idx = (int)s.engine.store.n - 1;
+        ok("and stored with its profile", idx >= 0 && s.engine.store.servers[idx].venc != 0);
+        n = snprintf(big_cmd, sizeof big_cmd, "GETSRV %d\n", idx);
+        write(cli, big_cmd, (size_t)n);
+        exchange(&s, cli, reply, sizeof reply);
+        ok("the editor gets the whole link back", strncmp(reply, "LINK ", 5) == 0 && strstr(reply, key) != NULL &&
+           strstr(reply, "#Profiled\n") != NULL);
+        n = snprintf(big_cmd, sizeof big_cmd, "DELSRV %d\n", idx);
+        write(cli, big_cmd, (size_t)n);
+        exchange(&s, cli, reply, sizeof reply);
+        ok("profiled server removed again", strncmp(reply, "OK ", 3) == 0);
+
+        /* beyond the parser's own link size the line is refused, with the rest of it dropped, not run */
+        static char huge[9000];
+        memset(huge, 'a', sizeof huge - 2);
+        memcpy(huge, "ADDSRV vless://", 15);
+        huge[sizeof huge - 2] = '\n';
+        huge[sizeof huge - 1] = '\0';
+        size_t before = s.engine.store.n;
+        write(cli, huge, strlen(huge));
+        exchange(&s, cli, reply, sizeof reply);
+        ok("a line past the cap is refused", strstr(reply, "ERR ") != NULL && s.engine.store.n == before);
+    }
 
     write(cli, "LIST\n", 5);
     exchange(&s, cli, buf, sizeof buf);

@@ -82,6 +82,8 @@ HOST_TESTS += test_shadowsocks
 HOST_TESTS += test_vmess
 HOST_TESTS += test_qr_zbar
 HOST_TESTS += test_subfetch_budget
+HOST_TESTS += test_amnezia_gateway
+HOST_TESTS += test_premium
 HOST_TESTS += test_blake2b256
 HOST_TESTS += test_hy2_proto
 HOST_TESTS += test_session_hy2
@@ -124,20 +126,20 @@ HOST_TESTS += test_geo test_routing_profile test_geo_update test_routing_sync te
 
 all: test
 
+test_device_model: test_device_model.c ../app/device_model.c ../app/device_model.h
+	$(CC) $(CFLAGS) -I../app test_device_model.c ../app/device_model.c -o $@
+
 .PHONY: test-native
 test-native:
 	bash ../scripts/test_native_core.sh
 
 test: $(HOST_TESTS)
-test_device_model: test_device_model.c ../app/device_model.c ../app/device_model.h
-	$(CC) $(CFLAGS) -I../app test_device_model.c ../app/device_model.c -o $@
-
+	./test_device_model
 	./test_karing_backup
 	python3 test_karing_zip.py
 	python3 test_launchd_install.py
 	python3 check_emoji_assets.py
 	./test_blake2b256
-	./test_device_model
 	./test_hy2_proto
 	./test_session_hy2
 	./test_net_diag

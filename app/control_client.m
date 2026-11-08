@@ -286,6 +286,21 @@ static int native_config_reply_complete(const char *buf, size_t len) {
     return 0;
 }
 
+/* a premium request streams PREMIUM lines and closes with OK or ERR */
+static int premium_reply_complete(const char *buf, size_t len) {
+    size_t start = 0;
+    for (size_t i = 0; i < len; ++i) {
+        if (buf[i] != '\n') continue;
+        const char *ln = buf + start;
+        size_t llen = i - start;
+        if ((llen >= 3 && memcmp(ln, "OK ", 3) == 0) ||
+            (llen >= 4 && memcmp(ln, "ERR ", 4) == 0))
+            return 1;
+        start = i + 1;
+    }
+    return 0;
+}
+
 /* amneziawg answers with AWG lines closed by AWGEND */
 static int awg_reply_complete(const char *buf, size_t len) {
     size_t start = 0;
@@ -450,6 +465,7 @@ static int senkoCtlAuth(int fd, NSString *sockPath, int timeoutMs,
         done_fn = native_config_reply_complete;
     else if (is_blob) done_fn = blob_reply_complete;
     else if ([cmd hasPrefix:@"AWG "]) done_fn = awg_reply_complete;
+    else if ([cmd hasPrefix:@"PREMIUM "]) done_fn = premium_reply_complete;
 
     NSMutableData *acc = [NSMutableData data];
     char buf[4096];
@@ -1448,6 +1464,55 @@ static SenkoSub *parseSUB(NSString *line) {
 - (void)validateAWGAtPath:(NSString *)path reply:(void (^)(NSString *))done {
     if (![path length]) { if (done) done(nil); return; }
     [self awgRequest:@"VALIDATE" path:path silenceIsError:YES reply:done];
+}
+
+/* two gateway attempts (tunnel, then direct) fit in this */
+#define SENKO_PREMIUM_WAIT_MS 45000
+
+- (void)premiumRequest:(NSString *)verb argument:(NSString *)arg
+                 reply:(void (^)(NSDictionary *))done {
+    NSString *cmd = [arg length] ? [NSString stringWithFormat:@"PREMIUM %@ %@", verb, arg]
+                                 : [NSString stringWithFormat:@"PREMIUM %@", verb];
+    [self sendCommand:cmd timeoutMs:SENKO_PREMIUM_WAIT_MS reply:^(NSString *reply) {
+        if (![reply length]) {
+            if (done) done(nil);
+            return;
+        }
+        NSMutableDictionary *result = [NSMutableDictionary dictionary];
+        NSMutableArray *countries = [NSMutableArray array];
+        [result setObject:[NSNumber numberWithBool:NO] forKey:@"ok"];
+        for (NSString *line in [reply componentsSeparatedByString:@"\n"]) {
+            if ([line hasPrefix:@"PREMIUM STATE "]) {
+                NSArray *parts = [[line substringFromIndex:14] componentsSeparatedByString:@" "];
+                if ([parts count] >= 2) {
+                    NSString *code = [parts objectAtIndex:0];
+                    if (![code isEqualToString:@"-"]) [result setObject:code forKey:@"country"];
+                    [result setObject:[NSNumber numberWithLongLong:
+                                       atoll([[parts objectAtIndex:1] UTF8String])]
+                               forKey:@"expires"];
+                }
+            } else if ([line hasPrefix:@"PREMIUM COUNTRY "]) {
+                NSArray *parts = [[line substringFromIndex:16] componentsSeparatedByString:@" "];
+                if ([parts count] >= 3) {
+                    NSString *flag = [parts objectAtIndex:1];
+                    NSRange name = NSMakeRange(2, [parts count] - 2);
+                    [countries addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+                        [parts objectAtIndex:0], @"code",
+                        [flag isEqualToString:@"-"] ? @"" : flag, @"flag",
+                        [[parts subarrayWithRange:name] componentsJoinedByString:@" "], @"name", nil]];
+                }
+            } else if ([line hasPrefix:@"OK "]) {
+                [result setObject:[NSNumber numberWithBool:YES] forKey:@"ok"];
+                [result setObject:[line substringFromIndex:3] forKey:@"message"];
+            } else if ([line hasPrefix:@"ERR "]) {
+                [result setObject:[line substringFromIndex:4] forKey:@"message"];
+            }
+        }
+        [result setObject:countries forKey:@"countries"];
+        if (![result objectForKey:@"message"])
+            [result setObject:@"senkod gave no answer to the premium request" forKey:@"message"];
+        if (done) done(result);
+    }];
 }
 
 - (void)updatePackageAtPath:(NSString *)path reply:(void (^)(NSString *))done {

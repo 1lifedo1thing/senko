@@ -207,6 +207,7 @@ static int run_managed(const char *ctl_path, const char *config_path,
     ctl_server_set_flush(&cs, daemon_ctl_flush);
     ctl_server_set_native_config(&cs, daemon_ctl_native_config);
     ctl_server_set_awg(&cs, daemon_ctl_awg, daemon_ctl_awg_busy);
+    ctl_server_set_premium(&cs, daemon_ctl_premium);
     ctl_server_set_stats(&cs, daemon_ctl_stats);
     daemon_ctl_set_rules(&dc, &cs.engine.store.rules);
     daemon_ctl_set_store(&dc, &cs.engine.store, SENKO_GEO_DIR);
