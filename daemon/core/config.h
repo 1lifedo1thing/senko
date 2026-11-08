@@ -166,7 +166,8 @@ typedef enum {
     CFG_CONTENT_XRAY_JSON,  /* xray / v2rayn exported config */
     CFG_CONTENT_HAPP,       /* happ:// bundle */
     CFG_CONTENT_CLASH,      /* clash / clash-meta yaml */
-    CFG_CONTENT_SURGE       /* shadowrocket / surge ini */
+    CFG_CONTENT_SURGE,      /* shadowrocket / surge ini */
+    CFG_CONTENT_INCY        /* incy:// add, import or crypt1 link */
 } cfg_content_t;
 
 cfg_content_t cfg_content_kind(const char *blob, size_t blob_len);
@@ -240,6 +241,12 @@ void cfg_import_skip(cfg_import_stats_t *stats, vl_server_t *out, size_t max,
    returns 0 and fills out when the body is exactly one such url */
 int cfg_subscription_url(const char *blob, size_t blob_len,
                          char *out, size_t out_cap);
+
+/* the same, and name gets the label an incy:// link carries for the source
+   (empty for every other form). returns -1 when the label does not fit */
+int cfg_subscription_source(const char *blob, size_t blob_len,
+                            char *out, size_t out_cap,
+                            char *name, size_t name_cap);
 
 /* why a fetched body carried no node senko can run, when the answer is known.
    returns a static string or NULL when there is nothing specific to say */

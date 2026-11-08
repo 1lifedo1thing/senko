@@ -1369,9 +1369,14 @@ static int looks_like_happ(const char *b, size_t n) {
     return n >= 7 && (strncmp(b, "happ://", 7) == 0 || strncmp(b, "HAPP://", 7) == 0);
 }
 
+static int looks_like_incy(const char *b, size_t n) {
+    return n >= 7 && strncasecmp(b, "incy://", 7) == 0;
+}
+
 cfg_content_t cfg_content_kind(const char *blob, size_t blob_len) {
     if (!blob || blob_len == 0) return CFG_CONTENT_UNKNOWN;
     if (looks_like_happ(blob, blob_len)) return CFG_CONTENT_HAPP;
+    if (looks_like_incy(blob, blob_len)) return CFG_CONTENT_INCY;
     if (looks_like_json(blob, blob_len)) return CFG_CONTENT_XRAY_JSON;
     if (profiles_looks_like_clash(blob, blob_len)) return CFG_CONTENT_CLASH;
     if (profiles_looks_like_surge(blob, blob_len)) return CFG_CONTENT_SURGE;
@@ -1420,15 +1425,18 @@ static int looks_like_subscription_url(const char *text) {
     return cfg_parse_link(text, &probe) != CFG_OK;
 }
 
-int cfg_subscription_url(const char *blob, size_t blob_len,
-                         char *out, size_t out_cap) {
+int cfg_subscription_source(const char *blob, size_t blob_len,
+                            char *out, size_t out_cap,
+                            char *name, size_t name_cap) {
     char plain[16384];
     char tmp[8192];
+    char label[128] = "";
     size_t n;
     const char *text;
 
     if (!blob || blob_len == 0 || !out || out_cap == 0) return -1;
     out[0] = '\0';
+    if (name && name_cap) name[0] = '\0';
 
     n = blob_len < sizeof tmp - 1 ? blob_len : sizeof tmp - 1;
     memcpy(tmp, blob, n);
@@ -1439,13 +1447,30 @@ int cfg_subscription_url(const char *blob, size_t blob_len,
         if (happ_unwrap(tmp, plain, sizeof plain) != 0) return -1;
         trim_ends(plain);
         text = plain;
+    } else if (looks_like_incy(tmp, strlen(tmp))) {
+        char *hash;
+        if (incy_unwrap(tmp, plain, sizeof plain, label, sizeof label) != INCY_OK)
+            return -1;
+        trim_ends(plain);
+        /* the fragment is a list label, not part of the address to fetch, and
+           a url with one would pass for a dialable https node below */
+        hash = strchr(plain, '#');
+        if (hash) *hash = '\0';
+        text = plain;
     } else {
         text = tmp;
     }
     if (!looks_like_subscription_url(text)) return -1;
     if (strlen(text) + 1 > out_cap) return -1;
+    if (name && name_cap && strlen(label) + 1 > name_cap) return -1;
     memcpy(out, text, strlen(text) + 1);
+    if (name && name_cap) memcpy(name, label, strlen(label) + 1);
     return 0;
+}
+
+int cfg_subscription_url(const char *blob, size_t blob_len,
+                         char *out, size_t out_cap) {
+    return cfg_subscription_source(blob, blob_len, out, out_cap, NULL, 0);
 }
 
 /* the body without a byte order mark, the whitespace around it, or the
@@ -1494,6 +1519,18 @@ static cfg_status_t parse_body(const char *blob, size_t blob_len, vl_server_t *o
     if (blob_len >= 15 && strncasecmp(blob, "happ://routing/", 15) == 0 &&
         !memchr(blob, '\n', blob_len))
         return CFG_OK;
+    if (looks_like_incy(blob, blob_len) && !memchr(blob, '\n', blob_len)) {
+        char tmp[8192];
+        char plain[8192];
+        if (blob_len >= sizeof tmp) return CFG_ERR_TOO_LONG;
+        memcpy(tmp, blob, blob_len);
+        tmp[blob_len] = '\0';
+        if (incy_unwrap(tmp, plain, sizeof plain, NULL, 0) != INCY_OK) {
+            cfg_import_stats_add(st, "incy link that does not open");
+            return CFG_OK;
+        }
+        return parse_body(plain, strlen(plain), out, max, count, st, depth + 1);
+    }
     if (looks_like_happ(blob, blob_len) && !memchr(blob, '\n', blob_len)) {
         char tmp[8192];
         char plain[16384];

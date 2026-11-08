@@ -24,6 +24,7 @@
 - socks5, http(s)
 
 subscriptions: uri lists, base64, happ, xray/sing-box json, clash yaml, shadowrocket/surge ini. up to 1024 catalog entries, including alternate transports and unsupported rows.
+links: `incy://add/`, `incy://import/` and `incy://crypt1/` open into a subscription (the name comes from the crypt1 `n` field or the url fragment) or a node; incy routing and control links are refused.
 
 ## subscriptions
 

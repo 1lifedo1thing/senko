@@ -199,7 +199,10 @@ test_device_model: test_device_model.c ../app/device_model.c ../app/device_model
 	./test_subfetch_budget
 	./test_profiles
 	./test_happ_links
+	./test_incy_links
 	./test_amnezia_bundle
+	./test_amnezia_gateway
+	./test_premium
 	./test_amnezia_qr
 	./test_tun_plan
 	./test_endpoint_pool

@@ -2407,9 +2407,11 @@ static void dispatch_line(ctl_server_t *s, ctl_client_t *c,
 /* a happ deep link normally carries the panel's subscription url, which is not
    a node to add but a feed to follow */
         char sub_url[512];
-        if (cfg_subscription_url((const char *)blob, blen, sub_url, sizeof sub_url) == 0) {
+        char sub_label[64];
+        if (cfg_subscription_source((const char *)blob, blen, sub_url, sizeof sub_url,
+                                    sub_label, sizeof sub_label) == 0) {
             free(blob);
-            import_subscription_url(s, c, sub_url);
+            import_subscription_url(s, c, sub_url, sub_label);
             return;
         }
 

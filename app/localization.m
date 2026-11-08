@@ -1759,6 +1759,7 @@ static NSString *SenkoSkipTailRu(NSString *tail) {
         { @"shadowsocks userinfo that does not decode", @"нечитаемые данные shadowsocks" },
         { @"shadowsocks cipher that is not a name", @"нечитаемый шифр shadowsocks" },
         { @"happ link that does not open", @"нераскрываемая ссылка happ" },
+        { @"incy link that does not open", @"нераскрываемая ссылка incy" },
         { @"malformed profile entry", @"битая запись профиля" },
         { @"hysteria v1", @"hysteria 1" },
         { @"unsupported trojan transport", @"trojan через неподдерживаемый транспорт" },
