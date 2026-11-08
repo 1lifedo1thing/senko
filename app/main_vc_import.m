@@ -24,8 +24,36 @@
     [sheet showInView:self.view];
 }
 
+/* an item that carries only public.url, rtf or a text type under another uti gives
+   nil from -string even though the paste banner already fired; read the pasteboard
+   once and try each representation from it */
+static NSString *ClipboardTextOfValue(id value) {
+    if ([value isKindOfClass:[NSString class]]) return value;
+    if ([value isKindOfClass:[NSURL class]]) return [value absoluteString];
+    if ([value isKindOfClass:[NSAttributedString class]]) return [value string];
+    if ([value isKindOfClass:[NSData class]] && [value length]) return [[[NSString alloc] initWithData:value encoding:NSUTF8StringEncoding] autorelease];
+    return nil;
+}
+
+static NSString *ClipboardText(void) {
+    UIPasteboard *pb = [UIPasteboard generalPasteboard];
+    NSString *s = [pb string];
+    if ([s length]) return s;
+    for (NSString *item in [pb strings])
+        if ([item length]) return item;
+    NSString *url = [[pb URL] absoluteString];
+    if ([url length]) return url;
+    for (NSDictionary *item in [pb items]) {
+        for (id value in [item allValues]) {
+            NSString *t = ClipboardTextOfValue(value);
+            if ([t length]) return t;
+        }
+    }
+    return nil;
+}
+
 - (void)pasteFromClipboard {
-    NSString *s = [[UIPasteboard generalPasteboard] string];
+    NSString *s = ClipboardText();
     if ([s length]) [self importText:s];
     else {
         [self setLastErr:@"the clipboard is empty"];
