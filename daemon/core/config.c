@@ -1,6 +1,8 @@
 #include "config.h"
+#include "vlenc_conf.h"
 #include "b64.h"
 #include "happ.h"
+#include "incy.h"
 #include "profiles.h"
 
 #include <ctype.h>
@@ -194,18 +196,23 @@ int cfg_validate_server(const vl_server_t *s, char *reason, size_t reason_cap) {
             cfg_reason(reason, reason_cap, "vmess does not use flow");
             return 0;
         }
-    } else if (s->proto != VL_PROTO_VLESS) {
-        cfg_reason(reason, reason_cap, "unsupported protocol");
-        return 0;
-    } else {
+    } else if (s->proto == VL_PROTO_VLESS) {
         if (!uuid_text_ok(s->uuid)) {
             cfg_reason(reason, reason_cap, "invalid vless id");
             return 0;
         }
+        /* the profile lives in venc, the text field only ever says none */
         if (s->encryption[0] && strcmp(s->encryption, "none") != 0) {
             cfg_reason(reason, reason_cap, "vless encryption");
             return 0;
         }
+        if (s->venc && !vlenc_cfg(s->venc)) {
+            cfg_reason(reason, reason_cap, "vless encryption");
+            return 0;
+        }
+    } else if (s->proto != VL_PROTO_TROJAN) {
+        cfg_reason(reason, reason_cap, "unsupported protocol");
+        return 0;
     }
     if (s->net != VL_NET_TCP && s->net != VL_NET_WS &&
         s->net != VL_NET_GRPC && s->net != VL_NET_XHTTP) {
@@ -1053,8 +1060,9 @@ static int xray_node(const cJSON *ob, vl_server_t *s, char *why, size_t cap) {
         if (jstr_copy(user, "id", id, sizeof id) != 0) goto malformed;
         cfg_node_vless_id(s, id);
         (void)jstr_copy(user, "flow", s->flow, sizeof s->flow);
-        if (jstr_copy(user, "encryption", s->encryption, sizeof s->encryption) != 0)
-            snprintf(s->encryption, sizeof s->encryption, "none");
+        /* a missing field is none, a present one is read whole: a long
+           profile used to fall through jstr_copy and import as none */
+        if (cfg_node_vless_encryption(s, jstr(user, "encryption"), why, cap) != 0) return -1;
     } else if (strcmp(proto, "vmess") == 0) {
         char id[64] = "";
         ep = xray_endpoint(settings, "vnext");
@@ -1187,6 +1195,7 @@ static int singbox_node(const cJSON *ob, vl_server_t *s, char *why, size_t cap) 
         if (jstr_copy(ob, "uuid", id, sizeof id) != 0) goto malformed;
         cfg_node_vless_id(s, id);
         (void)jstr_copy(ob, "flow", s->flow, sizeof s->flow);
+        s->venc = 0;
         snprintf(s->encryption, sizeof s->encryption, "none");
     } else if (strcmp(type, "vmess") == 0) {
         char id[64] = "";

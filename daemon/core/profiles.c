@@ -171,7 +171,7 @@ static int entry_to_server(const prof_entry_t *e, vl_server_t *s, char *why, siz
         } else {
             const char *flow = entry_get(e, "flow");
             s->proto = VL_PROTO_VLESS;
-            snprintf(s->encryption, sizeof s->encryption, "none");
+            if (cfg_node_vless_encryption(s, entry_get(e, "encryption"), why, why_cap) != 0) return -1;
             if (flow) snprintf(s->flow, sizeof s->flow, "%s", flow);
         }
         if (clash_transport(e, s, why, why_cap) != 0) return -1;

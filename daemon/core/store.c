@@ -1,4 +1,5 @@
 #include "store.h"
+#include "vlenc_conf.h"
 #include "b64.h"
 
 #include <stdio.h>
@@ -33,6 +34,7 @@ static int same_server(const vl_server_t *a, const vl_server_t *b) {
         && strcmp(a->ws_host, b->ws_host) == 0
         && strcmp(a->mode, b->mode) == 0
         && strcmp(a->encryption, b->encryption) == 0
+        && a->venc == b->venc
         && a->insecure == b->insecure
         && strcmp(a->pin_sha256, b->pin_sha256) == 0
         && strcmp(a->obfs, b->obfs) == 0
@@ -835,15 +837,22 @@ static int build_link(const vl_server_t *s, char *buf, size_t cap) {
     }
 
     /* vmess is stored in the xtls share link form: the vless layout with the
-       body cipher in encryption= */
+       body cipher in encryption=. trojan takes the same layout with its
+       password as the userinfo, so a reality key, a grpc service or an xhttp
+       mode survives the file like it does for vless */
     int vmess = s->proto == VL_PROTO_VMESS;
-    char enc_id[3 * sizeof s->uuid];
-    if (pct_encode_user(s->uuid, enc_id, sizeof enc_id) < 0) return -1;
+    int trojan = s->proto == VL_PROTO_TROJAN;
+    int vless = s->proto == VL_PROTO_VLESS;
+    char enc_id[3 * sizeof s->pass > 3 * sizeof s->uuid ? 3 * sizeof s->pass : 3 * sizeof s->uuid];
+    if (pct_encode_user(trojan ? s->pass : s->uuid, enc_id, sizeof enc_id) < 0) return -1;
     int n = snprintf(buf, cap, "%s://%s@%s:%u?security=%s&type=%s",
-                     vmess ? "vmess" : "vless", enc_id, s->host, s->port,
+                     vmess ? "vmess" : trojan ? "trojan" : "vless", enc_id, s->host, s->port,
                      security_name(s->security), net_name(s->net));
     if (n < 0 || (size_t)n >= cap) return -1;
     size_t off = (size_t)n;
+
+    /* a profile id the pool lost would write the node out as plain vless */
+    if (vless && s->venc && !vlenc_text(s->venc)) return -1;
 
     struct { const char *key; const char *val; } opt[] = {
         { "sni",  s->sni  },
@@ -853,12 +862,14 @@ static int build_link(const vl_server_t *s, char *buf, size_t cap) {
         { "pbk",  s->pbk  },
         { "sid",  s->sid  },
         { "path", s->path },
-        { "mode", s->mode },
-        { "encryption", vmess ? s->encryption : "" },
+        /* the grpc stream name alone does not say TunMulti, so mode carries it */
+        { "mode", s->net == VL_NET_GRPC && s->grpc_multi ? "multi" : s->mode },
+        { "encryption", vmess ? s->encryption : (vless && s->venc ? vlenc_text(s->venc) : NULL) },
     };
     for (size_t i = 0; i < sizeof opt / sizeof opt[0]; ++i) {
-        if (!opt[i].val[0]) continue;
-        char enc[1024];
+        if (!opt[i].val || !opt[i].val[0]) continue;
+        /* a vless encryption profile can run past 3000 characters */
+        char enc[3 * VLENC_TEXT_MAX];
         if (pct_encode(opt[i].val, enc, sizeof enc) < 0) return -1;
         int m = snprintf(buf + off, cap - off, "&%s=%s", opt[i].key, enc);
         if (m < 0 || (size_t)m >= cap - off) return -1;

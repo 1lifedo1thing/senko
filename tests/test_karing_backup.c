@@ -75,6 +75,10 @@ int main(int argc, char **argv) {
     original.servers[0].net = VL_NET_XHTTP;
     zip = NULL; len = 0;
     check(karing_export(&original, &zip, &len) != 0 && !zip && !len, "unsupported export is explicit");
+    original.servers[0].net = VL_NET_WS;
+    original.servers[0].venc = 1; /* sing-box has no vless encryption: it would export as plain vless */
+    zip = NULL; len = 0;
+    check(karing_export(&original, &zip, &len) != 0 && !zip && !len, "a vless encryption profile is not exported as plain vless");
     if (!failed) puts("all Karing backup checks passed");
     return failed;
 }

@@ -68,6 +68,11 @@ typedef struct {
     char     ws_host[256];
     char     flow[32];
     char     encryption[32];
+/* vless encryption profile, an id from vlenc_intern. the text is too long for
+   a field that vl_server_t copies by value (an ml-kem key alone is 1579
+   characters), so the profile lives once in the pool and 0 means none. for
+   vless the encryption field above then holds "none" */
+    uint16_t venc;
     char     fp[32];
     char     pbk[128];
     char     sid[32];
@@ -204,6 +209,11 @@ int  cfg_node_transport(vl_server_t *s, const char *name, const char *header,
                         char *why, size_t why_cap);
 int  cfg_node_security(vl_server_t *s, const char *name, char *why, size_t why_cap);
 void cfg_node_vless_id(vl_server_t *s, const char *id);
+/* the vless "encryption" value of any format: empty and "none" mean none, a
+   mlkem768x25519plus profile is checked whole and pooled. -1 with why when it
+   cannot be carried, and the node is then not usable: a profile is never
+   dropped to none */
+int  cfg_node_vless_encryption(vl_server_t *s, const char *text, char *why, size_t why_cap);
 void cfg_node_ss_method(vl_server_t *s, const char *method);
 /* the defaults every format shares: sni follows the host, a websocket host
    follows the sni, the grpc path, vision spellings, quic and shadowsocks

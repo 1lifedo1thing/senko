@@ -1,5 +1,6 @@
 #include "store.h"
 #include "cJSON.h"
+#include "vlenc_conf.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -85,8 +86,71 @@ static void test_balancer_subscription(void) {
     free(body);
 }
 
+
+static void make_key(char *out, int variant) {
+    memset(out, 'A', 1579);
+    out[1579] = '\0';
+    if (variant) out[100] = 'B';
+}
+
+/* a vless encryption profile is part of the node's identity and has to come back from the file whole */
+static void test_vless_encryption(void) {
+    static store_t st, back;
+    static char key_a[1580], key_b[1580], link_a[4000], link_b[4000], got[8192], file[200000];
+    make_key(key_a, 0);
+    make_key(key_b, 1);
+    snprintf(link_a, sizeof link_a,
+             "vless://11111111-1111-4111-8111-111111111111@enc.example:443?security=tls&type=tcp&flow=xtls-rprx-vision&encryption=mlkem768x25519plus.native.0rtt.100-111-1111.%s#a", key_a);
+    snprintf(link_b, sizeof link_b,
+             "vless://11111111-1111-4111-8111-111111111111@enc.example:443?security=tls&type=tcp&flow=xtls-rprx-vision&encryption=mlkem768x25519plus.native.0rtt.100-111-1111.%s#a", key_b);
+    store_init(&st);
+    size_t first = 99, second = 99, dup = 99;
+    ok("profile node is added", store_add_manual(&st, link_a, &first) == STORE_OK);
+    ok("same node with other keys is another node", store_add_manual(&st, link_b, &second) == STORE_OK && second != first);
+    ok("the same keys again is a duplicate", store_add_manual(&st, link_a, &dup) == STORE_ERR_EXISTS);
+    ok("the nodes differ only by profile", st.servers[first].venc != st.servers[second].venc &&
+       st.servers[first].venc && st.servers[second].venc);
+
+    ok("link comes back whole", store_link_at(&st, first, got, sizeof got) == 0 &&
+       strstr(got, "encryption=mlkem768x25519plus.native.0rtt.100-111-1111.") != NULL && strstr(got, key_a) != NULL);
+    vl_server_t reread;
+    ok("and parses to the same profile", cfg_parse_link(got, &reread) == CFG_OK && reread.venc == st.servers[first].venc);
+    ok("a link buffer too small for the profile fails", store_link_at(&st, first, got, 1000) != 0);
+
+    size_t n = 0;
+    ok("catalog serializes", store_serialize(&st, file, sizeof file, &n) == STORE_OK && n > 3000);
+    vlenc_pool_reset(); /* a restart forgets every pooled profile */
+    store_init(&back);
+    ok("catalog loads after the restart", store_deserialize(&back, file, n) == STORE_OK && back.n == 2);
+    ok("both profiles are back", back.servers[0].venc && back.servers[1].venc && back.servers[0].venc != back.servers[1].venc);
+    ok("with the same keys", vlenc_cfg(back.servers[0].venc)->key_len[0] == 1184 &&
+       memcmp(vlenc_cfg(back.servers[0].venc)->blob, vlenc_cfg(back.servers[1].venc)->blob, 1184) != 0);
+    ok("and the same text", strstr(vlenc_text(back.servers[0].venc), key_a) != NULL &&
+       strstr(vlenc_text(back.servers[1].venc), key_b) != NULL);
+
+    /* replace keeps the profile when the edit keeps the text, and a plain link drops it */
+    ok("replace onto a node that already has those keys is refused", store_replace_manual(&back, 0, link_b) == STORE_ERR_EXISTS);
+    char plain[] = "vless://11111111-1111-4111-8111-111111111111@enc.example:443?security=tls&type=tcp#a";
+    ok("replace with a plain link", store_replace_manual(&back, 1, plain) == STORE_OK && back.servers[1].venc == 0);
+
+    /* a subscription refresh keeps the selected node when its profile is unchanged and moves it when it is not */
+    static store_t sub;
+    size_t si = 0, added = 0;
+    char feed[8000];
+    snprintf(feed, sizeof feed, "%s\n%s\n", link_a, link_b);
+    store_init(&sub);
+    store_add_sub(&sub, "enc", "https://enc.example/feed", &si);
+    ok("subscription with profiles imports", store_refresh_sub(&sub, si, feed, strlen(feed), &added) == STORE_OK && added == 2);
+    ok("select the second", store_select(&sub, 1) == STORE_OK);
+    snprintf(feed, sizeof feed, "%s\n%s\n", link_b, link_a); /* swapped order */
+    ok("refresh with swapped order", store_refresh_sub(&sub, si, feed, strlen(feed), &added) == STORE_OK && added == 2);
+    ok("selection follows the profile", sub.selected >= 0 &&
+       strstr(vlenc_text(sub.servers[sub.selected].venc), key_b) != NULL);
+}
+
 int main(void) {
     test_balancer_subscription();
+    test_vless_encryption();
     {
         static store_t groups;
         const char *node = "vless://11111111-1111-4111-8111-111111111111@same.example:443?security=none#same";

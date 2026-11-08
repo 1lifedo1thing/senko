@@ -231,6 +231,8 @@ static cJSON *export_server(const vl_server_t *s) {
     if (!type || s->net == VL_NET_XHTTP || s->net == VL_NET_UNKNOWN ||
         s->security == VL_SEC_UNKNOWN || s->pin_sha256[0] || s->port_hop[0] ||
         s->grpc_multi) return NULL;
+    /* sing-box has no vless encryption: the node would export as plain vless */
+    if (s->venc) return NULL;
     int http_proxy = s->proto == VL_PROTO_HTTP || s->proto == VL_PROTO_HTTPS;
     if ((http_proxy || s->proto == VL_PROTO_SOCKS5) && s->net != VL_NET_TCP) return NULL;
     if (s->proto == VL_PROTO_SOCKS5 && s->security != VL_SEC_NONE) return NULL;

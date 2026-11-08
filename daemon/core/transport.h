@@ -28,6 +28,10 @@ typedef struct {
     const char *xhttp_mode; /* preserve the xhttp stream mode */
     const char *peer_host; /* dial target host, last authority fallback */
     int insecure; /* skip certificate and hostname verification (allowInsecure) */
+/* vless encryption profile (vlenc_intern id, 0 for none) and the server port
+   the 0rtt tickets are scoped to. the wrapper transports refuse a zero id */
+    uint16_t vless_enc;
+    uint16_t peer_port;
     transport_tls_shared_t *shared_ctx; /* borrowed trust store for one backend run */
 /* where the transport records why the server failed. caller owned and NULL in
    the relays; handles keep the pointer, so it has to outlive them */
@@ -56,6 +60,10 @@ typedef struct transport_vt {
 
 /* half close after the relay drained cleanly; optional (http/2 end stream) */
     void (*shutdown)(void *h);
+
+/* the vision reader saw the peer's direct command: a layer that frames the
+   stream itself learns here that plain bytes may follow; optional */
+    void (*peer_direct)(void *h);
 } transport_vt_t;
 
 extern const transport_vt_t transport_tcp; /* plain tcp transport */
@@ -66,6 +74,11 @@ extern const transport_vt_t transport_ws_reality; /* websocket over reality */
 extern const transport_vt_t transport_xhttp_tcp;
 extern const transport_vt_t transport_xhttp_tls;
 extern const transport_vt_t transport_xhttp_reality;
+
+/* the vless encryption layer over each stream transport above, null where the
+   combination does not exist. one wrapper per inner transport because open()
+   gets no other way to tell them apart. core/transport_enc.c */
+const transport_vt_t *transport_enc_over(const transport_vt_t *inner);
 
 #ifdef __cplusplus
 }

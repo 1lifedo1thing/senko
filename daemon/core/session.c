@@ -326,6 +326,7 @@ static void deliver_client(session_t *s, const uint8_t *buf, size_t len) {
     if (an > 0) vision_filter_tls(&s->vision_traffic, app, an);
     if (dir) {
         s->vision_downstream_direct = 1;
+        if (s->vt->peer_direct) s->vt->peer_direct(s->th);
         fprintf(stderr, "senkod: vision downstream direct\n");
         senko_trace_sess(s, "downstream_direct", "vision CMD_DIRECT");
     }

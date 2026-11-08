@@ -136,6 +136,21 @@ static void transport_text(const net_diag_t *d, char *out, size_t cap) {
         else
             snprintf(out, cap, "the server answered gRPC status %d: check the service name", v);
         return;
+    case NET_FAIL_ENCRYPTION:
+        /* the values are vlc_status_t: 6 auth, 7 proto, 8 key, 9 ticket, 4 state (cut off) */
+        if (v == 9)
+            snprintf(out, cap, "the server dropped the 0-RTT ticket of the VLESS encryption: "
+                     "the next connection starts a full handshake");
+        else if (v == 6)
+            snprintf(out, cap, "the VLESS encryption handshake failed its check: "
+                     "check the encryption string and its keys");
+        else if (v == 100)
+            snprintf(out, cap, "the VLESS encryption handshake did not finish in time: "
+                     "check the encryption string and the server");
+        else
+            snprintf(out, cap, "the VLESS encryption layer stopped (code %d): "
+                     "check the encryption string and the server", v);
+        return;
     case NET_FAIL_TRANSPORT:
         snprintf(out, cap, "the server did not open the chosen transport: check the path, host and transport type");
         return;

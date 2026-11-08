@@ -613,6 +613,8 @@ int utun_backend_start(utun_backend_t *backend, const vl_server_t *server,
     tls.xhttp_mode = backend->server.mode;
     tls.peer_host = backend->server.host;
     tls.insecure = backend->server.insecure;
+    tls.vless_enc = backend->server.venc;
+    tls.peer_port = backend->server.port;
     tun_tcp_config_t tcp;
     memset(&tcp, 0, sizeof tcp);
     tcp.vt = vt;

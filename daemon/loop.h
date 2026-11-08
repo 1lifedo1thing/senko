@@ -51,6 +51,8 @@ typedef struct {
     char       open_xhttp_mode[16];
     char       open_peer_host[256];
     int        open_insecure;
+    uint16_t   open_vless_enc;
+    uint16_t   open_peer_port;
     transport_tls_cfg_t open_tls_cfg;
     void      *open_th;
 
@@ -90,6 +92,8 @@ typedef struct loop {
     char     xhttp_mode[16];
     char     peer_host[256]; /* dial target, authority fallback for http/2 */
     int      insecure; /* skip tls certificate/hostname verification */
+    uint16_t vless_enc; /* vlenc_intern id of the selected server, 0 for none */
+    uint16_t peer_port;
     transport_tls_cfg_t tls_cfg;
 
 /* keep the listener bound while rejecting clients without a server */
@@ -133,6 +137,10 @@ void loop_set_tls(loop_t *lp, const char *sni, const char *fingerprint,
                   const char *reality_pbk, const char *reality_sid,
                   const char *path, const char *ws_host,
                   const char *xhttp_mode, const char *peer_host, int insecure);
+
+/* the vless encryption profile of the selected server and its port, set after
+   loop_set_server (which clears it) and before the first client connects */
+void loop_set_vless_enc(loop_t *lp, uint16_t profile, uint16_t port);
 
 /* replace the active path and drop connections tied to the old server */
 loop_status_t loop_set_server(loop_t *lp, const transport_vt_t *vt,

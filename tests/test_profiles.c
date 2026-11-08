@@ -3,6 +3,7 @@
    splitting */
 #include "profiles.h"
 #include "config.h"
+#include "vlenc_conf.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -87,7 +88,43 @@ static const char kSurge[] =
 "[Rule]\n"
 "FINAL,PROXY\n";
 
+
+/* clash meta reads the same mlkem768x25519plus string from "encryption" */
+static void test_clash_vless_encryption(void) {
+    static const char good[] =
+        "proxies:\n"
+        "  - name: enc\n"
+        "    type: vless\n"
+        "    server: 203.0.113.9\n"
+        "    port: 443\n"
+        "    uuid: 11111111-2222-3333-4444-555555555555\n"
+        "    tls: true\n"
+        "    network: tcp\n"
+        "    encryption: mlkem768x25519plus.native.0rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n"
+        "  - name: none\n"
+        "    type: vless\n"
+        "    server: 203.0.113.10\n"
+        "    port: 443\n"
+        "    uuid: 11111111-2222-3333-4444-555555555555\n"
+        "    tls: true\n"
+        "    encryption: none\n"
+        "  - name: cut\n"
+        "    type: vless\n"
+        "    server: 203.0.113.11\n"
+        "    port: 443\n"
+        "    uuid: 11111111-2222-3333-4444-555555555555\n"
+        "    tls: true\n"
+        "    encryption: mlkem768x25519plus.native.0rtt\n";
+    vl_server_t out[8];
+    size_t n = profiles_parse_clash(good, sizeof good - 1, out, 8);
+    ok("clash keeps the profiled node and the plain one, refuses the cut one", n == 2);
+    ok("clash profile is pooled", n >= 1 && out[0].venc != 0 && strcmp(out[0].encryption, "none") == 0 &&
+       vlenc_cfg(out[0].venc) && vlenc_cfg(out[0].venc)->n_keys == 1);
+    ok("clash none is none", n >= 2 && out[1].venc == 0);
+}
+
 int main(void) {
+    test_clash_vless_encryption();
     vl_server_t servers[16];
     size_t n;
 

@@ -1,7 +1,19 @@
 #include "transport_pick.h"
 #include "reality_handshake.h"
 
+static const transport_vt_t *pick_stream(const vl_server_t *s);
+
 const transport_vt_t *transport_for_server(const vl_server_t *s) {
+    const transport_vt_t *inner = pick_stream(s);
+    if (!inner || !s->venc) return inner;
+/* vless encryption wraps the transport that was picked. a profile on any other
+   protocol, or on a transport without a wrapper, has no way to run: refused
+   here so no caller falls back to sending the vless bytes in clear */
+    if (s->proto != VL_PROTO_VLESS) return NULL;
+    return transport_enc_over(inner);
+}
+
+static const transport_vt_t *pick_stream(const vl_server_t *s) {
     if (!s) return NULL;
 
 /* quic/udp only, so no tcp transport exists for it. the utun backend picks

@@ -494,9 +494,17 @@ loop_status_t loop_set_server(loop_t *lp, const transport_vt_t *vt,
 
     loop_set_tls(lp, sni, fingerprint, reality_pbk, reality_sid, path, ws_host,
                  xhttp_mode, peer_host, insecure);
+    lp->vless_enc = 0;
+    lp->peer_port = 0;
 
     lp->active = 1; /* accept clients again */
     return LOOP_OK;
+}
+
+void loop_set_vless_enc(loop_t *lp, uint16_t profile, uint16_t port) {
+    if (!lp) return;
+    lp->vless_enc = profile;
+    lp->peer_port = port;
 }
 
 void loop_stop(loop_t *lp) {
@@ -522,6 +530,8 @@ static void fill_open_fields(loop_t *lp, loop_conn_t *c) {
     copy_field(c->open_xhttp_mode, sizeof c->open_xhttp_mode, lp->xhttp_mode);
     copy_field(c->open_peer_host, sizeof c->open_peer_host, lp->peer_host);
     c->open_insecure = lp->insecure;
+    c->open_vless_enc = lp->vless_enc;
+    c->open_peer_port = lp->peer_port;
     c->open_tls_cfg.sni = c->open_sni;
     c->open_tls_cfg.fingerprint = c->open_fingerprint;
     c->open_tls_cfg.reality_pbk = c->open_reality_pbk;
@@ -531,6 +541,8 @@ static void fill_open_fields(loop_t *lp, loop_conn_t *c) {
     c->open_tls_cfg.xhttp_mode = c->open_xhttp_mode;
     c->open_tls_cfg.peer_host = c->open_peer_host;
     c->open_tls_cfg.insecure = c->open_insecure;
+    c->open_tls_cfg.vless_enc = c->open_vless_enc;
+    c->open_tls_cfg.peer_port = c->open_peer_port;
 }
 
 static int start_opening(loop_t *lp, loop_conn_t *c, int cfd) {

@@ -54,7 +54,10 @@ UPLOAD   = $(CORE)/senko_upload.c
 TIME     = $(CORE)/senko_time.c
 NET_SAFE = $(CORE)/net_safe.c
 CJSON    = $(CORE)/third_party/cJSON.c
-CFG_SRC  = $(CORE)/config.c $(CORE)/share_link.c $(CORE)/rules.c $(CORE)/geo.c $(CORE)/routing_profile.c $(CORE)/geo_update.c $(CORE)/happ.c $(CORE)/happ_crypt5.c $(CORE)/b64.c $(CORE)/profiles.c $(CJSON)
+CFG_SRC  = $(CORE)/vlenc_conf.c $(CORE)/config.c $(CORE)/share_link.c $(CORE)/rules.c $(CORE)/geo.c $(CORE)/routing_profile.c $(CORE)/geo_update.c $(CORE)/happ.c $(CORE)/happ_crypt5.c $(CORE)/incy.c $(CORE)/b64.c $(CORE)/profiles.c $(CJSON)
+# the vless encryption transport and its record layer; reality_crypto.c, the
+# ml-kem sources and senko_time.c come with every target that links a transport
+ENC_SRC  = $(CORE)/transport_enc.c $(CORE)/vlenc_conn.c $(CORE)/blake3.c
 TLS_CFLAGS  := $(shell pkg-config --cflags openssl 2>/dev/null)
 TLS_LDFLAGS := $(shell pkg-config --libs openssl 2>/dev/null || echo -lssl -lcrypto)
 
@@ -67,14 +70,14 @@ HOST_TESTS = test_ctl_server test_autoconnect test_session_direct test_config_co
              test_transport_pick test_awg_config test_awg_handshake test_awg_tunnel test_awg_route \
              test_xray_json test_url_headers test_grpc_core test_transport_grpc test_hpack \
              test_app_proxy test_senko_core_config test_net_safe test_legacy_ios \
-             test_subinfo test_profiles test_amnezia_bundle test_amnezia_qr test_happ_links \
+             test_subinfo test_profiles test_amnezia_bundle test_amnezia_qr test_happ_links test_incy_links \
              test_b64 test_traffic test_loop_traffic test_rules
 HOST_TESTS += test_karing_backup
-HOST_TESTS += test_dns_msg test_chacha_poly test_awg_tunnel_neon
-HOST_TESTS += test_dns_cache
-HOST_TESTS += test_trojan
 HOST_TESTS += test_device_model
 HOST_TESTS += test_blake3 test_vlenc_conn test_transport_enc
+HOST_TESTS += test_dns_msg test_chacha_poly test_awg_tunnel_neon
+HOST_TESTS += test_dns_cache
+HOST_TESTS += test_trojan test_trojan_combos test_trojan_exchange
 HOST_TESTS += test_shadowsocks
 HOST_TESTS += test_vmess
 HOST_TESTS += test_qr_zbar
@@ -172,6 +175,9 @@ test_device_model: test_device_model.c ../app/device_model.c ../app/device_model
 	./test_tls_clienthello
 	./test_vision
 	./test_transport_pick
+	./test_blake3
+	./test_vlenc_conn
+	./test_transport_enc
 	./test_awg_config
 	./test_awg_handshake
 	./test_awg_tunnel
@@ -332,6 +338,20 @@ test_subfetch_budget: test_subfetch_budget.c $(CORE)/subfetch.c $(CORE)/subfetch
 	      $(CORE)/subfetch.c $(CORE)/http.c $(CORE)/url.c $(CORE)/net_safe.c \
 	      $(CORE)/b64.c $(CORE)/transport_tcp.c $(CORE)/transport_tls.c \
 	      $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) -o $@ $(TLS_LDFLAGS) -lz -lpthread
+
+test_amnezia_gateway: test_amnezia_gateway.c $(CORE)/amnezia_gateway.c $(CORE)/amnezia_gateway.h \
+    $(CORE)/amnezia_gateway_key.inc $(CORE)/amnezia_bundle.c $(CORE)/subfetch.c
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) -DSENKO_HOST_TEST -I$(DAEMON) -I$(CORE)/third_party test_amnezia_gateway.c \
+	      $(CORE)/amnezia_gateway.c $(CORE)/amnezia_bundle.c $(CORE)/awg_config.c $(CORE)/subfetch.c \
+	      $(CORE)/http.c $(CORE)/url.c $(CORE)/net_safe.c $(CORE)/b64.c $(CORE)/third_party/cJSON.c \
+	      $(CORE)/transport_tcp.c $(CORE)/transport_tls.c $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) \
+	      -o $@ $(TLS_LDFLAGS) -lz -lpthread
+
+test_premium: test_premium.c premium_fixture.inc $(DAEMON)/premium.c $(DAEMON)/premium.h \
+    $(CORE)/amnezia_bundle.c $(CORE)/awg_config.c
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) -I$(DAEMON) test_premium.c $(DAEMON)/premium.c \
+	      $(CORE)/amnezia_bundle.c $(CORE)/awg_config.c $(CORE)/reality_crypto.c $(CORE)/b64.c \
+	      $(CORE)/third_party/cJSON.c $(MLKEM768_SRC) -o $@ $(TLS_LDFLAGS) -lz
 
 test_legacy_ios: test_legacy_ios.c $(DAEMON)/legacy_ios.c $(DAEMON)/legacy_ios.h
 	$(CC) $(CFLAGS) -I$(DAEMON) test_legacy_ios.c $(DAEMON)/legacy_ios.c -o $@
@@ -551,7 +571,7 @@ test_session_direct: test_session_direct.c vmess_fixture.inc vmess_udp_fixture.i
 	      $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) -o $@ $(TLS_LDFLAGS)
 
 # the probe drives a whole protocol session over the real transports
-REAL_PROBE_SRC = $(CORE)/real_probe.c $(CORE)/net_diag.c $(CORE)/senko_clock.c $(CORE)/transport_pick.c $(TUN_SESSION_SRC) \
+REAL_PROBE_SRC = $(CORE)/real_probe.c $(CORE)/net_diag.c $(CORE)/senko_clock.c $(CORE)/transport_pick.c $(ENC_SRC) $(TUN_SESSION_SRC) \
                  $(CFG_SRC) $(CORE)/transport_tcp.c $(CORE)/transport_tls.c \
                  $(CORE)/transport_ws.c $(CORE)/transport_xhttp.c $(CORE)/hpack.c \
                  $(CORE)/reality_handshake.c $(CORE)/reality_auth.c \
@@ -560,6 +580,19 @@ REAL_PROBE_SRC = $(CORE)/real_probe.c $(CORE)/net_diag.c $(CORE)/senko_clock.c $
                  $(CORE)/grpc_core.c
 test_real_probe: test_real_probe.c $(REAL_PROBE_SRC)
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_real_probe.c $(REAL_PROBE_SRC) -o $@ $(TLS_LDFLAGS) -lpthread
+
+test_trojan_exchange: test_trojan_exchange.c $(CORE)/session.c $(CORE)/socks5.c $(NET_SAFE) \
+              $(CORE)/vless.c $(CORE)/vless_conn.c $(CORE)/socks5_client.c $(CORE)/http_client.c $(CORE)/vision.c \
+              $(CORE)/trojan_client.c $(CORE)/hy2_proto.c $(CORE)/blake2b256.c $(CORE)/shadowsocks_client.c $(CORE)/vmess_client.c $(CORE)/reality_crypto.c $(MLKEM768_SRC) $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) \
+              $(CORE)/transport_tcp.c $(CORE)/transport_tls.c
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_trojan_exchange.c $(CORE)/session.c \
+	      $(CORE)/socks5.c $(NET_SAFE) $(CORE)/vless.c $(CORE)/vless_conn.c \
+	      $(CORE)/socks5_client.c $(CORE)/http_client.c $(CORE)/vision.c \
+	      $(CORE)/trojan_client.c $(CORE)/hy2_proto.c $(CORE)/blake2b256.c $(CORE)/shadowsocks_client.c $(CORE)/vmess_client.c $(CORE)/reality_crypto.c $(MLKEM768_SRC) \
+	      $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) $(CORE)/transport_tcp.c $(CORE)/transport_tls.c -o $@ $(TLS_LDFLAGS)
+
+test_trojan_combos: test_trojan_combos.c $(CORE)/store.c $(CFG_SRC) $(CORE)/store.h
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_trojan_combos.c $(CORE)/store.c $(CFG_SRC) -o $@ $(TLS_LDFLAGS)
 
 test_trojan: test_trojan.c $(CORE)/trojan_client.c $(CFG_SRC)
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_trojan.c $(CORE)/trojan_client.c $(CFG_SRC) -o $@ $(TLS_LDFLAGS)
@@ -601,14 +634,14 @@ test_tls_clienthello: test_tls_clienthello.c $(CORE)/tls_clienthello.c $(CORE)/t
 test_vision: test_vision.c $(CORE)/vision.c $(CORE)/vision.h
 	$(CC) $(CFLAGS) test_vision.c $(CORE)/vision.c -o $@
 
-test_transport_grpc: test_transport_grpc.c $(CORE)/transport_pick.c $(CFG_SRC) \
+test_transport_grpc: test_transport_grpc.c $(CORE)/transport_pick.c $(ENC_SRC) $(CFG_SRC) \
                      $(CORE)/transport_tcp.c $(CORE)/transport_tls.c \
                      $(CORE)/transport_ws.c $(CORE)/transport_xhttp.c $(CORE)/hpack.c $(CORE)/reality_handshake.c \
                      $(CORE)/reality_crypto.c $(MLKEM768_SRC) $(CORE)/reality_auth.c \
                      $(CORE)/tls_clienthello.c $(CORE)/tls13_kdf.c \
                      $(CORE)/tls13_keysched.c $(CORE)/tls13_record.c \
                      $(CORE)/tls13_transcript.c $(CORE)/tls13_handshake.c $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) $(CORE)/grpc_core.c
-	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_transport_grpc.c $(CORE)/transport_pick.c \
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_transport_grpc.c $(CORE)/transport_pick.c $(ENC_SRC) \
 	      $(CFG_SRC) \
 	      $(CORE)/transport_tcp.c $(CORE)/transport_tls.c $(CORE)/transport_ws.c \
 	      $(CORE)/transport_xhttp.c $(CORE)/hpack.c \
@@ -617,14 +650,14 @@ test_transport_grpc: test_transport_grpc.c $(CORE)/transport_pick.c $(CFG_SRC) \
 	      $(CORE)/tls13_record.c $(CORE)/tls13_transcript.c $(CORE)/tls13_handshake.c \
 	      $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) $(CORE)/grpc_core.c $(TLS_LDFLAGS) -o $@
 
-test_transport_pick: test_transport_pick.c $(CORE)/transport_pick.c $(CFG_SRC) \
+test_transport_pick: test_transport_pick.c $(CORE)/transport_pick.c $(ENC_SRC) $(CFG_SRC) \
                      $(CORE)/transport_tcp.c $(CORE)/transport_tls.c \
                      $(CORE)/transport_ws.c $(CORE)/transport_xhttp.c $(CORE)/hpack.c $(CORE)/reality_handshake.c \
                      $(CORE)/reality_crypto.c $(MLKEM768_SRC) $(CORE)/reality_auth.c \
                      $(CORE)/tls_clienthello.c $(CORE)/tls13_kdf.c \
                      $(CORE)/tls13_keysched.c $(CORE)/tls13_record.c \
                       $(CORE)/tls13_transcript.c $(CORE)/tls13_handshake.c $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) $(CORE)/grpc_core.c
-	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_transport_pick.c $(CORE)/transport_pick.c \
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_transport_pick.c $(CORE)/transport_pick.c $(ENC_SRC) \
 	      $(CFG_SRC) \
 	      $(CORE)/transport_tcp.c $(CORE)/transport_tls.c $(CORE)/transport_ws.c \
 	      $(CORE)/transport_xhttp.c $(CORE)/hpack.c \
@@ -632,6 +665,40 @@ test_transport_pick: test_transport_pick.c $(CORE)/transport_pick.c $(CFG_SRC) \
 	      $(CORE)/tls_clienthello.c $(CORE)/tls13_kdf.c $(CORE)/tls13_keysched.c \
 	      $(CORE)/tls13_record.c $(CORE)/tls13_transcript.c $(CORE)/tls13_handshake.c \
       $(TRACE) $(REPLAY) $(UPLOAD) $(TIME) $(CORE)/grpc_core.c -o $@ $(TLS_LDFLAGS)
+
+# vless encryption: the hash, the profile parser and record layer against the
+# in-tree test server, and the transport over a socketpair. the xray
+# reference server is a separate run, see interop/run_vlenc_interop.sh
+test_blake3: test_blake3.c blake3_vectors.inc $(CORE)/blake3.c $(CORE)/blake3.h
+	$(CC) $(CFLAGS) test_blake3.c $(CORE)/blake3.c -o $@
+
+VLENC_SRC = $(CORE)/vlenc_conf.c $(CORE)/vlenc_conn.c $(CORE)/blake3.c $(CORE)/b64.c \
+            $(CORE)/reality_crypto.c $(MLKEM768_SRC) $(TIME)
+
+test_vlenc_conn: test_vlenc_conn.c vlenc_server.c vlenc_server.h $(VLENC_SRC) $(CORE)/vlenc_conn.h $(CORE)/vlenc_conf.h
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) $(THREAD_CFLAGS) test_vlenc_conn.c vlenc_server.c \
+	      $(filter-out $(CORE)/vlenc_conn.c,$(VLENC_SRC)) -o $@ $(TLS_LDFLAGS) $(THREAD_LDFLAGS)
+
+vlenc_probe: vlenc_probe.c $(VLENC_SRC)
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) $(THREAD_CFLAGS) vlenc_probe.c $(VLENC_SRC) -o $@ $(TLS_LDFLAGS) $(THREAD_LDFLAGS)
+
+test_transport_enc: test_transport_enc.c vlenc_server.c vlenc_server.h $(CORE)/transport_enc.c $(VLENC_SRC) \
+                    $(CORE)/transport_tcp.c $(CORE)/transport_tls.c $(CORE)/transport_ws.c \
+                    $(CORE)/transport_xhttp.c $(CORE)/hpack.c $(CORE)/grpc_core.c $(CORE)/h2_core.c \
+                    $(CORE)/reality_handshake.c $(CORE)/reality_auth.c $(CORE)/tls_clienthello.c \
+                    $(CORE)/tls13_kdf.c $(CORE)/tls13_keysched.c $(CORE)/tls13_record.c \
+                    $(CORE)/tls13_transcript.c $(CORE)/tls13_handshake.c $(TRACE) $(REPLAY) $(UPLOAD)
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) $(THREAD_CFLAGS) test_transport_enc.c vlenc_server.c \
+	      $(filter-out $(CORE)/vlenc_conn.c,$(VLENC_SRC)) $(CORE)/vlenc_conn.c \
+	      $(CORE)/transport_tcp.c $(CORE)/transport_tls.c $(CORE)/transport_ws.c \
+	      $(CORE)/transport_xhttp.c $(CORE)/hpack.c $(CORE)/grpc_core.c $(CORE)/h2_core.c \
+	      $(CORE)/reality_handshake.c $(CORE)/reality_auth.c $(CORE)/tls_clienthello.c \
+	      $(CORE)/tls13_kdf.c $(CORE)/tls13_keysched.c $(CORE)/tls13_record.c \
+	      $(CORE)/tls13_transcript.c $(CORE)/tls13_handshake.c $(TRACE) $(REPLAY) $(UPLOAD) \
+	      -o $@ $(TLS_LDFLAGS) $(THREAD_LDFLAGS)
+
+senko_core_render: senko_core_render.c $(DAEMON)/senko_core_config.c $(CFG_SRC)
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) -I$(DAEMON) senko_core_render.c $(DAEMON)/senko_core_config.c $(CFG_SRC) -o $@ $(TLS_LDFLAGS) $(THREAD_LDFLAGS)
 
 test_app_proxy: test_app_proxy.c ../senkotlsfix/stl_proxy.c ../senkotlsfix/stl_proxy.h
 	$(CC) $(CFLAGS) $(THREAD_CFLAGS) -DSENKO_HOST_TEST \
@@ -671,8 +738,11 @@ test_karing_backup: test_karing_backup.c $(CORE)/karing_backup.c $(CORE)/karing_
 test_happ_links: test_happ_links.c $(CFG_SRC)
 	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_happ_links.c $(CFG_SRC) -o $@ $(TLS_LDFLAGS)
 
+test_incy_links: test_incy_links.c $(CORE)/store.c $(CFG_SRC) $(CORE)/store.h
+	$(CC) $(CFLAGS) $(TLS_CFLAGS) test_incy_links.c $(CORE)/store.c $(CFG_SRC) -o $@ $(TLS_LDFLAGS)
+
 clean:
-	rm -f $(HOST_TESTS) sub_audit fuzz_uri fuzz_json fuzz_http fuzz_h2_grpc fuzz_wire fuzz_ws fuzz_vision fuzz_dns fuzz_utun fuzz_tun_nat
+	rm -f senko_core_render vlenc_probe fuzz_vlenc $(HOST_TESTS) sub_audit fuzz_uri fuzz_json fuzz_http fuzz_h2_grpc fuzz_wire fuzz_ws fuzz_vision fuzz_dns fuzz_utun fuzz_tun_nat
 
 sanitizers:
 	$(MAKE) clean
@@ -683,7 +753,10 @@ sanitizers:
 FUZZ_FLAGS = -std=c99 -O1 -g -fno-omit-frame-pointer -fsanitize=fuzzer,address,undefined \
              -I../daemon/core -I../daemon/core/third_party
 
-fuzz: fuzz_uri fuzz_json fuzz_http fuzz_h2_grpc fuzz_wire fuzz_ws fuzz_vision fuzz_dns fuzz_utun fuzz_tun_nat
+fuzz: fuzz_uri fuzz_json fuzz_http fuzz_h2_grpc fuzz_wire fuzz_ws fuzz_vision fuzz_dns fuzz_utun fuzz_tun_nat fuzz_vlenc
+
+fuzz_vlenc: fuzz_vlenc.c $(VLENC_SRC)
+	/usr/bin/clang $(FUZZ_FLAGS) fuzz_vlenc.c $(VLENC_SRC) -o $@ $(TLS_LDFLAGS) $(THREAD_LDFLAGS)
 
 fuzz_uri: fuzz_uri.c $(CFG_SRC)
 	/usr/bin/clang $(FUZZ_FLAGS) fuzz_uri.c $(CFG_SRC) -o $@ -lssl -lcrypto
@@ -719,6 +792,7 @@ fuzz_tun_nat: fuzz_tun_nat.c $(CORE)/tun_nat.c $(CORE)/tun_nat.h
 
 fuzz-smoke: fuzz
 	./fuzz_uri -runs=1000
+	./fuzz_vlenc -runs=2000
 	./fuzz_json -runs=1000
 	./fuzz_http -runs=1000
 	./fuzz_h2_grpc -runs=1000

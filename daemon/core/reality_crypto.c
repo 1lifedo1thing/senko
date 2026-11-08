@@ -25,6 +25,13 @@ rc_status_t rc_mlkem768_keygen(uint8_t pub[RC_MLKEM768_PUBLICKEYLEN],
     return PQCLEAN_MLKEM768_CLEAN_crypto_kem_keypair(pub, priv) == 0 ? RC_OK : RC_ERR_CRYPTO;
 }
 
+rc_status_t rc_mlkem768_encap(const uint8_t pub[RC_MLKEM768_PUBLICKEYLEN],
+                              uint8_t ct[RC_MLKEM768_CIPHERTEXTLEN],
+                              uint8_t shared[RC_MLKEM768_SHAREDLEN]) {
+    if (!pub || !ct || !shared) return RC_ERR_ARG;
+    return PQCLEAN_MLKEM768_CLEAN_crypto_kem_enc(ct, shared, pub) == 0 ? RC_OK : RC_ERR_CRYPTO;
+}
+
 rc_status_t rc_mlkem768_decap(const uint8_t ct[RC_MLKEM768_CIPHERTEXTLEN],
                               const uint8_t priv[RC_MLKEM768_SECRETKEYLEN],
                               uint8_t shared[RC_MLKEM768_SHAREDLEN]) {

@@ -1,4 +1,5 @@
 #include "config.h"
+#include "vlenc_conf.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -67,12 +68,66 @@ int main(void) {
                       &s) == CFG_OK &&
        cfg_validate_server(&s, reason, sizeof reason));
 
-    reason[0] = '\0';
-    ok("non none encryption rejected",
-       cfg_parse_link("vless://11111111-1111-4111-8111-111111111111@example.com:443?security=tls&type=tcp&encryption=mlkem768x25519plus#badenc",
-                      &s) == CFG_OK &&
-       !cfg_validate_server(&s, reason, sizeof reason) &&
-       strcmp(reason, "vless encryption") == 0);
+    /* a profile that is cut short or wrongly spelled is refused with a reason, never read as none */
+    {
+        char why[128] = "";
+        ok("non none encryption rejected",
+           cfg_parse_link_ex("vless://11111111-1111-4111-8111-111111111111@example.com:443?security=tls&type=tcp&encryption=mlkem768x25519plus#badenc",
+                             &s, why, sizeof why) == CFG_ERR_UNSUPPORTED &&
+           strncmp(why, "vless encryption", 16) == 0);
+        why[0] = '\0';
+        ok("an unknown cipher name is refused",
+           cfg_parse_link_ex("vless://11111111-1111-4111-8111-111111111111@example.com:443?encryption=aes-128-gcm#x",
+                             &s, why, sizeof why) == CFG_ERR_UNSUPPORTED &&
+           strcmp(why, "vless encryption version") == 0);
+    }
+
+    {
+        static const char key32[] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        static char key_pq[1580];
+        static char link[8000];
+        char why[128] = "";
+        vl_server_t a, b;
+        memset(key_pq, 'A', 1579);
+        key_pq[1579] = '\0';
+
+        snprintf(link, sizeof link,
+                 "vless://11111111-1111-4111-8111-111111111111@example.com:443?security=tls&type=tcp&flow=xtls-rprx-vision&encryption=mlkem768x25519plus.native.0rtt.%s#enc", key32);
+        ok("x25519 profile parses", cfg_parse_link(link, &a) == CFG_OK && a.venc != 0);
+        ok("the text field says none", strcmp(a.encryption, "none") == 0);
+        ok("and the profile validates", cfg_validate_server(&a, reason, sizeof reason));
+        ok("the pooled text is what the link carried", strstr(link, vlenc_text(a.venc)) != NULL);
+
+        ok("same profile twice is one id", cfg_parse_link(link, &b) == CFG_OK && b.venc == a.venc);
+
+        snprintf(link, sizeof link,
+                 "vless://11111111-1111-4111-8111-111111111111@example.com:443?security=reality&type=tcp&pbk=%s&sid=00&encryption=mlkem768x25519plus.random.1rtt.100-111-1111.75-0-111.%s#pq", key32, key_pq);
+        ok("ml-kem profile with padding parses", cfg_parse_link(link, &b) == CFG_OK && b.venc != 0 && b.venc != a.venc);
+        ok("it keeps all 1184 bytes", vlenc_cfg(b.venc) && vlenc_cfg(b.venc)->key_len[0] == 1184);
+        ok("a vless node over every transport takes the profile",
+           cfg_parse_link("vless://11111111-1111-4111-8111-111111111111@example.com:443?security=tls&type=grpc&serviceName=g&encryption=mlkem768x25519plus.xorpub.0rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA#g", &s) == CFG_OK &&
+           cfg_validate_server(&s, reason, sizeof reason) && s.venc != 0);
+
+        snprintf(link, sizeof link,
+                 "vless://11111111-1111-4111-8111-111111111111@example.com:443?security=tls&type=tcp&encryption=mlkem768x25519plus.native.0rtt.%s%s%s#long", key_pq, key_pq, key_pq);
+        why[0] = '\0';
+        ok("a profile over the size cap is refused", cfg_parse_link_ex(link, &s, why, sizeof why) == CFG_ERR_UNSUPPORTED &&
+           strncmp(why, "vless encryption", 16) == 0);
+
+        ok("encryption none leaves no profile",
+           cfg_parse_link("vless://11111111-1111-4111-8111-111111111111@example.com:443?security=tls&type=tcp&encryption=none#n", &s) == CFG_OK && s.venc == 0);
+        ok("and so does leaving it out",
+           cfg_parse_link("vless://11111111-1111-4111-8111-111111111111@example.com:443?security=tls&type=tcp#n", &s) == CFG_OK && s.venc == 0);
+
+        /* a vmess link keeps its cipher field, the profile code does not touch it */
+        ok("vmess cipher is untouched",
+           cfg_parse_link("vmess://11111111-1111-4111-8111-111111111111@example.com:443?encryption=aes-128-gcm&security=tls&type=tcp#m", &s) == CFG_OK &&
+           strcmp(s.encryption, "aes-128-gcm") == 0 && s.venc == 0);
+
+        /* a stale id must not validate */
+        a.venc = 9999;
+        ok("an id the pool does not know is refused", !cfg_validate_server(&a, reason, sizeof reason));
+    }
 
     ok("valid reality contract",
        cfg_parse_link("vless://11111111-1111-4111-8111-111111111111@example.com:443?security=reality&type=raw&flow=xtls-rprx-vision&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=00#ok",

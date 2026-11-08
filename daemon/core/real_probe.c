@@ -169,6 +169,8 @@ int real_probe_run(const vl_server_t *server, const char *ip,
     cfg.xhttp_mode = server->mode;
     cfg.peer_host = server->host;
     cfg.insecure = server->insecure;
+    cfg.vless_enc = server->venc;
+    cfg.peer_port = server->port;
     cfg.fail = &fail;
     void *th = vt->open(fd, &cfg);
     if (!th) {

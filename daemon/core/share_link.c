@@ -5,6 +5,7 @@
 
 #include "b64.h"
 #include "happ.h"
+#include "vlenc_conf.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -212,6 +213,9 @@ typedef struct {
     char plugin[128];
     char mport[128];
     char tls_flag[8]; /* "tls=1" in old socks/http exports */
+/* a vless encryption profile is far longer than vl_server_t.encryption */
+    char enc[VLENC_TEXT_MAX];
+    int  enc_too_long;
 } link_extra_t;
 
 static void apply_query(const link_parts_t *parts, vl_server_t *s, link_extra_t *x) {
@@ -245,8 +249,11 @@ static void apply_query(const link_parts_t *parts, vl_server_t *s, link_extra_t 
             case Q_MODE: (void)span_decode(v, seg_end, s->mode, sizeof s->mode, 1); break;
             case Q_FLOW: (void)span_decode(v, seg_end, s->flow, sizeof s->flow, 1); break;
             case Q_ENCRYPTION:
-                if (span_decode(v, seg_end, s->encryption, sizeof s->encryption, 1) != 0)
+                if (s->proto == VL_PROTO_VLESS) {
+                    if (span_decode(v, seg_end, x->enc, sizeof x->enc, 0) != 0) x->enc_too_long = 1;
+                } else if (span_decode(v, seg_end, s->encryption, sizeof s->encryption, 1) != 0) {
                     snprintf(s->encryption, sizeof s->encryption, "unsupported");
+                }
                 break;
             case Q_FP: (void)span_decode(v, seg_end, s->fp, sizeof s->fp, 1); break;
             case Q_PBK: (void)span_decode(v, seg_end, s->pbk, sizeof s->pbk, 1); break;
@@ -327,6 +334,17 @@ void cfg_node_vless_id(vl_server_t *s, const char *id) {
                  id, id + 8, id + 12, id + 16, id + 20);
     else
         snprintf(s->uuid, sizeof s->uuid, "%.63s", id);
+}
+
+int cfg_node_vless_encryption(vl_server_t *s, const char *text, char *why, size_t why_cap) {
+    s->venc = 0;
+    snprintf(s->encryption, sizeof s->encryption, "none");
+    if (!vlenc_is_set(text)) return 0;
+    vlenc_status_t st = vlenc_intern(text, &s->venc);
+    if (st == VLENC_OK) return 0;
+    s->venc = 0;
+    set_why(why, why_cap, vlenc_reason(st));
+    return -1;
 }
 
 /* the method names exporters use for the three ciphers senko carries */
@@ -540,6 +558,13 @@ static cfg_status_t parse_link(const char *text, vl_server_t *out, char *why,
         if (!user[0]) return CFG_ERR_NO_AT;
         if (url_percent_decode(user, strlen(user), id, sizeof id) < 0) return CFG_ERR_TOO_LONG;
         cfg_node_vless_id(out, id);
+        if (out->proto == VL_PROTO_VLESS) {
+            if (x.enc_too_long) {
+                set_why(why, why_cap, vlenc_reason(VLENC_ERR_TOO_LONG));
+                return CFG_ERR_UNSUPPORTED;
+            }
+            if (cfg_node_vless_encryption(out, x.enc, why, why_cap) != 0) return CFG_ERR_UNSUPPORTED;
+        }
         /* the xtls share link names the vmess body cipher in encryption= */
         if (out->proto == VL_PROTO_VMESS && !out->encryption[0])
             snprintf(out->encryption, sizeof out->encryption, "auto");

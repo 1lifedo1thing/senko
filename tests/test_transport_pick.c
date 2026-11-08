@@ -1,6 +1,7 @@
 /* transport_for_server must match cfg_validate for every common combo*/
 #include "../daemon/core/config.h"
 #include "../daemon/core/transport_pick.h"
+#include "../daemon/core/reality_handshake.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -26,8 +27,45 @@ static void check_link(const char *link, int expect_vt) {
     }
 }
 
+/* vless encryption wraps whatever transport the node picked, once per combination */
+static void check_enc(const char *query, int expect_vt) {
+    char link[3000];
+    snprintf(link, sizeof link,
+             "vless://b831381d-6324-4d53-ad4f-8cda48b30811@1.2.3.4:443?%s"
+             "&encryption=mlkem768x25519plus.native.0rtt.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA#t", query);
+    vl_server_t s, plain;
+    char reason[128];
+    ok(link, cfg_parse_link(link, &s) == CFG_OK && s.venc != 0);
+    ok("valid", cfg_validate_server(&s, reason, sizeof reason));
+    const transport_vt_t *vt = transport_for_server(&s);
+    plain = s;
+    plain.venc = 0;
+    const transport_vt_t *inner = transport_for_server(&plain);
+    ok("the wrapper is a transport of its own", expect_vt ? (vt != NULL && vt != inner) : vt == NULL);
+    ok("it has the full interface", !expect_vt || (vt->read && vt->write && vt->raw_write && vt->close && vt->want_write && vt->peer_direct));
+    ok("another profile on the same transport picks the same wrapper", !expect_vt || (transport_for_server(&s) == vt));
+}
+
 int main(void) {
     fails = 0;
+    check_enc("security=none&type=tcp", 1);
+    check_enc("security=tls&type=tcp&sni=ex.com&flow=xtls-rprx-vision", 1);
+    check_enc("security=reality&type=tcp&flow=xtls-rprx-vision&pbk=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=&fp=chrome", 1);
+    check_enc("security=none&type=ws&path=%2F", 1);
+    check_enc("security=tls&type=ws&sni=ex.com&path=%2F", 1);
+    check_enc("security=reality&type=ws&pbk=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=&fp=chrome", 1);
+    check_enc("security=none&type=xhttp&path=%2Fxh", 1);
+    check_enc("security=tls&type=xhttp&path=%2Fxh&sni=ex.com", 1);
+    check_enc("security=reality&type=xhttp&path=%2Fxh&pbk=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=&fp=chrome", 1);
+    check_enc("security=tls&type=grpc&serviceName=Tun&sni=ex.com", 1);
+    {
+        /* a profile on a protocol that has no such layer never gets a transport */
+        vl_server_t t;
+        ok("trojan parses", cfg_parse_link("trojan://pw@1.2.3.4:443?security=tls&type=tcp&sni=ex.com#t", &t) == CFG_OK);
+        t.venc = 1;
+        ok("a profile on trojan picks nothing", transport_for_server(&t) == NULL);
+    }
+
     check_link("vless://b831381d-6324-4d53-ad4f-8cda48b30811@1.2.3.4:443"
                "?security=none&type=tcp#t", 1);
     check_link("vless://b831381d-6324-4d53-ad4f-8cda48b30811@1.2.3.4:443"

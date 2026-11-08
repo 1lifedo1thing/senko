@@ -28,7 +28,8 @@ typedef enum {
     NET_FAIL_TLS,               /* another tls failure */
     NET_FAIL_REALITY,           /* the server answered as its camouflage site */
     NET_FAIL_HTTP_STATUS,       /* value: the http status of the upgrade or stream */
-    NET_FAIL_GRPC_STATUS        /* value: the grpc status */
+    NET_FAIL_GRPC_STATUS,       /* value: the grpc status */
+    NET_FAIL_ENCRYPTION         /* value: a vlc_status_t of the vless encryption layer */
 } net_fail_kind_t;
 
 typedef struct {

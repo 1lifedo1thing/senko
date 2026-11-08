@@ -15,6 +15,8 @@ tests/test_*
 !tests/test_*.h
 !tests/test_*.py
 tests/fuzz_*
+tests/vlenc_probe
+tests/senko_core_render
 !tests/fuzz_*.c
 !tests/fuzz_*.h
 senkotlsfix/*.dylib

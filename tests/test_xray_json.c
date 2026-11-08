@@ -1,4 +1,5 @@
 #include "config.h"
+#include "vlenc_conf.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -336,7 +337,42 @@ static void test_ip_fronted_panel(void) {
        nodes[2].security == VL_SEC_REALITY && !strcmp(nodes[2].path, "/service/Tun"));
 }
 
+
+/* a vless user's "encryption" is the profile, whatever its length */
+static void test_vless_encryption_json(void) {
+    static const char tmpl[] =
+        "{\"outbounds\":[{\"protocol\":\"vless\",\"settings\":{\"vnext\":[{\"address\":\"198.51.100.7\",\"port\":443,"
+        "\"users\":[{\"id\":\"11111111-1111-4111-8111-111111111111\",\"encryption\":\"%s\",\"flow\":\"xtls-rprx-vision\"}]}]},"
+        "\"streamSettings\":{\"network\":\"tcp\",\"security\":\"tls\",\"tlsSettings\":{\"serverName\":\"e.example\"}}}]}";
+    char body[2400];
+    vl_server_t out[4];
+    size_t n = 0;
+    snprintf(body, sizeof body, tmpl, "mlkem768x25519plus.native.0rtt." PBK);
+    ok("xray json with a profile parses", cfg_parse_subscription(body, strlen(body), out, 4, &n) == CFG_OK && n == 1);
+    ok("the profile is kept, not read as none", n == 1 && out[0].venc != 0 && strstr(vlenc_text(out[0].venc), PBK) != NULL);
+    ok("and the node validates", n == 1 && cfg_validate_server(&out[0], NULL, 0));
+
+    snprintf(body, sizeof body, tmpl, "mlkem768x25519plus.native.0rtt");
+    cfg_import_stats_t stats;
+    memset(&stats, 0, sizeof stats);
+    n = 0;
+    cfg_parse_subscription_ex(body, strlen(body), out, 4, &n, &stats);
+    ok("a malformed profile skips the node", n == 0 && stats.skipped == 1);
+    ok("and says why", stats.kinds[0].what[0] && strstr(stats.kinds[0].what, "vless encryption") != NULL);
+
+    snprintf(body, sizeof body, tmpl, "none");
+    ok("none stays none", cfg_parse_subscription(body, strlen(body), out, 4, &n) == CFG_OK && n == 1 && out[0].venc == 0);
+
+    /* the old reader copied into 32 bytes and fell back to none when the text was longer */
+    snprintf(body, sizeof body, tmpl, "aes-128-gcm-with-a-name-longer-than-thirty-two-bytes");
+    memset(&stats, 0, sizeof stats);
+    n = 0;
+    cfg_parse_subscription_ex(body, strlen(body), out, 4, &n, &stats);
+    ok("a long unknown value is a refused node, not a plain one", n == 0 && stats.skipped == 1);
+}
+
 int main(void) {
+    test_vless_encryption_json();
     test_ip_fronted_panel();
     vl_server_t srv[16];
     size_t n = 0;

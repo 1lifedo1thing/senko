@@ -41,8 +41,102 @@ static void touch_file(const char *dir, const char *name) {
     fclose(f);
 }
 
+/* the profile reaches the core as the string it read, in the outbound's user settings */
+/* trojan carries its stream layer the way vless does: the core reads the same
+   streamSettings block, and a plain node has to say so */
+static void test_trojan_render(void) {
+    char json[16384];
+    static const char key[] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    char link[1024];
+    cJSON *root, *first, *stream;
+
+    snprintf(link, sizeof link,
+             "trojan://pw@example.com:443?type=tcp&security=reality&sni=cdn.example.com"
+             "&fp=chrome&pbk=%s&sid=ab12#node", key);
+    root = render(link, json, sizeof json);
+    first = cJSON_GetArrayItem(cJSON_GetObjectItem(root, "outbounds"), 0);
+    assert(strcmp(cJSON_GetObjectItem(first, "protocol")->valuestring, "trojan") == 0);
+    stream = cJSON_GetObjectItem(first, "streamSettings");
+    assert(strcmp(cJSON_GetObjectItem(stream, "security")->valuestring, "reality") == 0);
+    assert(strcmp(cJSON_GetObjectItem(stream, "network")->valuestring, "tcp") == 0);
+    assert(strcmp(cJSON_GetObjectItem(cJSON_GetObjectItem(stream, "realitySettings"),
+                                      "shortId")->valuestring, "ab12") == 0);
+    assert(strcmp(cJSON_GetObjectItem(cJSON_GetObjectItem(stream, "realitySettings"),
+                                      "publicKey")->valuestring, key) == 0);
+    cJSON_Delete(root);
+
+    root = render("trojan://pw@example.com:443?type=grpc&security=tls&serviceName=svc&sni=a.example#n",
+                  json, sizeof json);
+    first = cJSON_GetArrayItem(cJSON_GetObjectItem(root, "outbounds"), 0);
+    stream = cJSON_GetObjectItem(first, "streamSettings");
+    assert(strcmp(cJSON_GetObjectItem(stream, "network")->valuestring, "grpc") == 0);
+    assert(strcmp(cJSON_GetObjectItem(cJSON_GetObjectItem(stream, "grpcSettings"),
+                                      "serviceName")->valuestring, "svc") == 0);
+    cJSON_Delete(root);
+
+    snprintf(link, sizeof link,
+             "trojan://pw@example.com:443?type=xhttp&security=reality&path=%%2Fx&mode=stream-one"
+             "&pbk=%s&sid=ab12&sni=a.example#n", key);
+    root = render(link, json, sizeof json);
+    first = cJSON_GetArrayItem(cJSON_GetObjectItem(root, "outbounds"), 0);
+    stream = cJSON_GetObjectItem(first, "streamSettings");
+    assert(strcmp(cJSON_GetObjectItem(stream, "network")->valuestring, "xhttp") == 0);
+    assert(strcmp(cJSON_GetObjectItem(cJSON_GetObjectItem(stream, "xhttpSettings"),
+                                      "mode")->valuestring, "stream-one") == 0);
+    cJSON_Delete(root);
+
+    /* written out as plain, it must reach the core as plain and not as tls */
+    root = render("trojan://pw@example.com:443?type=tcp&security=none#n", json, sizeof json);
+    first = cJSON_GetArrayItem(cJSON_GetObjectItem(root, "outbounds"), 0);
+    stream = cJSON_GetObjectItem(first, "streamSettings");
+    assert(strcmp(cJSON_GetObjectItem(stream, "security")->valuestring, "none") == 0);
+    assert(cJSON_GetObjectItem(stream, "tlsSettings") == NULL);
+    cJSON_Delete(root);
+
+    /* and with nothing said the node is tls */
+    root = render("trojan://pw@example.com:443#n", json, sizeof json);
+    first = cJSON_GetArrayItem(cJSON_GetObjectItem(root, "outbounds"), 0);
+    stream = cJSON_GetObjectItem(first, "streamSettings");
+    assert(strcmp(cJSON_GetObjectItem(stream, "security")->valuestring, "tls") == 0);
+    cJSON_Delete(root);
+}
+
+static void test_vless_encryption_render(void) {
+    char json[16384];
+    static const char key[] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    char link[1024];
+    snprintf(link, sizeof link,
+             "vless://11111111-1111-4111-8111-111111111111@example.com:443"
+             "?type=tcp&security=tls&sni=cdn.example.com&flow=xtls-rprx-vision"
+             "&encryption=mlkem768x25519plus.random.0rtt.100-111-1111.%s#node", key);
+    cJSON *root = render(link, json, sizeof json);
+    assert(strstr(json, "\"encryption\":\"mlkem768x25519plus.random.0rtt.100-111-1111.AAAA") != NULL);
+    assert(strstr(json, "\"encryption\":\"none\"") == NULL);
+    cJSON *outbounds = cJSON_GetObjectItem(root, "outbounds");
+    cJSON *first = cJSON_GetArrayItem(outbounds, 0);
+    cJSON *settings = cJSON_GetObjectItem(first, "settings");
+    const char *enc = cJSON_GetObjectItem(settings, "encryption")->valuestring;
+    assert(strncmp(enc, "mlkem768x25519plus.random.0rtt.100-111-1111.", 44) == 0);
+    assert(strlen(enc) == strlen("mlkem768x25519plus.random.0rtt.100-111-1111.") + strlen(key));
+    assert(strcmp(cJSON_GetObjectItem(settings, "flow")->valuestring, "xtls-rprx-vision") == 0);
+    cJSON_Delete(root);
+
+    /* a plain node still says none */
+    root = render("vless://11111111-1111-4111-8111-111111111111@example.com:443?type=tcp&security=tls#plain", json, sizeof json);
+    assert(strstr(json, "\"encryption\":\"none\"") != NULL);
+    cJSON_Delete(root);
+
+    /* a profile id the pool lost never renders as none */
+    vl_server_t lost;
+    assert(cfg_parse_link(link, &lost) == CFG_OK);
+    lost.venc = 4000;
+    assert(senko_core_config_render(&lost, "203.0.113.7", "utun12", json, sizeof json) != 0);
+}
+
 int main(int argc, char **argv) {
     char json[8192];
+    test_vless_encryption_render();
+    test_trojan_render();
     cJSON *root = render(
         "vless://11111111-1111-4111-8111-111111111111@example.com:443"
         "?type=tcp&security=reality&sni=cdn.example.com&fp=chrome"

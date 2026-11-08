@@ -436,6 +436,12 @@
         _port.text = [[url port] stringValue];
         _uuid.text = [url user];
         _flow.text = [self queryValue:vmess ? @"encryption" : @"flow" query:query];
+        if (!vmess) {
+            [_vlessEncryption release];
+            _vlessEncryption = nil;
+            NSString *enc = [self queryValue:@"encryption" query:query];
+            if ([enc length] && ![enc isEqualToString:@"none"]) _vlessEncryption = [enc copy];
+        }
         if (vmess && ![_flow.text length]) _flow.text = @"auto";
         _path.text = [self queryValue:@"path" query:query];
         NSString *type = [self queryValue:@"type" query:query];
@@ -450,6 +456,7 @@
         NSString *sec = [self queryValue:@"security" query:query];
         _security.selectedSegmentIndex = [sec isEqualToString:@"tls"] ? 1 :
             ([sec isEqualToString:@"reality"] ? 2 : 0);
+        [self keepQueryFrom:query];
     }
 
     [[NSNotificationCenter defaultCenter] addObserver:self

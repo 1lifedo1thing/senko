@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include "core/geo.h"
+#include "core/vlenc_conf.h"
 
 typedef struct {
     char *out;
@@ -158,12 +159,19 @@ static int append_outbound(json_out_t *j, const vl_server_t *s,
                            const char *endpoint_ip, const char *ca_file) {
     const char *protocol;
     if (s->proto == VL_PROTO_VLESS) {
+        /* the core reads the same mlkem768x25519plus string, so the profile
+           goes through whole. a lost profile must not render as none */
+        const char *enc = "none";
+        if (s->venc) {
+            enc = vlenc_text(s->venc);
+            if (!enc) return -1;
+        }
         append_raw(j, "{\"tag\":\"senko-out\",\"protocol\":\"vless\",\"settings\":{\"address\":");
         append_string(j, endpoint_ip);
         append_format(j, ",\"port\":%u,\"id\":", (unsigned)s->port);
         append_string(j, s->uuid);
         append_raw(j, ",\"encryption\":");
-        append_string(j, s->encryption[0] ? s->encryption : "none");
+        append_string(j, enc);
         append_raw(j, ",\"flow\":");
         append_string(j, s->flow);
         append_raw(j, "}");

@@ -37,6 +37,13 @@ rc_status_t rc_mlkem768_decap(const uint8_t ct[RC_MLKEM768_CIPHERTEXTLEN],
                               const uint8_t priv[RC_MLKEM768_SECRETKEYLEN],
                               uint8_t shared[RC_MLKEM768_SHAREDLEN]);
 
+/* the other side of the same group: seal a fresh shared secret to a published
+   encapsulation key, as vless encryption does for the server's static key.
+   the caller checks the key first (vlenc_mlkem_ek_valid), the primitive does not */
+rc_status_t rc_mlkem768_encap(const uint8_t pub[RC_MLKEM768_PUBLICKEYLEN],
+                              uint8_t ct[RC_MLKEM768_CIPHERTEXTLEN],
+                              uint8_t shared[RC_MLKEM768_SHAREDLEN]);
+
 rc_status_t rc_x25519_public(const uint8_t priv[RC_X25519_KEYLEN],
                              uint8_t pub[RC_X25519_KEYLEN]);
 

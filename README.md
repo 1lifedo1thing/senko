@@ -33,6 +33,31 @@ subscriptions: uri lists, base64, happ, xray/sing-box json, clash yaml, shadowro
 - refresh and ping icons: instant checks
 - tap a heading: show or hide its servers
 
+## amnezia premium
+
+- add: paste, scan or import a `vpn://` premium key (the one with `auth_data`). a key that carries a ready config still goes through the plain amnezia import
+- senkod trades the key for an amneziawg profile at `gw.amnezia.org` (plain http, the body is sealed with aes-256-cbc and rsa pkcs#1 v1.5 under the gateway key) and keeps the key in `/var/root/Library/Preferences/senko-premium.json`, root only
+- the profile is written to the one saved amneziawg profile. the gateway issues it for about two hours: connecting with an expired one fetches a new one first
+- manual group menu: the countries the gateway lists for amneziawg (vless-only countries are left out), and a new profile
+- the premium profile cannot be edited. removing the profile removes the key and releases the device slot at the gateway. a plain amneziawg import replaces it the same way
+- the gateway key is read out of the AmneziaVPN 5.0.3.0 and 5.1.0.6 builds, see `daemon/core/amnezia_gateway_key.inc`. requests send `app_version` 5.1.0.6: the gateway refuses older versions with 501, raise `AMZ_GATEWAY_APP_VERSION` when it does again
+- left out: the proxy failover through the s3 storages the official client keeps for blocked networks, captcha answers, vless profiles
+
+## vless encryption
+
+- not in the protocol list above on purpose: it has run against the xray server on the host only, no armv7 or arm64 device has dialed it yet
+- the `encryption` of a vless user, as `xray vlessenc` prints it: `mlkem768x25519plus.<native|xorpub|random>.<0rtt|1rtt>[.<padding>].<key>[.<key>]`
+- a key is an x25519 public key (the server "password", 32 bytes) or an ml-kem-768 encapsulation key (1184 bytes), unpadded base64url. up to 4 keys, 4095 characters in all, so one ml-kem key and a few x25519 keys, not three ml-kem keys. an ml-kem key is checked against fips 203 on import
+- padding is `prob-min-max` integer triples, length then gap then length. the first length must be 100 percent and at least 35. total length stays under 65553
+- read from: share links (`encryption=`), xray json (`users[].encryption`), clash meta (`encryption:`). sing-box json, surge and karing backups cannot carry it; an export with such a node fails instead of writing plain vless. a profile that does not parse is refused with the field at fault, never read as `none`
+- the profile text is kept once per process in a pool of 128 (`vlenc_conf.c`), the server record holds its id. the catalog file keeps the link with the text, so a restart pools it again. a 129th distinct profile is refused until senkod restarts
+- backends: the utun and connect-hook backends run it in `core/vlenc_conn.c` over any stream transport (tcp, tls, reality, websocket, xhttp, grpc), with or without vision. senko-core gets the same string in its vless outbound
+- vision: after the direct command both directions drop the encryption records and carry the inner tls records on the connection below, as xray does. the transport below stays in use (tls or reality keep protecting it). the `random` profile keeps masking the inner record headers
+- 0rtt: the ticket a server hands out is kept in memory (8 slots, never written to disk), scoped to host, port and profile. a server that dropped it ends that one connection and the next one starts a full handshake
+- aes-256-gcm is used on arm64, chacha20-poly1305 on armv7 (no aes instructions there). the server accepts either
+- not done: the pauses between padding fragments are read and checked but not applied, the fragments themselves are sent. the handshake gives up after 20 seconds, checked on the next read or write
+- checks: `make -C tests test` (blake3 vectors, profile table, record layer against an in-tree server, transport over a socketpair), `tests/interop/run_vlenc_interop.sh` (the c client against xray's own `ServerInstance`), `tests/interop/run_vless_e2e.sh` (curl through senkod and the pinned core to a real xray inbound)
+
 ## karing backups
 
 - import a Karing ZIP through add, import from file; existing subscriptions are kept

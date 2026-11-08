@@ -104,6 +104,7 @@ static int run_single(const char *link, int port) {
     }
     loop_set_tls(&lp, srv.sni, srv.fp, srv.pbk, srv.sid, srv.path, srv.ws_host,
                  srv.mode, srv.host, srv.insecure);
+    loop_set_vless_enc(&lp, srv.venc, srv.port);
 
     install_signals();
     fprintf(stderr, "senkod: socks5 on 127.0.0.1:%u -> %s:%u (%s)\n",
